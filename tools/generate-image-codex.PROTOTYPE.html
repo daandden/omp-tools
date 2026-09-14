@@ -308,8 +308,9 @@ function wireButtons() {
 		["Reset", () => {
 			S.auth = { oauthPresent: true, apiKeyOverride: false, accountIdPresent: true, officialUrl: true };
 			S.params = { subject: "A watercolor lighthouse at sunrise", input: [] };
+			S.wireShape = "dedicated";
 			S.illegal = {}; S.builtRequest = null; S.dedicatedResult = null; S.responsesEcho = null; S.lastError = null;
-			S.justChanged = "reset to known state";
+			S.justChanged = "reset to known state (wire: dedicated)";
 		}, false],
 	];
 	const SH = [
