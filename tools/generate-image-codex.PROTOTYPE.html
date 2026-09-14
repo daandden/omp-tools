@@ -50,6 +50,8 @@
 <p>Assumption: this is the <strong>logic</strong> branch of the prototype skill (backend module → state model, not UI). The portable module below (<code>CodexPrototype</code>) is the liftable bit; the page around it is throwaway shell.</p>
 <p>Read first: locked routing in <a href="https://github.com/daandden/omp-tools/issues/5">Routing table, backend flag, and tool identity</a> (resolution comment), dedicated probe in <a href="https://github.com/daandden/omp-tools/issues/10">Dedicated images-path 2.5 probe</a> (resolution + correction), map <a href="https://github.com/daandden/omp-tools/issues/1">Codex-only generate_image_codex rework</a>. No live calls spent here; standing 1-of-3 allowance untouched.</p>
 
+<h2>1. Proposed params (narrow Codex-only)</h2>
+
 <pre>subject: string (required)
 action?, scene?, composition?, lighting?, style?, text?: string
 changes?: string[]
@@ -94,7 +96,10 @@ imageCount, imagePaths, images, usage, responseText?, revisedPrompt?</pre>
                          session_id/conversation_id + fresh x-codex-image-turn-id
                 body: { prompt, images? (edits only), output_format webp TBD — see §1 }
      Responses: POST {CODEX_BASE_URL}/codex/responses (tool-echo shape, store false, stream SSE).
-   Flip the §6 toggle to preview both; the demo keeps both trio reports side by side.</pre>
+   Flip the §6 toggle to preview both; the demo keeps both trio reports side by side.
+4. Parse ImageResponse JSON (created/data[].b64_json/background/quality/size/
+   generation_id/usage + x-codex-imagegen-request-id). Save temp files.
+   Return content + trio details above. 3-minute combined cancel signal.</pre>
 
 <h2>4. Wire shape: toggle, not verdict (recommended default: dedicated; neither as proven)</h2>
 <p><strong>Recommended default: dedicated <code>codex/images/generations</code>.</strong> Responses is proven normalizing (Flare ≡ Sunburst → <code>gpt-image-2-codex</code>/<code>auto</code>/<code>auto</code>; invalid model accepted with same echo; bare <code>{"type":"image_generation"}</code> returns byte-identical echo; 2.5-only <code>xhigh</code>/<code>max</code> → <code>auto</code> twice over — gateway discards the client spec). Dedicated <strong>accepts</strong> the Flare id and returns bytes, but honoring vs normalization is <strong>UNDETERMINED</strong> (no model echo on that shape; 200+bytes already proven compatible with silent normalization). It echoes concrete quality/size (<code>low</code> / <code>1448x1086</code> / <code>opaque</code> unrequested), so the remaining allowance call — <code>quality: xhigh</code> on generations — is falsifiable there, never on Responses.</p>
@@ -218,7 +223,7 @@ const S = {
 	params: { subject: "A watercolor lighthouse at sunrise", input: [] },
 	illegal: {},
 	wireShape: "dedicated",
-	dedicatedRequest: null,
+	builtRequest: null,
 	dedicatedResult: null,
 	responsesEcho: null,
 	lastError: null,
@@ -240,13 +245,13 @@ function render() {
 		["Account id derivable", String(S.auth.accountIdPresent)],
 		["Inputs", S.params.input.length ? S.params.input.length + " synthetic input(s) → /edits UNVERIFIED leg" : "none → /generations"],
 		["Illegal args pending", Object.keys(S.illegal).filter(k => S.illegal[k] !== undefined).join(", ") || "none"],
-		["Dedicated request", S.dedicatedRequest ? S.dedicatedRequest.method + " " + S.dedicatedRequest.url : "—"],
+		["Built request", S.builtRequest ? S.builtRequest.method + " " + S.builtRequest.url + " [" + S.builtRequest.shape + "]" : "—"],
 		["Dedicated verdict", S.dedicatedResult ? S.dedicatedResult.verdict : "—"],
 		["Responses echo verdict", S.responsesEcho ? S.responsesEcho.verdict : "—"],
 		["Last error", S.lastError || "—"],
 	];
 	st.innerHTML = "<dl>" + rows.map(r => "<dt>" + r[0] + "</dt><dd>" + escapeHtml(r[1]) + "</dd>").join("") + "</dl>"
-		+ (S.dedicatedRequest ? "<h3>Dedicated request preview (synthetic, no secrets)</h3><pre>" + escapeHtml(JSON.stringify(S.dedicatedRequest, null, 2)) + "</pre>" : "")
+		+ (S.builtRequest ? "<h3>" + (S.builtRequest.shape === "dedicated" ? "Dedicated" : "Responses") + " request preview (synthetic, no secrets)</h3><pre>" + escapeHtml(JSON.stringify(S.builtRequest, null, 2)) + "</pre>" : "")
 		+ (S.dedicatedResult ? "<h3>Dedicated trio (no response_tool_model)</h3><pre>" + escapeHtml(JSON.stringify(S.dedicatedResult, null, 2)) + "</pre>" : "")
 		+ (S.responsesEcho ? "<h3>Responses trio (proven normalization, side by side)</h3><pre>" + escapeHtml(JSON.stringify(S.responsesEcho, null, 2)) + "</pre>" : "");
 	el("changed").textContent = "Changed: " + S.justChanged;
@@ -281,11 +286,11 @@ function wireButtons() {
 	const D = [
 		["Dispatch (build request)", () => {
 			const bad = CodexPrototype.checkIllegalArgs(S.illegal);
-			if (!bad.ok) { S.dedicatedRequest = null; S.dedicatedResult = null; S.lastError = bad.error; S.justChanged = "type-level rejection, no dispatch"; return; }
+			if (!bad.ok) { S.builtRequest = null; S.dedicatedResult = null; S.lastError = bad.error; S.justChanged = "type-level rejection, no dispatch"; return; }
 			const pre = CodexPrototype.validatePreDispatch(S.auth);
-			if (!pre.ok) { S.dedicatedRequest = null; S.dedicatedResult = null; S.lastError = pre.error; S.justChanged = "pre-dispatch fail-hard, no fallback"; return; }
+			if (!pre.ok) { S.builtRequest = null; S.dedicatedResult = null; S.lastError = pre.error; S.justChanged = "pre-dispatch fail-hard, no fallback"; return; }
 			S.lastError = null; S.dedicatedResult = null;
-			S.dedicatedRequest = S.wireShape === "dedicated"
+			S.builtRequest = S.wireShape === "dedicated"
 				? CodexPrototype.buildDedicatedRequest(S.params, { sessionId: "<session>", turnId: "<fresh-uuid>" })
 				: CodexPrototype.buildResponsesRequest(S.params, { sessionId: "<session>" });
 			S.justChanged = S.wireShape + " request built — no network sent";
@@ -303,7 +308,7 @@ function wireButtons() {
 		["Reset", () => {
 			S.auth = { oauthPresent: true, apiKeyOverride: false, accountIdPresent: true, officialUrl: true };
 			S.params = { subject: "A watercolor lighthouse at sunrise", input: [] };
-			S.illegal = {}; S.dedicatedRequest = null; S.dedicatedResult = null; S.responsesEcho = null; S.lastError = null;
+			S.illegal = {}; S.builtRequest = null; S.dedicatedResult = null; S.responsesEcho = null; S.lastError = null;
 			S.justChanged = "reset to known state";
 		}, false],
 	];
