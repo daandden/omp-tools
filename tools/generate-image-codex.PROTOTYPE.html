@@ -50,18 +50,22 @@
 <p>Assumption: this is the <strong>logic</strong> branch of the prototype skill (backend module → state model, not UI). The portable module below (<code>CodexPrototype</code>) is the liftable bit; the page around it is throwaway shell.</p>
 <p>Read first: locked routing in <a href="https://github.com/daandden/omp-tools/issues/5">Routing table, backend flag, and tool identity</a> (resolution comment), dedicated probe in <a href="https://github.com/daandden/omp-tools/issues/10">Dedicated images-path 2.5 probe</a> (resolution + correction), map <a href="https://github.com/daandden/omp-tools/issues/1">Codex-only generate_image_codex rework</a>. No live calls spent here; standing 1-of-3 allowance untouched.</p>
 
-<h2>1. Proposed params (narrow Codex-only)</h2>
 <pre>subject: string (required)
 action?, scene?, composition?, lighting?, style?, text?: string
 changes?: string[]
-input?: { path?, data?, mime_type? }[]   // local path or base64; routed to /edits when present
+input?: { path?, data?, mime_type? }[]   // local path or base64; routed to /edits when present (UNVERIFIED leg — see §4)
 
 OMITTED (type-level rejection — unknown args fail schema, no runtime check):
   provider, image_model, backend flag,
   image_size / aspect_ratio, quality, background,
   output_compression, moderation, partial_images, count/n,
   mask, input_fidelity, detail
-FIXED: output webp (request only if the live shape accepts it; otherwise verify server default — confirm in build, do not claim here)</pre>
+WEBP: fixed webp is the #5 lock, but per the codex-imagegen research the native
+Images request type is only {prompt, background, model, n, quality, size} — no
+output_format — while Responses verifiably preserved output_format webp (#10
+step 1). The dedicated probe sent only model+prompt, so its echoed
+output_format is a server default, not proof webp is requestable there.
+The build must confirm whether webp survives on images/generations|edits.</pre>
 <p>Omission rationale: every omitted knob either normalizes away on Responses (<code>gpt-image-2-codex</code>/<code>auto</code>/<code>auto</code> for both Flare and Sunburst) or is undetermined on the dedicated path. Exposing them repeats the requested-not-honored promise the lock removed. <code>action</code> stays prose (what the subject is doing), never the wire generate/edit selector — the selector is inferred from input presence.</p>
 
 <h2>2. Proposed result details (trio vocabulary)</h2>
@@ -71,7 +75,7 @@ response_tool_model: absent                                // dedicated shape ha
 response_model: &lt;active chat model id, provenance only&gt;  // never image identity
 returned: { background, quality, size, generation_id, requestId }  // server-reported echoes, not honoring proof
 imageCount, imagePaths, images, usage, responseText?, revisedPrompt?</pre>
-<p>Honesty rule: <strong>normalization</strong> = server rewrote config; <strong>fallback</strong> = client switched provider (never happens here — fail-hard instead). Never write “honored”, “actual weights”, or “2.5 selection”. Never promote <code>response_model</code> into image identity.</p>
+<p>Honesty rule per root CONTEXT.md: <strong>normalization</strong> = the backend rewriting requested config to its own values; <strong>fallback</strong> = the client switching providers after a failure (never happens here — fail-hard instead). Banned here: “honored model”, “actual model”, “2.5 selection”, “fallback” for normalization, “actual weights”, “honored request”, “physical model”, “image identity” / “image model proof” for the response model. Never promote <code>response_model</code> into image identity.</p>
 
 <h2>3. Execute skeleton (own execute, no delegation)</h2>
 <pre>1. Pre-dispatch fail-hard (before any bytes):
@@ -82,33 +86,35 @@ imageCount, imagePaths, images, usage, responseText?, revisedPrompt?</pre>
    No pi.imageGenTool.execute. No provider loop. No retry/fallback.
 2. Assemble prompt (pure assemblePrompt, same join rules as native).
    Resolve inputs (35 MiB cap, MIME sniff); presence selects /edits vs /generations.
-3. POST dedicated shape (PICK — see §4):
-     POST {CODEX_BASE_URL}/codex/images/generations   (no inputs)
-     POST {CODEX_BASE_URL}/codex/images/edits         (inputs → images:[{image_url}] data URLs)
-     headers: Bearer OAuth (redacted here) + chatgpt-account-id + residency +
-              OpenAI-Beta responses=experimental + originator omp + host User-Agent +
-              session_id/conversation_id + fresh x-codex-image-turn-id
-     body: { prompt, images? (edits only), output_format:"webp" if accepted }
-           NO model field (no selection to claim — open question §6.4)
-4. Parse ImageResponse JSON (created/data[].b64_json/background/quality/size/
-   generation_id/usage + x-codex-imagegen-request-id). Save temp files.
-   Return content + trio details above. 3-minute combined cancel signal.</pre>
+3. POST — wire shape is the §4 toggle (recommended default: dedicated):
+     Dedicated: POST {CODEX_BASE_URL}/codex/images/generations (no inputs)
+                POST {CODEX_BASE_URL}/codex/images/edits (inputs → images:[{image_url}] data URLs)
+                headers: Bearer OAuth + chatgpt-account-id + residency +
+                         OpenAI-Beta responses=experimental + originator omp + host UA +
+                         session_id/conversation_id + fresh x-codex-image-turn-id
+                body: { prompt, images? (edits only), output_format webp TBD — see §1 }
+     Responses: POST {CODEX_BASE_URL}/codex/responses (tool-echo shape, store false, stream SSE).
+   Flip the §6 toggle to preview both; the demo keeps both trio reports side by side.</pre>
 
-<h2>4. Wire-shape pick: dedicated, not Responses (neither as proven)</h2>
-<p><strong>Pick: dedicated <code>codex/images/generations|edits</code>.</strong> Responses is proven normalizing (Flare ≡ Sunburst → <code>gpt-image-2-codex</code>/<code>auto</code>/<code>auto</code>; invalid model accepted with same echo; bare <code>{"type":"image_generation"}</code> returns byte-identical echo; 2.5-only <code>xhigh</code>/<code>max</code> → <code>auto</code> twice over). The gateway discards the client spec — nothing to tune there. Dedicated <strong>accepts</strong> the Flare id and returns bytes, but honoring vs normalization is <strong>UNDETERMINED</strong> (no model echo on that shape; 200+bytes already proven compatible with silent normalization). It echoes concrete quality/size (<code>low</code> / <code>1448x1086</code> / <code>opaque</code> unrequested), so the remaining allowance call — <code>quality: xhigh</code> on generations — is falsifiable there. Do NOT spend it on Responses. Ship and document neither shape as Flare/Sunburst-proven.</p>
+<h2>4. Wire shape: toggle, not verdict (recommended default: dedicated; neither as proven)</h2>
+<p><strong>Recommended default: dedicated <code>codex/images/generations</code>.</strong> Responses is proven normalizing (Flare ≡ Sunburst → <code>gpt-image-2-codex</code>/<code>auto</code>/<code>auto</code>; invalid model accepted with same echo; bare <code>{"type":"image_generation"}</code> returns byte-identical echo; 2.5-only <code>xhigh</code>/<code>max</code> → <code>auto</code> twice over — gateway discards the client spec). Dedicated <strong>accepts</strong> the Flare id and returns bytes, but honoring vs normalization is <strong>UNDETERMINED</strong> (no model echo on that shape; 200+bytes already proven compatible with silent normalization). It echoes concrete quality/size (<code>low</code> / <code>1448x1086</code> / <code>opaque</code> unrequested), so the remaining allowance call — <code>quality: xhigh</code> on generations — is falsifiable there, never on Responses.</p>
+<p><strong>Edits leg UNVERIFIED on its face:</strong> our only own-account dedicated probe hit <code>images/generations</code>. The external <code>codex/images/edits</code> evidence came through a locally modified provider (not an unmodified upstream release), with requested <code>high</code> server-reported as <code>medium</code> and no effective model field on the Images shape. Do not read generate and edit as equally grounded.</p>
+<p><strong>Webp conflict (explicit row, not assumed):</strong> #5 locks fixed webp, but the native Images request type is only {prompt, background, model, n, quality, size} — no output_format — while Responses verifiably preserved output_format webp (#10 step 1). The dedicated probe sent only model+prompt, so its echoed output_format is a server default, not proof webp is requestable there. Flip the toggle in §6 and react: does dedicated keep webp, or does the lock need revisiting for that shape?</p>
 
 <h2>5. Current state (re-rendered after every click)</h2>
 <div class="state" id="state"></div>
 <div class="changed" id="changed"></div>
 
 <h2>6. Free play (any order)</h2>
+<h3>Wire shape (one switch, two previews side by side)</h3>
+<div class="btns" id="shapeBtns"></div>
 <h3>Auth</h3>
 <div class="btns" id="authBtns"></div>
 <h3>Inputs</h3>
 <div class="btns" id="inputBtns"></div>
 <h3>Illegal args (should reject at type level, before dispatch)</h3>
 <div class="btns" id="illegalBtns"></div>
-<h3>Dispatch + simulated wire answers (no network)</h3>
+<h3>Dispatch + simulated wire answers (no network; scenarios run both)</h3>
 <div class="btns" id="dispatchBtns"></div>
 
 <h2>7. Guided walkthroughs (each resets, then press steps in order)</h2>
@@ -160,13 +166,24 @@ const CodexPrototype = (() => {
 	function buildDedicatedRequest(params, ctx) {
 		const hasInputs = !!(params.input && params.input.length);
 		const url = CODEX_BASE + (hasInputs ? "/codex/images/edits" : "/codex/images/generations");
-		const body = { prompt: assemblePrompt(params), output_format: "webp [fixed intent — drop if live shape 400s; confirm in build]" };
+		const body = { prompt: assemblePrompt(params), output_format: "webp TBD — confirm requestable on this shape in build (see §1)" };
 		if (hasInputs) body.images = params.input.map((_, i) => ({ image_url: "<data-url input " + (i + 1) + ">" }));
 		return {
+			shape: "dedicated",
 			method: "POST",
 			url,
 			headers: ["Authorization: Bearer <redacted>", "chatgpt-account-id: <present>", "residency: <from token>", "OpenAI-Beta: responses=experimental", "originator: omp", "User-Agent: <host>", "session_id + conversation_id: " + (ctx.sessionId || "<session>"), "x-codex-image-turn-id: " + (ctx.turnId || "<fresh-uuid>")],
 			body,
+		};
+	}
+
+	function buildResponsesRequest(params, ctx) {
+		return {
+			shape: "responses",
+			method: "POST",
+			url: CODEX_BASE + "/codex/responses",
+			headers: ["Authorization: Bearer <redacted>", "chatgpt-account-id: <present>", "residency: <from token>", "OpenAI-Beta: responses=experimental", "originator: omp", "User-Agent: <host>", "session_id + conversation_id: " + (ctx.sessionId || "<session>")],
+			body: { model: "<active chat model>", input: [{ role: "user", content: [{ type: "input_text", text: assemblePrompt(params) }] }], tools: [{ type: "image_generation", action: (params.input && params.input.length) ? "edit" : "generate", output_format: "webp" }], tool_choice: { type: "image_generation" }, store: false, stream: true },
 		};
 	}
 
@@ -192,7 +209,7 @@ const CodexPrototype = (() => {
 		};
 	}
 
-	return { CODEX_BASE, assemblePrompt, validatePreDispatch, checkIllegalArgs, buildDedicatedRequest, interpretDedicatedEcho: interpretDedicated200, interpretResponsesEcho };
+	return { CODEX_BASE, assemblePrompt, validatePreDispatch, checkIllegalArgs, buildDedicatedRequest, buildResponsesRequest, interpretDedicatedEcho: interpretDedicated200, interpretResponsesEcho };
 })();
 
 /* Throwaway shell below: page calls into the module; nothing flows back. */
@@ -200,8 +217,10 @@ const S = {
 	auth: { oauthPresent: true, apiKeyOverride: false, accountIdPresent: true, officialUrl: true },
 	params: { subject: "A watercolor lighthouse at sunrise", input: [] },
 	illegal: {},
-	lastRequest: null,
-	lastResult: null,
+	wireShape: "dedicated",
+	dedicatedRequest: null,
+	dedicatedResult: null,
+	responsesEcho: null,
 	lastError: null,
 	justChanged: "initial state",
 	activeChatModel: "gpt-6-astra-class",
@@ -211,19 +230,25 @@ function el(id) { return document.getElementById(id); }
 
 function render() {
 	const st = el("state");
+	const shapeLabel = S.wireShape === "dedicated"
+		? "dedicated (recommended default) — neither shape as proven"
+		: "responses (proven normalizing) — neither shape as proven";
 	const rows = [
+		["Wire shape", shapeLabel],
 		["OAuth present", String(S.auth.oauthPresent)],
 		["API-key override", String(S.auth.apiKeyOverride)],
 		["Account id derivable", String(S.auth.accountIdPresent)],
-		["Inputs", S.params.input.length ? S.params.input.length + " synthetic input(s) → /edits" : "none → /generations"],
+		["Inputs", S.params.input.length ? S.params.input.length + " synthetic input(s) → /edits UNVERIFIED leg" : "none → /generations"],
 		["Illegal args pending", Object.keys(S.illegal).filter(k => S.illegal[k] !== undefined).join(", ") || "none"],
-		["Last request", S.lastRequest ? S.lastRequest.method + " " + S.lastRequest.url : "—"],
-		["Last result verdict", S.lastResult ? S.lastResult.verdict : "—"],
+		["Dedicated request", S.dedicatedRequest ? S.dedicatedRequest.method + " " + S.dedicatedRequest.url : "—"],
+		["Dedicated verdict", S.dedicatedResult ? S.dedicatedResult.verdict : "—"],
+		["Responses echo verdict", S.responsesEcho ? S.responsesEcho.verdict : "—"],
 		["Last error", S.lastError || "—"],
 	];
 	st.innerHTML = "<dl>" + rows.map(r => "<dt>" + r[0] + "</dt><dd>" + escapeHtml(r[1]) + "</dd>").join("") + "</dl>"
-		+ (S.lastRequest ? "<h3>Request preview (synthetic, no secrets)</h3><pre>" + escapeHtml(JSON.stringify(S.lastRequest, null, 2)) + "</pre>" : "")
-		+ (S.lastResult ? "<h3>Result details (trio)</h3><pre>" + escapeHtml(JSON.stringify(S.lastResult, null, 2)) + "</pre>" : "");
+		+ (S.dedicatedRequest ? "<h3>Dedicated request preview (synthetic, no secrets)</h3><pre>" + escapeHtml(JSON.stringify(S.dedicatedRequest, null, 2)) + "</pre>" : "")
+		+ (S.dedicatedResult ? "<h3>Dedicated trio (no response_tool_model)</h3><pre>" + escapeHtml(JSON.stringify(S.dedicatedResult, null, 2)) + "</pre>" : "")
+		+ (S.responsesEcho ? "<h3>Responses trio (proven normalization, side by side)</h3><pre>" + escapeHtml(JSON.stringify(S.responsesEcho, null, 2)) + "</pre>" : "");
 	el("changed").textContent = "Changed: " + S.justChanged;
 }
 
@@ -245,7 +270,7 @@ function wireButtons() {
 	];
 	const B = [
 		["Inputs: empty", () => { S.params.input = []; S.justChanged = "inputs empty → /generations"; }],
-		["Inputs: add one", () => { S.params.input = [{ marker: "synthetic-bytes" }]; S.justChanged = "one synthetic input → /edits"; }],
+		["Inputs: add one", () => { S.params.input = [{ marker: "synthetic-bytes" }]; S.justChanged = "one synthetic input → /edits UNVERIFIED leg"; }],
 	];
 	const C = [
 		["Try image_model=flare", () => { S.illegal.image_model = "gpt-image-2.5-flare"; S.justChanged = "illegal image_model staged — rejected at type level"; }],
@@ -256,30 +281,35 @@ function wireButtons() {
 	const D = [
 		["Dispatch (build request)", () => {
 			const bad = CodexPrototype.checkIllegalArgs(S.illegal);
-			if (!bad.ok) { S.lastRequest = null; S.lastResult = null; S.lastError = bad.error; S.justChanged = "type-level rejection, no dispatch"; return; }
+			if (!bad.ok) { S.dedicatedRequest = null; S.dedicatedResult = null; S.lastError = bad.error; S.justChanged = "type-level rejection, no dispatch"; return; }
 			const pre = CodexPrototype.validatePreDispatch(S.auth);
-			if (!pre.ok) { S.lastRequest = null; S.lastResult = null; S.lastError = pre.error; S.justChanged = "pre-dispatch fail-hard, no fallback"; return; }
-			S.lastError = null; S.lastResult = null;
-			S.lastRequest = CodexPrototype.buildDedicatedRequest(S.params, { sessionId: "<session>", turnId: "<fresh-uuid>" });
-			S.justChanged = "dedicated request built — no network sent";
+			if (!pre.ok) { S.dedicatedRequest = null; S.dedicatedResult = null; S.lastError = pre.error; S.justChanged = "pre-dispatch fail-hard, no fallback"; return; }
+			S.lastError = null; S.dedicatedResult = null;
+			S.dedicatedRequest = S.wireShape === "dedicated"
+				? CodexPrototype.buildDedicatedRequest(S.params, { sessionId: "<session>", turnId: "<fresh-uuid>" })
+				: CodexPrototype.buildResponsesRequest(S.params, { sessionId: "<session>" });
+			S.justChanged = S.wireShape + " request built — no network sent";
 		}, true],
 		["Simulate: dedicated 200 (undetermined)", () => {
-			if (!S.lastRequest) { S.lastError = "Dispatch first — nothing to answer."; S.justChanged = "simulate blocked: no request"; return; }
 			S.lastError = null;
-			S.lastResult = CodexPrototype.interpretDedicatedEcho({ background: "opaque", quality: "low", size: "1448x1086", generation_id: "<gen-id>", requestId: "<req-id>" }, { activeChatModel: S.activeChatModel });
-			S.justChanged = "dedicated 200 simulated — ACCEPTS but UNDETERMINED";
+			S.dedicatedResult = CodexPrototype.interpretDedicatedEcho({ background: "opaque", quality: "low", size: "1448x1086", generation_id: "<gen-id>", requestId: "<req-id>" }, { activeChatModel: S.activeChatModel });
+			S.justChanged = "dedicated 200 simulated — ACCEPTS but UNDETERMINED (kept in own slot)";
 		}, false],
 		["Simulate: Responses echo (normalized)", () => {
 			S.lastError = null;
-			S.lastResult = CodexPrototype.interpretResponsesEcho({ model: "gpt-image-2-codex", background: "auto", quality: "auto", size: "auto" });
-			S.justChanged = "Responses echo shown for comparison — rejected shape";
+			S.responsesEcho = CodexPrototype.interpretResponsesEcho({ model: "gpt-image-2-codex", background: "auto", quality: "auto", size: "auto" });
+			S.justChanged = "Responses echo in own slot — both trios render side by side";
 		}, false],
 		["Reset", () => {
 			S.auth = { oauthPresent: true, apiKeyOverride: false, accountIdPresent: true, officialUrl: true };
 			S.params = { subject: "A watercolor lighthouse at sunrise", input: [] };
-			S.illegal = {}; S.lastRequest = null; S.lastResult = null; S.lastError = null;
+			S.illegal = {}; S.dedicatedRequest = null; S.dedicatedResult = null; S.responsesEcho = null; S.lastError = null;
 			S.justChanged = "reset to known state";
 		}, false],
+	];
+	const SH = [
+		["Wire: dedicated", () => { S.wireShape = "dedicated"; S.justChanged = "wire toggle → dedicated (recommended default)"; }],
+		["Wire: responses", () => { S.wireShape = "responses"; S.justChanged = "wire toggle → responses (proven normalizing)"; }],
 	];
 	const mk = (host, list) => {
 		const h = el(host);
@@ -292,7 +322,7 @@ function wireButtons() {
 			h.appendChild(b);
 		});
 	};
-	mk("authBtns", A); mk("inputBtns", B); mk("illegalBtns", C); mk("dispatchBtns", D);
+	mk("shapeBtns", SH); mk("authBtns", A); mk("inputBtns", B); mk("illegalBtns", C); mk("dispatchBtns", D);
 }
 
 function clickLabel(label) {
@@ -301,12 +331,12 @@ function clickLabel(label) {
 }
 
 const SCENARIOS = [
-	{ id: "happy", title: "Happy path (generate)", desc: "OAuth present, no inputs → /generations → bytes back with trio showing no response_tool_model. Watch: undetermined honesty note, never honored.", steps: ["Reset", "OAuth: present", "Inputs: empty", "Dispatch (build request)", "Simulate: dedicated 200 (undetermined)"] },
-	{ id: "edit", title: "Edit path", desc: "Same checks, but one input routes to /edits with an images payload. Watch: URL switch + images array, same trio honesty.", steps: ["Reset", "OAuth: present", "Inputs: add one", "Dispatch (build request)", "Simulate: dedicated 200 (undetermined)"] },
-	{ id: "oauth", title: "Fail-hard: OAuth missing", desc: "No OAuth → error names Codex, states no API-key/other-provider fallback, zero requests built. Watch: lastRequest stays empty.", steps: ["Reset", "OAuth: absent", "Dispatch (build request)"] },
+	{ id: "happy", title: "Happy path (generate)", desc: "OAuth present, no inputs → /generations → bytes back with trio showing no response_tool_model. Watch: undetermined honesty note, never honored.", steps: ["Reset", "OAuth: present", "Inputs: empty", "Wire: dedicated", "Dispatch (build request)", "Simulate: dedicated 200 (undetermined)"] },
+	{ id: "edit", title: "Edit path (UNVERIFIED leg)", desc: "Same checks, but one input routes to /edits with an images payload — marked UNVERIFIED: own-account probe hit generations only; external edits evidence came via a locally modified provider with high server-reported as medium. Watch: URL switch + images array, same trio honesty.", steps: ["Reset", "OAuth: present", "Inputs: add one", "Wire: dedicated", "Dispatch (build request)", "Simulate: dedicated 200 (undetermined)"] },
+	{ id: "oauth", title: "Fail-hard: OAuth missing", desc: "No OAuth → error names Codex, states no API-key/other-provider fallback, zero requests built. Watch: dedicated request stays empty.", steps: ["Reset", "OAuth: absent", "Dispatch (build request)"] },
 	{ id: "override", title: "Fail-hard: API-key override", desc: "Override replaces OAuth (getOAuthAccess → undefined) → same fail-hard naming the offending override. Watch: no silent downgrade.", steps: ["Reset", "OAuth: present", "Override: on", "Dispatch (build request)"] },
 	{ id: "illegal", title: "Illegal args rejected pre-dispatch", desc: "image_model / provider / backend are unknown args — schema rejects before any auth check or bytes. Watch: type-level error, no request.", steps: ["Reset", "Try image_model=flare", "Dispatch (build request)", "Clear illegal args", "Try provider=gemini", "Dispatch (build request)"] },
-	{ id: "shape", title: "Wire-shape comparison", desc: "Why dedicated over Responses. Responses: invalid model accepted, bare spec byte-identical echo, xhigh→auto — gateway discards spec. Dedicated: accepts Flare id, no echo, concrete quality/size echoes — xhigh probe falsifiable. Neither ships as proven.", steps: ["Reset", "Simulate: Responses echo (normalized)", "Dispatch (build request)", "Simulate: dedicated 200 (undetermined)"] },
+	{ id: "shape", title: "Wire-shape comparison", desc: "Toggle + both trios side by side. Responses: invalid model accepted, bare spec byte-identical echo, xhigh→auto — gateway discards spec. Dedicated: accepts Flare id, no echo, concrete quality/size echoes — xhigh probe falsifiable. Recommended default dedicated; neither ships as proven.", steps: ["Reset", "Simulate: Responses echo (normalized)", "Wire: dedicated", "Dispatch (build request)", "Simulate: dedicated 200 (undetermined)"] },
 ];
 
 function wireTabs() {
