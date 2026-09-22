@@ -6,7 +6,11 @@
 		"strict": true,
 		"skipLibCheck": true,
 		"noEmit": true,
-		"types": ["bun-types"]
+		"types": [
+			"bun-types"
+		]
 	},
-	"include": ["extensions/**/*.ts", "tools/**/*.ts"]
+	"include": [
+		"extensions/**/*.ts"
+	]
 }
