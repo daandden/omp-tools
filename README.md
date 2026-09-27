@@ -15,11 +15,24 @@ view instead of acting on a hidden row. The picker keeps the native controls:
 tabs and a Submit review for several or multi-select questions, `Other (type
 your own)`, `n` notes, `ask.timeout` auto-selection, and `ask.notify`.
 
-The `Other` answer and note editors accept images through the image-paste key
-(Ctrl+V by default), like the main prompt: a copied image, a copied Finder file,
-or an image path on the clipboard. Terminal paste (Cmd+V) inserts text only.
-Each image inserts an `[Image #N]` label; deleting the label drops the image.
-Images are sent to the model after the answer text, labeled to match.
+The `Other` answer and note editors are the main prompt's own editor, so they
+behave like it: the same suggestions (`@` files, `^` models, internal URLs,
+emoji, GitHub refs, and other extensions' providers), ghost-text word
+completion, typo detection and autocorrect, vim mode, and multi-line input
+(Shift+Enter, Ctrl+J, or Alt+Enter inserts a newline; Enter or Ctrl+Q submits).
+Ctrl+C clears the text (it never exits omp from here). `/` commands and
+`/skill:` names are suggested so you can reference them, including at the start
+of the answer; accepting one only inserts its text, Enter submits exactly what
+you typed, and nothing in the answer runs. `#` prompt actions are not offered.
+There is no history, push-to-talk, or draft saving. The external editor key
+(`app.editor.external`, Ctrl+G by default) opens the current text in
+`$VISUAL`/`$EDITOR` and writes the result back.
+
+Images paste as in the main prompt: the image-paste key (Ctrl+V by default)
+reads a copied image, a copied Finder file, or an image path on the clipboard,
+and pasting an image file path also attaches it. Each image shows as the main
+prompt's image chip; deleting the chip drops the image. Images are sent to the
+model after the answer text, labeled `[Image #N]` to match.
 
 Outside the TUI (RPC/ACP/print, subagents), and for inputs native `ask` rejects,
 execution delegates to native `ask`. Differences from the native picker:

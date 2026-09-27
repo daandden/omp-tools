@@ -31,6 +31,15 @@ in the interactive picker. Outside the TUI it delegates to native `ask`.
 - `extensions/ask-dialog.ts`: Markdown picker mirroring the native pi-tui
   `AskDialogComponent` (tabs, Submit review, multi-select, Other, notes,
   timeout); diff it against upstream when OMP changes the native dialog.
+- `extensions/ask-editor.ts`: `Other`/note text box. Wraps the main prompt's
+  `CustomEditor` with the host's suggestion provider (borrowed in
+  `flexible-ask.ts` through `ctx.ui.addAutocompleteProvider`) for references
+  only: `#` prompt actions are hidden, completion `onApplied` side effects are
+  dropped, and `trySyncSlashCompletion` is not forwarded, so `/commands` and
+  `/skill:` names insert text and never run. It subclasses
+  `HookEditorComponent` only so the host routes the external-editor key to it
+  while it holds focus; the base editor is dropped, and `pasteText` is hidden so
+  the host does not claim the image-paste key.
 - `extensions/ask-images.ts`: clipboard and path image loading for the picker's
   editors, using the host's clipboard/image-loading helpers.
 - `extensions/flexible-ask.md`: static model-facing description; keep aligned
@@ -76,8 +85,10 @@ and Bundler resolution. SDK packages supply development types. Runtime value
 imports of `@oh-my-pi/*` resolve to the host's in-process modules through OMP's
 extension specifier shim; in compiled binaries only exported subpaths are served
 (`@oh-my-pi/pi-tui`, `/chrome`, `/render`, `/theme`,
-`@oh-my-pi/pi-coding-agent`, `/modes/*`, `/tools/*`, `/utils/*`), so never import
-unexported files such as `@oh-my-pi/pi-tui/overlays/*`. Both SDK packages use
+`@oh-my-pi/pi-coding-agent`, `/modes/*`, `/tools/*`, `/utils/*`). The root `./*`
+wildcard is not served, so never import files such as
+`@oh-my-pi/pi-tui/overlays/*`, `/keybinding-matchers`, `/chrome/form-theme`, or
+`/prompt/*`; they load a second copy from node_modules and fail. Both SDK packages use
 the `"latest"` specifier; `bun.lock` records the resolved version, so update
 through `bun run update` to keep types and the installed omp in step.
 

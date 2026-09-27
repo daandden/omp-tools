@@ -23,7 +23,7 @@ import type {
 import { settings } from "@oh-my-pi/pi-coding-agent";
 import { cfgAskNotify, cfgAskTimeout } from "@oh-my-pi/pi-coding-agent/modes/settings";
 import { ToolAbortError } from "@oh-my-pi/pi-coding-agent/tools/tool-errors";
-import { TERMINAL } from "@oh-my-pi/pi-tui";
+import { type AutocompleteProvider, TERMINAL } from "@oh-my-pi/pi-tui";
 import { sanitizeCarriageReturns } from "@oh-my-pi/pi-tui/render";
 import { type MarkdownAskResult, showMarkdownAskDialog } from "./ask-dialog";
 import flexibleAskDescription from "./flexible-ask.md" with { type: "text" };
@@ -120,6 +120,7 @@ async function askWithMarkdownDialog(
 	ctx: ExtensionContext,
 	questions: ExtensionAskDialogQuestion[],
 	signal: AbortSignal | undefined,
+	autocomplete: () => AutocompleteProvider | undefined,
 ): Promise<AgentToolResult<AskToolDetails>> {
 	const timeoutSeconds = cfgAskTimeout.get(settings);
 	if (cfgAskNotify.get(settings) !== "off") {
@@ -139,6 +140,7 @@ async function askWithMarkdownDialog(
 			signal,
 			cwd: ctx.cwd,
 			notify: message => ctx.ui.notify(message, "warning"),
+			autocomplete,
 		});
 	} catch (error) {
 		if (error instanceof Error && error.name === "AbortError") throw new ToolAbortError("Ask input was cancelled");
@@ -214,6 +216,21 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 			.atLeastLength(1),
 	});
 
+	// Borrow the main prompt's suggestion provider for the answer editor. omp
+	// calls this factory with the current provider every time it rebuilds it
+	// (commands, templates, other extensions), so the copy stays fresh. Register
+	// once per load; session switches emit session_start again.
+	let hostAutocomplete: AutocompleteProvider | undefined;
+	let autocompleteRegistered = false;
+	pi.on("session_start", (_event, ctx) => {
+		if (autocompleteRegistered || ctx.mode !== "tui" || !ctx.hasUI) return;
+		autocompleteRegistered = true;
+		ctx.ui.addAutocompleteProvider(provider => {
+			hostAutocomplete = provider;
+			return provider;
+		});
+	});
+
 	const definition: ToolDefinition<typeof parameters, AskToolDetails> = {
 		name: "ask",
 		label: "Ask",
@@ -228,7 +245,7 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 			if (ctx.mode !== "tui" || !ctx.hasUI || nativeRejects(questions)) {
 				return ctx.invokeTool<AskToolDetails>(params, { signal, onUpdate });
 			}
-			return askWithMarkdownDialog(ctx, questions, signal);
+			return askWithMarkdownDialog(ctx, questions, signal, () => hostAutocomplete);
 		},
 	};
 	// `concurrency` is not part of the extension ToolDefinition type, but

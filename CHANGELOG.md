@@ -8,6 +8,9 @@
   interactive picker instead of one condensed line.
 - Allowed pasting images into ask `Other` answers and notes; they reach the model
   with the answer.
+- Made ask `Other` answers and notes use the main prompt's editor: the same
+  suggestions, word completion, autocorrect, vim mode, and multi-line keys; the
+  external editor opens with the current text.
 
 ### Changed
 

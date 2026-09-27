@@ -8,12 +8,14 @@
 // modules through OMP's extension specifier shim; they must stay on exported
 // package subpaths (`@oh-my-pi/pi-tui`, `/chrome`, `/render`, `/theme`).
 import type {
+	CustomEditor,
 	ExtensionAskDialogQuestion,
 	ExtensionAskDialogResultItem,
 	ExtensionUIContext,
 } from "@oh-my-pi/pi-coding-agent";
-import { HookEditorComponent } from "@oh-my-pi/pi-coding-agent";
+import { getEditorCommand, openInEditor } from "@oh-my-pi/pi-coding-agent/utils/external-editor";
 import {
+	type AutocompleteProvider,
 	type Component,
 	decodePrintableKey,
 	Ellipsis,
@@ -45,7 +47,8 @@ import {
 } from "@oh-my-pi/pi-tui/chrome";
 import { disambiguateDisplayLabels, sanitizeCarriageReturns } from "@oh-my-pi/pi-tui/render";
 import { getMarkdownTheme, highlightCode, theme } from "@oh-my-pi/pi-tui/theme";
-import { type PasteOutcome, type PastedImage, readClipboardPaste } from "./ask-images";
+import { AnswerEditor } from "./ask-editor";
+import { loadImagePaths, type PasteOutcome, type PastedImage, readClipboardPaste } from "./ask-images";
 
 const OTHER_OPTION = "Other (type your own)";
 const SUBMIT_OPTION = "Submit";
@@ -59,8 +62,6 @@ const MIN_BODY_ROWS = 5;
 const MAX_TAB_LABEL_WIDTH = 16;
 /** Rows reserved for the custom-answer/note editor while it is open. */
 const PROMPT_EDITOR_ROWS = 6;
-/** Host keybinding for the main prompt's clipboard image paste (Ctrl+V by default). */
-const PASTE_IMAGE_KEY = "app.clipboard.pasteImage";
 
 /** An image attached to a custom answer or note, referenced by `label` in its text. */
 export interface AskImage extends PastedImage {
@@ -82,6 +83,8 @@ interface DialogOptions {
 	cwd: string;
 	/** Surfaces paste failures (unsupported format, missing file, empty clipboard). */
 	notify(message: string): void;
+	/** Main prompt suggestion provider, borrowed from the host. */
+	autocomplete(): AutocompleteProvider | undefined;
 }
 
 interface QuestionState {
@@ -280,7 +283,7 @@ class MarkdownAskDialog implements Component, Focusable {
 	#remainingSeconds: number | undefined;
 	#timeoutPending = false;
 	#closed = false;
-	#prompt: HookEditorComponent | undefined;
+	#prompt: AnswerEditor | undefined;
 	/** Images pasted into the open prompt; filtered by label on submit. */
 	#promptImages: AskImage[] = [];
 	/** Dialog-wide counter so `[Image #N]` labels stay unique across fields. */
@@ -357,8 +360,8 @@ class MarkdownAskDialog implements Component, Focusable {
 		if (this.#closed) return;
 		this.#countdown?.reset();
 		if (this.#prompt) {
-			this.#handlePromptInput(this.#prompt, data);
-			this.#requestRender();
+			// The prompt normally holds TUI focus; keep routing through its wrapper.
+			this.#prompt.handleInput(data);
 			return;
 		}
 		const keybindings = getKeybindings();
@@ -806,6 +809,7 @@ class MarkdownAskDialog implements Component, Focusable {
 			this.#prompt?.dispose();
 			this.#prompt = undefined;
 			this.#promptImages = [];
+			if (!this.#closed) this.#tui.setFocus(this);
 			if (this.#timeoutPending) {
 				this.#timeoutPending = false;
 				this.#handleTimeout();
@@ -813,13 +817,14 @@ class MarkdownAskDialog implements Component, Focusable {
 			this.#requestRender();
 		};
 		this.#promptImages = [...request.images];
-		this.#prompt = new HookEditorComponent(
-			this.#tui,
-			request.title,
-			request.prefill,
-			value => {
+		const prompt = new AnswerEditor(this.#tui, {
+			title: request.title,
+			prefill: request.prefill,
+			maxHeight: PROMPT_EDITOR_ROWS,
+			autocomplete: this.#options.autocomplete(),
+			onSubmit: value => {
 				if (!this.#closed) {
-					// Deleting an `[Image #N]` label from the text drops that image.
+					// Deleting an image chip (or its `[Image #N]` text) drops that image.
 					request.apply(
 						value,
 						this.#promptImages.filter(image => value.includes(image.label)),
@@ -827,54 +832,63 @@ class MarkdownAskDialog implements Component, Focusable {
 				}
 				close();
 			},
-			close,
-			{ promptStyle: true, maxHeight: PROMPT_EDITOR_ROWS },
-		);
-		this.#prompt.focused = this.focused;
+			onCancel: close,
+			onPasteImage: async editor => this.#insertPaste(editor, await readClipboardPaste(this.#options.cwd)),
+			onPasteImagePath: async (editor, path) => {
+				const outcome = await loadImagePaths([path], this.#options.cwd);
+				// Like the main prompt: an unreadable path stays as text.
+				if (!(await this.#insertPaste(editor, outcome))) editor.pasteText(path);
+			},
+			editExternally: text => this.#editExternally(text),
+			onInput: () => this.#countdown?.reset(),
+		});
+		// omp opens the external editor on the hidden main prompt unless a
+		// HookEditorComponent holds TUI focus, so the answer editor takes focus.
+		this.#prompt = prompt;
+		this.#tui.setFocus(prompt);
 		this.#requestRender();
 	}
 
-	/** Only the image-paste key (Ctrl+V by default) reads the clipboard for images,
-	 *  matching the main prompt; terminal pastes (Cmd+V) stay plain text. */
-	#handlePromptInput(prompt: HookEditorComponent, data: string): void {
-		if (getKeybindings().matches(data, PASTE_IMAGE_KEY)) {
-			this.#attachPaste(prompt, readClipboardPaste(this.#options.cwd));
-			return;
+	async #editExternally(text: string): Promise<string | null> {
+		const command = getEditorCommand();
+		if (!command) {
+			this.#options.notify("No editor configured. Set $VISUAL or $EDITOR environment variable.");
+			return null;
 		}
-		prompt.handleInput(data);
+		try {
+			return await openInEditor(command, text);
+		} catch (error) {
+			this.#options.notify(`Failed to open external editor: ${error instanceof Error ? error.message : String(error)}`);
+			return null;
+		}
 	}
 
-	/** Reserve the paste slot now so later keystrokes and submit wait for the async read. */
-	#attachPaste(prompt: HookEditorComponent, outcome: Promise<PasteOutcome>): void {
-		const deliver = prompt.beginPaste();
-		void outcome.then(result => {
-			if (this.#prompt !== prompt) {
-				deliver(undefined);
-				return;
+	/** Insert pasted images as main-prompt image chips expanding to `[Image #N]`. */
+	async #insertPaste(editor: CustomEditor, outcome: PasteOutcome): Promise<boolean> {
+		if (this.#prompt?.editor !== editor) return false;
+		if ("error" in outcome) {
+			this.#options.notify(outcome.error);
+			return false;
+		}
+		if ("text" in outcome) {
+			editor.pasteText(outcome.text);
+		} else {
+			for (const image of outcome.images) {
+				this.#imageCount += 1;
+				const attached: AskImage = { ...image, label: `[Image #${this.#imageCount}]` };
+				this.#promptImages.push(attached);
+				// Same token as the main prompt's image chip (pi-tui `chipLabel`), so it deletes as a unit.
+				editor.insertAtom(`${theme.symbol("chip.image")} #${this.#imageCount}`, attached.label);
 			}
-			if ("error" in result) {
-				this.#options.notify(result.error);
-				deliver(undefined);
-			} else if ("text" in result) {
-				deliver(result.text);
-			} else {
-				const labels = result.images.map(image => {
-					this.#imageCount += 1;
-					const attached: AskImage = { ...image, label: `[Image #${this.#imageCount}]` };
-					this.#promptImages.push(attached);
-					return attached.label;
-				});
-				deliver(`${labels.join(" ")} `);
-			}
-			this.#requestRender();
-		});
+		}
+		this.#requestRender();
+		return true;
 	}
 
 	/** Keep the question's Markdown visible above the editor, trimmed to fit. */
 	#renderPrompt(width: number, innerWidth: number, termRows: number): string[] {
 		const prompt = this.#prompt;
 		if (!prompt) return [];
-		prompt.focused = this.focused;
 		const editorLines = withoutSideBorders(prompt.render(width + 2), width);
 		const question = this.#questions[this.#questionIndex()];
 		const text = question ? displayText(question.question).trim() : "";

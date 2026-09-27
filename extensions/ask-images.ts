@@ -1,8 +1,9 @@
-// Image paste for the ask picker's custom-answer and note editors, triggered by
-// the image-paste key only (like the main prompt). Mirrors the main prompt's
-// clipboard sources (Finder file URLs, clipboard bitmap, image-path text) using
-// the host's clipboard and image-loading helpers, so size limits, decoding
-// checks, and `images.autoResize` behave the same.
+// Image loading for the ask picker's custom-answer and note editors. The
+// editor (the main prompt's CustomEditor) decides when to paste an image, as in
+// the main prompt; this mirrors the main prompt's sources (Finder file URLs,
+// clipboard bitmap, image-path text, pasted image paths) using the host's
+// clipboard and image-loading helpers, so size limits, decoding checks, and
+// `images.autoResize` behave the same.
 import type { ImageContent } from "@oh-my-pi/pi-ai";
 import { extractImagePathFromText, settings } from "@oh-my-pi/pi-coding-agent";
 import { cfgImagesAutoResize } from "@oh-my-pi/pi-coding-agent/modes/settings";
@@ -27,7 +28,8 @@ function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-async function loadPaths(paths: readonly string[], cwd: string): Promise<PasteOutcome> {
+/** Load image files as pasted attachments; stops at the first failure. */
+export async function loadImagePaths(paths: readonly string[], cwd: string): Promise<PasteOutcome> {
 	const images: PastedImage[] = [];
 	for (const path of paths) {
 		try {
@@ -53,7 +55,7 @@ export async function readClipboardPaste(cwd: string): Promise<PasteOutcome> {
 	try {
 		const fileUrls = await readMacFileUrlsFromClipboard();
 		const filePaths = fileUrls.flatMap(url => extractImagePathFromText(url) ?? []);
-		if (filePaths.length > 0) return await loadPaths(filePaths, cwd);
+		if (filePaths.length > 0) return await loadImagePaths(filePaths, cwd);
 
 		const bitmap = await readImageFromClipboard();
 		if (bitmap) {
@@ -70,7 +72,7 @@ export async function readClipboardPaste(cwd: string): Promise<PasteOutcome> {
 		const text = await readTextFromClipboard();
 		if (!text) return { error: "Clipboard is empty" };
 		const imagePath = extractImagePathFromText(text);
-		return imagePath ? await loadPaths([imagePath], cwd) : { text };
+		return imagePath ? await loadImagePaths([imagePath], cwd) : { text };
 	} catch (error) {
 		return { error: `Failed to read clipboard: ${errorMessage(error)}` };
 	}
