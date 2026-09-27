@@ -48,8 +48,14 @@ Run from the repository root:
 ```sh
 bun install --ignore-scripts
 bun run check
+bun run update
 omp plugin link "$PWD"
 ```
+
+`bun run check` runs `scripts/check-sdk-version.ts` (warns when installed SDK
+types differ from `omp --version`) and then `tsgo --noEmit`. `bun run update`
+runs `scripts/update-sdk.ts`: `omp update`, `bun update --latest` for both SDK
+packages, restores their `"latest"` specifiers, reinstalls, and checks.
 
 There is no separate build, lint, formatter, or standalone run script. OMP loads
 linked source directly. Start a **new OMP session** after linking or editing;
@@ -70,9 +76,10 @@ and Bundler resolution. SDK packages supply development types. Runtime value
 imports of `@oh-my-pi/*` resolve to the host's in-process modules through OMP's
 extension specifier shim; in compiled binaries only exported subpaths are served
 (`@oh-my-pi/pi-tui`, `/chrome`, `/render`, `/theme`,
-`@oh-my-pi/pi-coding-agent`, `/modes/*`, `/tools/*`), so never import
-unexported files such as `@oh-my-pi/pi-tui/overlays/*`. Keep SDK pins aligned
-with the host; development types target 18.3.1.
+`@oh-my-pi/pi-coding-agent`, `/modes/*`, `/tools/*`, `/utils/*`), so never import
+unexported files such as `@oh-my-pi/pi-tui/overlays/*`. Both SDK packages use
+the `"latest"` specifier; `bun.lock` records the resolved version, so update
+through `bun run update` to keep types and the installed omp in step.
 
 Run typechecking after code changes. There are currently no automated test files
 or repository CI. Registration/ask changes require a fresh-session OMP smoke;

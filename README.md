@@ -50,12 +50,14 @@ packages or install a second loose copy of the ask extension.
 
 ```bash
 bun install --ignore-scripts
-bun run check
+bun run check    # warns if SDK types differ from `omp --version`, then typechecks
+bun run update   # omp update + newest SDK types, then check
 ```
 
 Runtime value imports of `@oh-my-pi/*` resolve to the running OMP's own modules.
-Development types are pinned to OMP 18.3.1. There are currently no automated
-test files. Registration changes require a fresh-session OMP smoke check.
+Development types track the `latest` SDK release; run `bun run update` so omp
+and the types move together. There are currently no automated test files.
+Registration changes require a fresh-session OMP smoke check.
 
 A fresh OMP 18.3.1 session verified the Markdown picker (single question,
 `Other` custom answer, two questions with multi-select, Esc cancel).
