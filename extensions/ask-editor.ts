@@ -58,27 +58,115 @@ function isExternalEditorKey(data: string): boolean {
 
 type Suggestions = { items: AutocompleteItem[]; prefix: string } | null;
 
-/** Prompt actions (`#copy`, `#undo`, …) act on the main prompt; hide them here. */
+/** A `/name` token ending at the cursor, at line start or after whitespace (a path has a second `/`). */
+const SLASH_TOKEN_RE = /(?:^|\s)\/([^\s/]*)$/;
+/** An answer that opens with `/name ` (the cursor is in that command's arguments). */
+const LEADING_COMMAND_RE = /^\s*\/([^\s/]+)\s/;
+const SKILL_NAMESPACE = "skill:";
+
+/** Drop `#` prompt actions; they only exist to run an action on the main prompt. */
 function withoutPromptActions(result: Suggestions): Suggestions {
 	if (!result) return null;
 	const items = result.items.filter(item => typeof (item as { execute?: unknown }).execute !== "function");
 	return items.length > 0 ? { ...result, items } : null;
 }
 
+/** Items for a path completion (values keep their leading `/` or quote). */
+function isPathItem(item: AutocompleteItem): boolean {
+	return item.value.startsWith("/") || item.value.startsWith('"');
+}
+
 /**
- * The main prompt's suggestion provider (files, models, internal URLs, emoji,
- * GitHub refs, `/` commands and skills, other extensions' providers) for
- * references only: accepting a suggestion inserts its text and never runs it.
- *
- * - `#` prompt actions are hidden (they only exist to run an action).
- * - `onApplied` side effects from completions are dropped.
- * - `trySyncSlashCompletion` is not forwarded, so Enter submits exactly what was
- *   typed instead of completing a partial `/command` first.
- * The submitted answer is plain text returned to the model; nothing in it runs.
+ * Rank: name starts with the token (0), a hyphen segment does (1), else no
+ * match. Like the host's mid-prompt skill gate, a stray `/word` in prose must
+ * not open a popup through fuzzy name or description hits, since Enter would
+ * then accept it instead of submitting.
  */
-export function answerAutocomplete(base: AutocompleteProvider): AutocompleteProvider {
+function matchTier(name: string, token: string): number | undefined {
+	const lowerName = name.toLowerCase();
+	if (lowerName.startsWith(token)) return 0;
+	if (lowerName.split("-").some(segment => segment.startsWith(token))) return 1;
+	return undefined;
+}
+
+/**
+ * The main prompt's suggestion provider for references only: `@` files, `^`
+ * models, `/` file commands and skills, internal URLs (`skill://`, `rule://`,
+ * `local://`, …), emoji, GitHub refs, and other extensions' providers.
+ *
+ * `/name` anywhere in the answer suggests file commands (`fileCommands`) and
+ * skills, each with the host's command or skill icon. Skills insert as
+ * `/<name>` without the `skill:` prefix. Matching reuses the host provider by
+ * querying it with a synthetic `/<token>` and `/skill:<token>` line. Built-in
+ * and extension commands never appear, and their argument suggestions are
+ * hidden.
+ *
+ * Nothing runs: `#` prompt actions are hidden, completion `onApplied` side
+ * effects are dropped, and `trySyncSlashCompletion` is not forwarded, so Enter
+ * submits exactly what was typed. The answer is plain text for the model.
+ */
+export function answerAutocomplete(base: AutocompleteProvider, fileCommands: ReadonlySet<string>): AutocompleteProvider {
+	let skillNames: Promise<ReadonlySet<string>> | undefined;
+	let knownSkills: ReadonlySet<string> = new Set();
+	const loadSkillNames = (): Promise<ReadonlySet<string>> => {
+		skillNames ??= base.getSuggestions([`/${SKILL_NAMESPACE}`], 0, SKILL_NAMESPACE.length + 1).then(result => {
+			knownSkills = new Set(
+				(result?.items ?? [])
+					.filter(item => item.value.startsWith(SKILL_NAMESPACE))
+					.map(item => item.value.slice(SKILL_NAMESPACE.length)),
+			);
+			return knownSkills;
+		});
+		return skillNames;
+	};
+
+	/** Whether the answer opens with a built-in or extension `/command`. */
+	const inOtherCommandArgs = (lines: readonly string[], cursorLine: number, skills: ReadonlySet<string>): boolean => {
+		if (lines.slice(0, cursorLine).some(line => line.trim() !== "")) return false;
+		const name = LEADING_COMMAND_RE.exec(lines[cursorLine] ?? "")?.[1];
+		return name !== undefined && !fileCommands.has(name) && !skills.has(name);
+	};
+
+	/** File commands then skills matching `token`, as `/`-insertable names. */
+	const referenceSuggestions = async (token: string, signal?: AbortSignal): Promise<AutocompleteItem[]> => {
+		const bare = token.startsWith(SKILL_NAMESPACE) ? token.slice(SKILL_NAMESPACE.length) : token;
+		const [commands, skills] = await Promise.all([
+			base.getSuggestions([`/${bare}`], 0, bare.length + 1, signal),
+			base.getSuggestions([`/${SKILL_NAMESPACE}${bare}`], 0, bare.length + SKILL_NAMESPACE.length + 1, signal),
+		]);
+		const items = [
+			...(commands?.items ?? []).filter(item => fileCommands.has(item.value)),
+			...(skills?.items ?? [])
+				.filter(item => item.value.startsWith(SKILL_NAMESPACE) && item.value !== SKILL_NAMESPACE)
+				.map(item => {
+					const name = item.value.slice(SKILL_NAMESPACE.length);
+					return { ...item, value: name, label: name };
+				}),
+		];
+		const lowerToken = bare.toLowerCase();
+		return items
+			.map((item, index) => ({ item, index, tier: matchTier(item.value, lowerToken) }))
+			.filter((entry): entry is { item: AutocompleteItem; index: number; tier: number } => entry.tier !== undefined)
+			.sort((a, b) => a.tier - b.tier || a.index - b.index)
+			.map(entry => entry.item);
+	};
+
 	return {
 		async getSuggestions(lines, cursorLine, cursorCol, signal, onPartial) {
+			const skills = await loadSkillNames();
+			if (inOtherCommandArgs(lines, cursorLine, skills)) return null;
+			const textBeforeCursor = (lines[cursorLine] ?? "").slice(0, cursorCol);
+			const slashToken = SLASH_TOKEN_RE.exec(textBeforeCursor);
+			if (slashToken) {
+				const items = await referenceSuggestions(slashToken[1] ?? "", signal);
+				// The whole text before the cursor is the prefix so the editor's
+				// accept-time staleness check matches it exactly, mid-line too.
+				if (items.length > 0) return { items, prefix: textBeforeCursor };
+				// No command or skill: keep the host's path completion (`/tmp`).
+				const fallback = await base.getSuggestions(lines, cursorLine, cursorCol, signal);
+				const paths = fallback?.items.filter(isPathItem) ?? [];
+				return paths.length > 0 && fallback ? { ...fallback, items: paths } : null;
+			}
 			const partial = onPartial && ((result: NonNullable<Suggestions>) => {
 				const filtered = withoutPromptActions(result);
 				if (filtered) onPartial(filtered);
@@ -86,10 +174,25 @@ export function answerAutocomplete(base: AutocompleteProvider): AutocompleteProv
 			return withoutPromptActions(await base.getSuggestions(lines, cursorLine, cursorCol, signal, partial));
 		},
 		applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+			const line = lines[cursorLine] ?? "";
+			const slashToken = SLASH_TOKEN_RE.exec(line.slice(0, cursorCol));
+			if (slashToken && !isPathItem(item)) {
+				// Replace the `/token` at the cursor with `/<name> `, like the host.
+				const start = cursorCol - slashToken[1]!.length - 1;
+				const insert = `/${item.value} `;
+				const next = [...lines];
+				next[cursorLine] = `${line.slice(0, start)}${insert}${line.slice(cursorCol)}`;
+				return { lines: next, cursorLine, cursorCol: start + insert.length };
+			}
 			const { onApplied: _ignored, ...edit } = base.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
 			return edit;
 		},
-		getInlineHint: base.getInlineHint?.bind(base),
+		getInlineHint: base.getInlineHint
+			? (lines, cursorLine, cursorCol) =>
+					inOtherCommandArgs(lines, cursorLine, knownSkills)
+						? null
+						: (base.getInlineHint?.(lines, cursorLine, cursorCol) ?? null)
+			: undefined,
 		trySyncInlineReplace: base.trySyncInlineReplace?.bind(base),
 		getForceFileSuggestions: base.getForceFileSuggestions?.bind(base),
 		shouldTriggerFileCompletion: base.shouldTriggerFileCompletion?.bind(base),
@@ -103,6 +206,8 @@ export interface AnswerEditorOptions {
 	maxHeight: number;
 	/** Main prompt suggestion provider, when the host has built one. */
 	autocomplete: AutocompleteProvider | undefined;
+	/** Names of file commands (`~/.agents/commands`, `~/.omp/commands`, project commands) offered under `/`. */
+	fileCommands: ReadonlySet<string>;
 	/** Receives the expanded text: paste markers and image chips become their text. */
 	onSubmit(text: string): void;
 	onCancel(): void;
@@ -152,7 +257,9 @@ export class AnswerEditor extends HookEditorComponent {
 			const keys = keybindings.getKeys(action);
 			if (keys.length > 0) editor.setActionKeys(action, keys);
 		}
-		if (options.autocomplete) editor.setAutocompleteProvider(answerAutocomplete(options.autocomplete));
+		if (options.autocomplete) {
+			editor.setAutocompleteProvider(answerAutocomplete(options.autocomplete, options.fileCommands));
+		}
 
 		// Prompt-style chrome, as in HookEditorComponent.
 		editor.setBorderVisible(false);

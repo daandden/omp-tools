@@ -27,16 +27,22 @@ in the interactive picker. Outside the TUI it delegates to native `ask`.
 ## Important Files
 
 - `extensions/flexible-ask.ts`: tool registration, TUI/native routing, and
-  native-shaped result formatting.
+  native-shaped result `details`.
+- `extensions/ask-result.ts`: the labeled model-facing answer text (the model
+  sees only this text, never `details`).
 - `extensions/ask-dialog.ts`: Markdown picker mirroring the native pi-tui
   `AskDialogComponent` (tabs, Submit review, multi-select, Other, notes,
   timeout); diff it against upstream when OMP changes the native dialog.
 - `extensions/ask-editor.ts`: `Other`/note text box. Wraps the main prompt's
   `CustomEditor` with the host's suggestion provider (borrowed in
   `flexible-ask.ts` through `ctx.ui.addAutocompleteProvider`) for references
-  only: `#` prompt actions are hidden, completion `onApplied` side effects are
-  dropped, and `trySyncSlashCompletion` is not forwarded, so `/commands` and
-  `/skill:` names insert text and never run. It subclasses
+  only: `/` suggests file commands (names from `discoverSlashCommands` in
+  `flexible-ask.ts`) and skills without the `skill:` prefix, found by querying
+  the host provider with synthetic `/<token>` and `/skill:<token>` lines and
+  gated to name or hyphen-segment prefixes; built-in and extension commands are
+  dropped, `#` prompt actions are hidden,
+  completion `onApplied` side effects are dropped, and `trySyncSlashCompletion`
+  is not forwarded, so nothing typed runs. It subclasses
   `HookEditorComponent` only so the host routes the external-editor key to it
   while it holds focus; the base editor is dropped, and `pasteText` is hidden so
   the host does not claim the image-paste key.

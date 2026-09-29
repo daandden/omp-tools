@@ -70,6 +70,8 @@ export interface AskImage extends PastedImage {
 
 export interface MarkdownAskResultItem extends ExtensionAskDialogResultItem {
 	images: AskImage[];
+	/** What `note` is attached to: a picked option's label, or `undefined` for the `Other` text. */
+	noteFor?: string;
 }
 
 export interface MarkdownAskResult {
@@ -85,6 +87,8 @@ interface DialogOptions {
 	notify(message: string): void;
 	/** Main prompt suggestion provider, borrowed from the host. */
 	autocomplete(): AutocompleteProvider | undefined;
+	/** File command names offered under `/` in the answer box. */
+	fileCommands: ReadonlySet<string>;
 }
 
 interface QuestionState {
@@ -176,25 +180,28 @@ function questionRows(question: ExtensionAskDialogQuestion): QuestionRow[] {
 	return rows;
 }
 
-function noteForSubmittedAnswer(question: ExtensionAskDialogQuestion, state: QuestionState): string | undefined {
+/** The note to submit, and the row it belongs to. Notes on rows that are not picked are dropped. */
+function submittedNote(
+	question: ExtensionAskDialogQuestion,
+	state: QuestionState,
+): { note: string; noteFor: string | undefined } | undefined {
 	if (state.note === undefined || state.noteRowKey === undefined) return undefined;
-	if (state.noteRowKey === "other") return state.customInput !== undefined ? state.note : undefined;
+	if (state.noteRowKey === "other") {
+		return state.customInput !== undefined ? { note: state.note, noteFor: undefined } : undefined;
+	}
 	const match = /^option:(\d+)$/.exec(state.noteRowKey);
 	const option = match?.[1] === undefined ? undefined : question.options[Number.parseInt(match[1], 10)];
-	return option && state.selectedOptions.has(option.label) ? state.note : undefined;
+	return option && state.selectedOptions.has(option.label) ? { note: state.note, noteFor: option.label } : undefined;
 }
 
+/** Submit-tab summary: picked options, then the `Other` text, for both single and multi questions. */
 function answerSummary(question: ExtensionAskDialogQuestion, state: QuestionState): string {
 	const display = displayOptionLabels(question);
-	const selected = question.options.flatMap((option, index) =>
+	const parts = question.options.flatMap((option, index) =>
 		state.selectedOptions.has(option.label) ? [display[index] ?? sanitizeCarriageReturns(option.label)] : [],
 	);
-	if (question.multi) {
-		if (state.customInput !== undefined) selected.push(`Other: “${inlineText(state.customInput)}”`);
-		return selected.length > 0 ? selected.join(", ") : theme.fg("warning", "unanswered");
-	}
-	if (state.customInput !== undefined) return `“${inlineText(state.customInput)}”`;
-	return selected[0] ?? theme.fg("warning", "unanswered");
+	if (state.customInput !== undefined) parts.push(`Other: “${inlineText(state.customInput)}”`);
+	return parts.length > 0 ? parts.join(", ") : theme.fg("warning", "unanswered");
 }
 
 /** Preview blocks: Markdown, with fenced code syntax-highlighted (native parity). */
@@ -601,7 +608,7 @@ class MarkdownAskDialog implements Component, Focusable {
 			if (!question || !state) continue;
 			const summary = `${theme.fg("dim", `${index + 1}. ${tabLabel(question, index)}:`)} ${answerSummary(question, state)}`;
 			lines.push(truncateToWidth(summary, width, Ellipsis.Unicode));
-			const note = noteForSubmittedAnswer(question, state);
+			const note = submittedNote(question, state)?.note;
 			if (note?.trim()) {
 				lines.push(theme.fg("muted", `   Note: ${truncateToWidth(inlineText(note), Math.max(1, width - 9), Ellipsis.Unicode)}`));
 			}
@@ -640,11 +647,24 @@ class MarkdownAskDialog implements Component, Focusable {
 		const cancel = `${cancelKeyLabel()} cancel`;
 		const scroll = indicator ? ` · ${pageKeysLabel()} ${indicator} scroll` : "";
 		if (this.#isSubmitTab()) return `Enter submit · ↑/↓ scroll · Tab/←/→ · ${cancel}`;
-		const question = this.#questions[this.#questionIndex()];
+		const index = this.#questionIndex();
+		const question = this.#questions[index];
+		const state = this.#states[index];
 		const enterAction = this.#questions.length > 1 ? "next" : "submit";
-		const action = question?.multi ? `Space toggle · Enter ${enterAction}` : "Enter select";
+		const onPicked = question && state ? this.#isPickedRow(question, state, state.cursorIndex) : false;
+		const enter = question?.multi ? `Space toggle · Enter ${enterAction}` : onPicked ? "Enter unselect" : "Enter select";
+		const note = onPicked ? "n add note to this choice" : "n note";
 		const tabs = this.#hasSubmitTab() ? " · Tab/←/→" : "";
-		return `${action} · n note · ↑/↓ move${tabs}${scroll} · ${cancel}`;
+		return `${enter} · ${note} · ↑/↓ move${tabs}${scroll} · ${cancel}`;
+	}
+
+	/** Whether the row at `rowIndex` is currently answered: a picked option, or `Other` with text. */
+	#isPickedRow(question: ExtensionAskDialogQuestion, state: QuestionState, rowIndex: number): boolean {
+		const row = questionRows(question)[rowIndex];
+		if (!row) return false;
+		if (row.kind === "other") return state.customInput !== undefined;
+		const option = question.options[row.optionIndex ?? -1];
+		return option !== undefined && state.selectedOptions.has(option.label);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -731,6 +751,15 @@ class MarkdownAskDialog implements Component, Focusable {
 			this.#requestRender();
 			return;
 		}
+		if (state.selectedOptions.has(option.label)) {
+			// Enter on the picked option unselects it (the Other text, if any, stays).
+			state.selectedOptions.clear();
+			if (state.noteRowKey === row.key) this.#clearNote(state);
+			this.#requestRender();
+			return;
+		}
+		// Single choice has one answer: picking an option replaces any Other text.
+		// Notes (`n`) supplement the choice instead.
 		state.selectedOptions = new Set([option.label]);
 		state.customInput = undefined;
 		state.customImages = [];
@@ -765,6 +794,7 @@ class MarkdownAskDialog implements Component, Focusable {
 		}
 		state.customInput = value;
 		state.customImages = images;
+		// Single choice has one answer: Other text replaces the picked option.
 		if (!question.multi) {
 			state.selectedOptions.clear();
 			if (state.noteRowKey !== undefined && state.noteRowKey !== row.key) this.#clearNote(state);
@@ -822,6 +852,7 @@ class MarkdownAskDialog implements Component, Focusable {
 			prefill: request.prefill,
 			maxHeight: PROMPT_EDITOR_ROWS,
 			autocomplete: this.#options.autocomplete(),
+			fileCommands: this.#options.fileCommands,
 			onSubmit: value => {
 				if (!this.#closed) {
 					// Deleting an image chip (or its `[Image #N]` text) drops that image.
@@ -936,7 +967,7 @@ class MarkdownAskDialog implements Component, Focusable {
 		const results: MarkdownAskResultItem[] = this.#questions.flatMap((question, index) => {
 			const state = this.#states[index];
 			if (!state) return [];
-			const note = noteForSubmittedAnswer(question, state);
+			const note = submittedNote(question, state);
 			return [
 				{
 					id: question.id,
@@ -947,7 +978,8 @@ class MarkdownAskDialog implements Component, Focusable {
 						.map(option => option.label)
 						.filter(label => state.selectedOptions.has(label)),
 					customInput: state.customInput,
-					note,
+					note: note?.note,
+					noteFor: note?.noteFor,
 					timedOut: state.timedOut || undefined,
 					images: [
 						...(state.customInput !== undefined ? state.customImages : []),

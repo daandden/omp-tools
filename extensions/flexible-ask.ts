@@ -20,12 +20,13 @@ import type {
 	QuestionResult,
 	ToolDefinition,
 } from "@oh-my-pi/pi-coding-agent";
-import { settings } from "@oh-my-pi/pi-coding-agent";
+import { discoverSlashCommands, logger, settings } from "@oh-my-pi/pi-coding-agent";
 import { cfgAskNotify, cfgAskTimeout } from "@oh-my-pi/pi-coding-agent/modes/settings";
 import { ToolAbortError } from "@oh-my-pi/pi-coding-agent/tools/tool-errors";
 import { type AutocompleteProvider, TERMINAL } from "@oh-my-pi/pi-tui";
 import { sanitizeCarriageReturns } from "@oh-my-pi/pi-tui/render";
 import { type MarkdownAskResult, showMarkdownAskDialog } from "./ask-dialog";
+import { formatAskAnswers } from "./ask-result";
 import flexibleAskDescription from "./flexible-ask.md" with { type: "text" };
 
 /** Labels the native runtime reserves for its own action rows. */
@@ -71,49 +72,20 @@ function nativeRejects(questions: readonly ExtensionAskDialogQuestion[]): boolea
 	return false;
 }
 
-function indentBlock(text: string): string {
-	return text
-		.split("\n")
-		.map(line => `  ${line}`)
-		.join("\n");
-}
-
-/** Model-facing text for a single answered question (native wording). */
-function formatSingleAnswer(result: QuestionResult): string {
-	const parts: string[] = [];
-	if (result.selectedOptions.length > 0) {
-		const selected = result.multi
-			? `User selected: ${result.selectedOptions.join(", ")}`
-			: `User selected: ${result.selectedOptions[0]}`;
-		parts.push(result.timedOut ? `${selected} (auto-selected after timeout)` : selected);
+/**
+ * Names of commands defined as files (`~/.agents/commands`, `~/.omp/commands`,
+ * project command folders), the only `/` suggestions in the answer box. Bundled
+ * templates carry no source provider and are left out. Loaded per dialog so
+ * new or renamed files show up without a reload.
+ */
+async function loadFileCommandNames(cwd: string): Promise<ReadonlySet<string>> {
+	try {
+		const commands = await discoverSlashCommands({ cwd });
+		return new Set(commands.filter(command => command._source !== undefined).map(command => command.name));
+	} catch (error) {
+		logger.warn("omp-tools: failed to load file commands for ask suggestions", { error: String(error) });
+		return new Set();
 	}
-	if (result.customInput !== undefined) {
-		parts.push(
-			result.customInput.includes("\n")
-				? `User provided custom input:\n${indentBlock(result.customInput)}`
-				: `User provided custom input: ${result.customInput}`,
-		);
-	}
-	if (result.note) {
-		parts.push(
-			result.note.includes("\n") ? `User added note:\n${indentBlock(result.note)}` : `User added note: ${result.note}`,
-		);
-	}
-	if (parts.length > 0) return parts.join("\n");
-	return result.multi ? "User did not select any options" : "User cancelled the selection";
-}
-
-/** One line per question in a multi-question answer (native wording). */
-function formatAnswerLine(result: QuestionResult): string {
-	const noteSuffix = result.note ? ` (note: ${result.note})` : "";
-	if (result.customInput !== undefined) return `${result.id}: "${result.customInput}"${noteSuffix}`;
-	if (result.selectedOptions.length > 0) {
-		const suffix = `${result.timedOut ? " (auto-selected after timeout)" : ""}${noteSuffix}`;
-		return result.multi
-			? `${result.id}: [${result.selectedOptions.join(", ")}]${suffix}`
-			: `${result.id}: ${result.selectedOptions[0]}${suffix}`;
-	}
-	return result.multi ? `${result.id}: []${noteSuffix}` : `${result.id}: (cancelled)${noteSuffix}`;
 }
 
 async function askWithMarkdownDialog(
@@ -141,6 +113,7 @@ async function askWithMarkdownDialog(
 			cwd: ctx.cwd,
 			notify: message => ctx.ui.notify(message, "warning"),
 			autocomplete,
+			fileCommands: await loadFileCommandNames(ctx.cwd),
 		});
 	} catch (error) {
 		if (error instanceof Error && error.name === "AbortError") throw new ToolAbortError("Ask input was cancelled");
@@ -164,6 +137,7 @@ async function askWithMarkdownDialog(
 			timedOut: answer?.timedOut,
 		};
 	});
+	const text = formatAskAnswers(questions, dialogResult.results);
 	// Pasted images follow the answer text, each introduced by the label the
 	// user's text refers to (`[Image #N]`), plus its file path when pasted from disk.
 	const imageBlocks: AgentToolResult<AskToolDetails>["content"] = dialogResult.results.flatMap(answer =>
@@ -189,12 +163,9 @@ async function askWithMarkdownDialog(
 			note: single.note,
 			timedOut: single.timedOut,
 		};
-		return { content: [{ type: "text", text: formatSingleAnswer(single) }, ...imageBlocks], details };
+		return { content: [{ type: "text", text }, ...imageBlocks], details };
 	}
-	return {
-		content: [{ type: "text", text: `User answers:\n${results.map(formatAnswerLine).join("\n")}` }, ...imageBlocks],
-		details: { results },
-	};
+	return { content: [{ type: "text", text }, ...imageBlocks], details: { results } };
 }
 
 export default function flexibleAsk(pi: ExtensionAPI) {

@@ -15,16 +15,36 @@ view instead of acting on a hidden row. The picker keeps the native controls:
 tabs and a Submit review for several or multi-select questions, `Other (type
 your own)`, `n` notes, `ask.timeout` auto-selection, and `ask.notify`.
 
+Answering differs from native `ask` in two ways:
+
+- A single-choice question still has one answer, an option or `Other` text.
+  Add detail to the chosen option with a note: with the cursor on it, the
+  footer shows `n add note to this choice`. Enter on the picked option
+  unselects it.
+- The agent gets a compact labeled summary instead of `id: value` lines: each
+  question's id and first line, `Selected:` with a short description of each
+  option, `Other:` for your own text, `Note (<option>):`, and `Unanswered` for
+  skipped questions. Checkbox questions send ticked options and `Other` text
+  together (native ask drops the ticks).
+
 The `Other` answer and note editors are the main prompt's own editor, so they
-behave like it: the same suggestions (`@` files, `^` models, internal URLs,
-emoji, GitHub refs, and other extensions' providers), ghost-text word
-completion, typo detection and autocorrect, vim mode, and multi-line input
-(Shift+Enter, Ctrl+J, or Alt+Enter inserts a newline; Enter or Ctrl+Q submits).
-Ctrl+C clears the text (it never exits omp from here). `/` commands and
-`/skill:` names are suggested so you can reference them, including at the start
-of the answer; accepting one only inserts its text, Enter submits exactly what
-you typed, and nothing in the answer runs. `#` prompt actions are not offered.
-There is no history, push-to-talk, or draft saving. The external editor key
+behave like it: the same suggestions (`@` files, `^` models, `/` file commands
+and skills, internal URLs such as `skill://`, `rule://`, `local://`, `agent://`,
+`artifact://`, and `omp://`, emoji, GitHub refs, and other extensions'
+providers), ghost-text word completion, typo detection and autocorrect, vim
+mode, and multi-line input (Shift+Enter, Ctrl+J, or Alt+Enter inserts a
+newline; Enter or Ctrl+Q submits). Ctrl+C clears the text (it never exits omp
+from here).
+
+Answers only reference things; nothing in them runs. `/` suggests commands you
+keep as files (`~/.agents/commands`, `~/.omp/commands`, project command folders)
+and skills, each with its own icon; skills insert as `/<name>` without the
+`skill:` prefix, and only names that start with (or have a hyphenated part
+starting with) what you typed are offered. Built-in and extension commands are
+not suggested. `skill://` and `rule://` also work. `#` prompt actions are
+hidden, accepting a suggestion only inserts its text, and Enter submits exactly
+what you typed, so a `/command` is never run or auto-completed. There is no
+history, push-to-talk, or draft saving. The external editor key
 (`app.editor.external`, Ctrl+G by default) opens the current text in
 `$VISUAL`/`$EDITOR` and writes the result back.
 
