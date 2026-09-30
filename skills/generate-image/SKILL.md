@@ -13,26 +13,26 @@ The prompt is used exactly as written, so put everything the image needs in it. 
 
 Write the prompt as a short spec in plain sentences, in this order:
 
-1. **Purpose and image type**: "Landing-page hero photo", "Flat vector diagram for a README".
+1. **Purpose and image type**: what the image is for and what kind of image it is.
 2. **Scene and subject**: who or what, doing what, where.
 3. **Details that matter**: medium and style, composition, lighting (source, direction, color), palette, materials.
-4. **Shape** in words, with the composition to match: "Wide 16:9 landscape, horizon in the lower third"; "Square, centered with generous padding".
-5. **Exclusions** at the end: "No text, no watermark, no logos."
+4. **Shape**: orientation and aspect ratio in words, with a composition that fits it.
+5. **Exclusions**: a short closing list of unwanted artifacts such as text, watermarks, or logos.
 
-- Detailed request: keep the user's words, tidied into this order.
-- Vague request: add only framing, polish, and layout. Leave out props, brands, slogans, and palettes nobody asked for.
-- Complex scene: use labeled lines ("Subject:", "Composition:", "Text:") or numbered panels.
-- Describe what fills the frame ("an empty cobblestone lane"), not what is missing ("no cars").
-- Use concrete visual words ("soft window light from the left"), not praise ("beautiful lighting", "8K"). For photos, write "photorealistic" and describe real texture.
-- Write plain sentences, not `--ar`, `--no`, `::` weights, or keyword lists.
+- Detailed request: keep the user's words, arranged in this order.
+- Vague request: add only framing, polish, and layout. Add no props, brands, slogans, or palettes the user didn't ask for.
+- Complex scene: use labeled lines or numbered panels.
+- Describe what fills the frame, not what is absent.
+- Use concrete visual descriptions, not praise or resolution buzzwords. For photos, ask for photorealism and describe real texture.
+- Write plain sentences, not other tools' flags, weights, or keyword lists.
 
 ## Text in the image
 
-- Put the exact words in quotes and keep them short.
-- Give the font style, size, color, and placement, and say how many times the text appears ("exactly once").
-- End with "No other text."
-- Spell rare words letter by letter: `"Qyrell" (Q-Y-R-E-L-L)`.
-- For diagrams, charts, and UI, write the real labels and data as a spec, and describe a UI as if the product already ships.
+- Quote the exact words and keep them short.
+- Give the font style, size, color, and placement, and how many times the text appears.
+- State that no other text is allowed.
+- Spell rare words letter by letter.
+- For diagrams, charts, and UI, write the real labels and data as a spec, and describe a UI as a finished product.
 
 ## Edits and reference images
 
@@ -42,20 +42,20 @@ Pick the references:
 - Use one argument or the other, never both.
 
 Write the edit prompt as one change plus a keep list:
-- Give each image a number and a role: "Image 1: edit target. Image 2: style reference only."
+- Give each image a number and a role, such as edit target, source of an element, or style reference.
 - Style-only references make a new image, so describe the new subject in full.
-- State the change: "Edit image 1: replace only the grey sofa with a brown leather chesterfield."
-- List what stays unchanged: face, features, hair, pose, layout, camera angle, framing, lighting, labels, other objects.
-- Compositing: "Place the dog from image 2 to the right of the woman in image 1; match lighting, perspective, scale, and shadows."
-- Text edits: `Replace "Boiler" with "Caldera"; keep typography and placement.`
+- State the one change, naming exactly what changes.
+- List what stays unchanged: identity and features, pose, layout, camera angle, framing, lighting, labels, other objects.
+- When combining images, name the source element, where it goes, and what it must match (lighting, perspective, scale, shadows).
+- For text edits, quote both the old and the new text, and keep the typography and placement.
 - Keep the original framing unless the user asks for a new shape.
 - For a consistent character or product across a series, pass the earlier images and repeat the same trait description each time.
 
 ## Transparency
 
-- Set `transparent_background: true` and also describe an isolated subject: "One die-cut sticker of an orange cat; everything outside the outline fully transparent. No backdrop, checkerboard, or shadow." Describing a backdrop overrides the flag.
+- Set `transparent_background: true` and also describe an isolated subject on a fully transparent background, with no backdrop, checkerboard, or shadow. Describing a backdrop overrides the flag.
 - For charts and icons, name the regions that stay transparent.
-- On every later edit, set the flag again and write "Preserve the transparent background."
+- On every later edit, set the flag again and ask to preserve the transparent background.
 - A checkerboard painted into the result means transparency was lost: retry and restate it.
 
 ## Review and iterate
@@ -63,9 +63,9 @@ Write the edit prompt as one change plus a keep list:
 Look at every result: spelling, labels, chart numbers, the keep list, and the shape.
 - Fix one thing per call: send the result back as image 1 with the change and the full keep list.
 - If edits drift, restart from the original with all accepted changes in one prompt.
-- If one part regressed, send both: "Image 1: original; image 2: draft. Keep image 2's new jacket; restore the face exactly as in image 1."
+- If one part regressed, send the original and the draft with roles, and say which parts to take from each.
 - If a new image reports quality `low`, add concrete detail (materials, lighting, placement) and generate again.
-- For regions that must stay pixel-identical (an approved face, a logo), paste them back from the original with local tools.
+- For regions that must stay pixel-identical, paste them back from the original with local tools.
 - For an exact aspect ratio, crop the result.
 
 ## Files
