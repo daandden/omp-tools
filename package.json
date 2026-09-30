@@ -2,7 +2,7 @@
 	"name": "omp-tools",
 	"version": "0.2.0",
 	"private": true,
-	"description": "OMP flexible ask adapter over the native question picker",
+	"description": "OMP flexible ask adapter and advisor concern follow-up",
 	"license": "MIT",
 	"type": "module",
 	"scripts": {
@@ -17,7 +17,8 @@
 	},
 	"omp": {
 		"extensions": [
-			"./extensions/flexible-ask.ts"
+			"./extensions/flexible-ask.ts",
+			"./extensions/advisor-concern-wake.ts"
 		]
 	}
 }

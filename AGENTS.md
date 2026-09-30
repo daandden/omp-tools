@@ -2,13 +2,19 @@
 
 ## Project Overview
 
-`omp-tools` is an Oh My Pi (OMP) plugin that shadows the native `ask` tool. It
-changes model-facing option-count guidance and shows questions as full Markdown
-in the interactive picker. Outside the TUI it delegates to native `ask`.
+`omp-tools` is an Oh My Pi (OMP) plugin. It shadows the native `ask` tool to
+change model-facing option-count and when-to-ask guidance and show questions
+as full Markdown in the interactive picker; outside the TUI it delegates to
+native `ask`. It ships an always-apply rule that routes all user input through
+`ask`. It also wakes the agent for advisor concerns that arrive after its final
+answer.
 
 ## Architecture & Data Flow
 
-- `package.json` registers `extensions/flexible-ask.ts` as its sole entry point.
+- `package.json` registers `extensions/flexible-ask.ts` and
+  `extensions/advisor-concern-wake.ts` as entry points. OMP also loads
+  `rules/*.md` from the plugin root (the `omp-plugins` discovery provider,
+  priority 90); a same-named rule in `~/.omp/agent/rules/` shadows it.
 - The extension registers a shadow `ask` description/schema. In `ctx.mode ===
   "tui"` with `ctx.hasUI`, it shows its own picker (`extensions/ask-dialog.ts`)
   through `ctx.ui.custom` and formats results with native wording and details.
@@ -50,8 +56,28 @@ in the interactive picker. Outside the TUI it delegates to native `ask`.
   editors, using the host's clipboard/image-loading helpers.
 - `extensions/flexible-ask.md`: static model-facing description; keep aligned
   with upstream `packages/coding-agent/src/prompts/tools/ask.md` except the
-  option-count caution.
+  option count (no fixed count instead of 2–5) and user-owned decisions (ask
+  for decisions a skill, workflow, or instruction leaves to the user; never
+  default-pick those).
+- `rules/use-ask-for-user-input.md`: always-apply rule; all user input goes
+  through `ask`, overriding question formats skills prescribe.
 - `extensions/assets.d.ts`: ambient typing for the static Markdown import.
+- `extensions/advisor-concern-wake.ts`: listens for preserved `advisor` cards
+  (`message_end`, `customType: "advisor"`) with `concern` notes and, once the
+  session is idle, sends them with `deliverAs: "aside"`. Keep `aside`: its idle
+  branch in core `sendCustomMessage` folds into context under plan mode or an
+  active user interrupt (`autoResumeSuppressed`) and defers for ACP clients; a
+  steer with `triggerTurn` only checks ACP. Local guards: queued messages, a
+  per-prompt wake cap (reset on `before_agent_start`, which fires for user
+  prompts in every mode but not for the extension's agent-initiated turn;
+  `input` is TUI-only), and dropping held notes on `session_before_switch` /
+  `_branch` / `_tree` (the runner and its timers outlive `/new`, and core's
+  aside generation check runs at send time); the after-events reset the cap.
+  `advisor.immuneTurns` is core-private and not applied. Disabled when
+  `ctx.mode` is `"print"` or `"json"`: print mode enters a preserve-only
+  headless advisor drain after the last prompt (`prepareForHeadlessAdvisorDrain`),
+  prints the final text, then disposes, so a woken turn would never be emitted.
+  `advisor-concern-wake.md` holds the wake prompt.
 - `package.json`: OMP discovery, scripts, and SDK dependency pins.
 - `tsconfig.json`: strict, no-emit TypeScript configuration for extensions.
 - `README.md` and `CHANGELOG.md`: update when changing user-visible behavior.
@@ -70,7 +96,11 @@ omp plugin link "$PWD"
 `bun run check` runs `scripts/check-sdk-version.ts` (warns when installed SDK
 types differ from `omp --version`) and then `tsgo --noEmit`. `bun run update`
 runs `scripts/update-sdk.ts`: `omp update`, `bun update --latest` for both SDK
-packages, restores their `"latest"` specifiers, reinstalls, and checks.
+packages, restores their `"latest"` specifiers, reinstalls, and checks. Both
+scripts run omp through `scripts/host-env.ts`: `bun run` prepends
+`node_modules/.bin`, where the SDK links its `cli.js` as `omp`, and Bun Shell
+ignores `.env()` PATH when resolving commands, so a bare `omp` would hit the
+dev dependency instead of the installed binary.
 
 There is no separate build, lint, formatter, or standalone run script. OMP loads
 linked source directly. Start a **new OMP session** after linking or editing;

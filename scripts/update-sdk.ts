@@ -4,12 +4,14 @@
 // afterwards and reinstalls to record it in bun.lock.
 import * as path from "node:path";
 import { $ } from "bun";
+import { hostEnv, hostOmp } from "./host-env";
 
 const SDK_PACKAGES = ["@oh-my-pi/pi-coding-agent", "@oh-my-pi/pi-tui"];
 const root = path.resolve(import.meta.dir, "..");
 const manifestPath = path.join(root, "package.json");
 
-await $`omp update`.cwd(root);
+if (!hostOmp) throw new Error("omp not found on PATH outside node_modules/.bin");
+await $`${hostOmp} update`.cwd(root).env(hostEnv);
 await $`bun update --ignore-scripts --latest ${SDK_PACKAGES}`.cwd(root);
 
 const manifest = await Bun.file(manifestPath).json();

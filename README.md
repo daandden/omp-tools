@@ -1,11 +1,19 @@
 # omp-tools
 
-Local OMP adapter for flexible questions. Formerly `omp-ask`.
+Local OMP adapters: flexible questions and advisor concern follow-up. Formerly
+`omp-ask`.
 
 ## `ask`
 
 Replaces the model-facing option-count guidance with “as many concise, distinct
-options as there are materially different tradeoffs — no fixed count.”
+options as there are materially different tradeoffs — no fixed count.” It also
+tells the model to ask when a skill, workflow, or instruction leaves a decision
+to the user (interview rounds, approvals, confirmations), not only for
+tradeoffs.
+
+The plugin ships an always-apply rule, `rules/use-ask-for-user-input.md`: all
+user input goes through `ask`, overriding question formats that skills
+prescribe (for example grilling's `❓ Q1 … ➡️` rounds).
 
 In the interactive TUI the wrapper shows its own picker so questions keep their
 Markdown: headings, lists, paragraph breaks, and code blocks. Option
@@ -65,6 +73,34 @@ Keep native `ask` enabled for delegation:
 ask:
   enabled: true
 ```
+
+## Advisor concern follow-up
+
+OMP steers an advisor `concern` into the agent while it works, but a concern
+that arrives after the final answer only shows as a card until your next
+prompt. This extension starts a new turn for such concerns and asks the agent to
+check each one: fix it if it holds, or say briefly why not. Nits stay passive,
+and blockers already wake the agent in OMP.
+
+It sends the concern the same way OMP sends a note that should start a turn
+when idle, so OMP's own rules still apply. After you interrupt a run (Esc), or
+in plan mode, the concern is added to the conversation without starting a turn.
+ACP clients that refuse agent-started turns get it on their next turn. The
+extension also skips a wake when you have already queued a message, and wakes
+at most twice per prompt you send so the advisor and agent cannot loop. The
+count resets on every prompt you send, in the TUI, RPC, and ACP alike.
+Switching sessions (`/new`, resume, fork) or jumping in `/tree` drops any
+concern still waiting, so it never lands in the other conversation, and resets
+the count.
+
+Limits:
+
+- Extensions cannot see the `advisor.immuneTurns` cooldown, so it does not
+  delay these wakes.
+- Off in print and JSON mode (`omp -p`, `--mode json`). After the last prompt,
+  print mode prints the final answer and only records late advisor notes before
+  exiting, so a new turn's answer would never be shown. Late concerns there stay
+  as recorded advisor notes.
 
 ## Install
 

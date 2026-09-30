@@ -4,11 +4,12 @@
 // plugin. Warning only: typechecking still runs.
 import * as path from "node:path";
 import { $ } from "bun";
+import { hostEnv, hostOmp } from "./host-env";
 
 const SDK_PACKAGES = ["@oh-my-pi/pi-coding-agent", "@oh-my-pi/pi-tui"];
 
-const hostOutput = await $`omp --version`.quiet().nothrow();
-const host = hostOutput.exitCode === 0 ? /(\d+\.\d+\.\d+\S*)/.exec(hostOutput.text())?.[1] : undefined;
+const hostOutput = hostOmp ? await $`${hostOmp} --version`.env(hostEnv).quiet().nothrow() : undefined;
+const host = hostOutput?.exitCode === 0 ? /(\d+\.\d+\.\d+\S*)/.exec(hostOutput.text())?.[1] : undefined;
 if (!host) {
 	console.warn("warning: could not read `omp --version`; skipping SDK/host version check");
 	process.exit(0);

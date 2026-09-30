@@ -4,6 +4,8 @@
 
 ### Added
 
+- Woke the agent to check advisor concerns that arrive after its final answer,
+  instead of leaving them as a card until the next prompt.
 - Showed ask questions, option descriptions, and previews as full Markdown in the
   interactive picker instead of one condensed line.
 - Allowed pasting images into ask `Other` answers and notes; they reach the model
@@ -13,6 +15,8 @@
   word completion, autocorrect, vim mode, and multi-line keys; the external
   editor opens with the current text. Skills insert as `/<name>`. Nothing typed
   runs; built-in commands and `#` actions are not offered.
+- Shipped an always-apply rule (`rules/use-ask-for-user-input.md`) that sends
+  all user input through `ask`, overriding question formats prescribed by skills.
 
 ### Changed
 
@@ -21,6 +25,11 @@
   options with descriptions, the user's own `Other` text, notes, unanswered).
 - Showed `n add note to this choice` and `Enter unselect` on a picked
   single-choice ask option.
+- Told the model to use ask for decisions a skill, workflow, or instruction
+  leaves to the user, not only for tradeoffs; skills such as grilling asked
+  their rounds as chat text.
+- Resynced the ask description with OMP's current native wording, restoring
+  "Clarifying custom input? Answer first; re-ask unresolved questions."
 
 ### Fixed
 
