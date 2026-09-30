@@ -97,8 +97,22 @@ Arguments match Codex's:
 
 Unknown arguments are rejected with an error. The backend ignores size and
 quality, so the prompt should state the aspect ratio. Output is about 1.57
-megapixels, and the server chooses the quality. The bundled
-`generate-image` skill teaches the model this.
+megapixels, and the server chooses the quality.
+
+The bundled `generate-image` skill teaches the model how to prompt, based on
+OpenAI's GPT Image guidance and other vendors' prompting guides
+(`docs/research/image-prompting-*.md`). It covers:
+
+- the prompt order: purpose, scene, details, shape in words, and a short list
+  of things to leave out
+- exact text in quotes, with a count and "No other text"
+- edits as one change plus a list of what stays unchanged, with a role for
+  each reference image
+- transparency described in the prompt, not only the flag
+- one change per retry
+
+`skills/generate-image/prompt-patterns.md` holds templates and before/after
+examples.
 
 PNG, GIF, BMP, and other non-JPEG references are sent as lossless WebP (about
 25% smaller than PNG, same image-token cost). JPEG and WebP references are sent
@@ -130,7 +144,7 @@ generate_image:
 OMP steers an advisor `concern` into the agent while it works, but a concern
 that arrives after the final answer only shows as a card until your next
 prompt. This extension starts a new turn for such concerns and asks the agent to
-check each one: fix it if it holds, or say briefly why not. Nits stay passive,
+verify each one and fix any that hold. Nits stay passive,
 and blockers already wake the agent in OMP.
 
 It sends the concern the same way OMP sends a note that should start a turn
