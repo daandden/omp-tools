@@ -1,6 +1,6 @@
 # Prompt patterns for generate_image
 
-Fill the brackets and drop lines that don't help. Sources are in `docs/research/image-prompting-*.md` in the omp-tools repo.
+Fill the brackets and drop lines that don't help.
 
 ## Templates
 
