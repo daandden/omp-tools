@@ -45,7 +45,7 @@ The prompt is used exactly as written, and the model sees nothing else: no conve
 - Rare words are spelled out letter by letter.
 - The prompt states that no other text is allowed.
 - Diagrams, charts, slides, and UI are written as a spec: the real labels and data, the required components, and a layout. Facts and numbers come from the prompt, not the model's knowledge. A UI is described as a finished product. Meaning never depends on color alone.
-- Logos, mascots, and characters are requested as original, with no existing trademarks. A real brand logo is never redrawn; its area is left clear so the official artwork can be placed there.
+- A new logo, mascot, or character that the prompt designs from scratch is requested as original, with no existing trademarks. A character or mark the user supplies or references keeps its identity, as in any keep list. When an existing logo must match its official artwork exactly, leave its area clear and composite the official file afterwards.
 - Icons: one concept, few simple shapes, consistent stroke and perspective, centered with padding, no text.
 
 ## Edits and reference images
@@ -94,7 +94,7 @@ Check the result against every requirement in the prompt: coverage, text spellin
 - Fix an edit one thing per call: send the result back as image 1 with the change and the full keep list.
 - If one part regressed, send the original and the draft with roles, and say which parts to take from each.
 - For regions that must stay pixel-identical, paste them back from the original with local tools. For an exact aspect ratio, crop.
-- Tell the user about anything the tool can't deliver: vector output, exact pixel sizes, official logo artwork.
+- Tell the user about anything the tool can't deliver: vector output, exact pixel sizes, an exact match to official logo artwork.
 
 ## Files
 
