@@ -86,9 +86,10 @@ concerns that arrive after its final answer.
 - `extensions/reference-images.ts`: reference images from absolute paths or the
   active branch (`getBranch()`, including native `details.images`); JPEG and
   WebP unchanged, everything else lossless WebP.
-- `skills/generate-image/SKILL.md`: how the model should prompt, edit, pass
-  references, and iterate; `docs/research/image-prompting-*.md` holds the cited
-  research behind it.
+- `skills/generate-image/SKILL.md`: the pre-send criteria for prompts and edits,
+  plus reference, transparency, and retry rules. It is generic and has no
+  examples; the cited research behind it is in
+  `docs/research/image-prompting-*.md` and `image-prompt-criteria-*.md`.
 - `test/`: `bun test` behavior tests for `generate_image` through `execute`
   with a stubbed `fetch`.
 - `extensions/advisor-concern-wake.ts`: listens for preserved `advisor` cards

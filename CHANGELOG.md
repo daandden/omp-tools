@@ -13,10 +13,12 @@
   (`prompt`, `transparent_background`, `referenced_image_paths`,
   `num_last_images_to_include`). It guards against oversized requests and
   dropped references, and it explains login and usage-limit errors. A bundled
-  `generate-image` skill teaches prompting from OpenAI's GPT Image guidance:
-  purpose-first prompts, quoted text with a count, edits as one change plus a
-  list of what stays unchanged, transparency stated in the prompt, and one
-  change per retry.
+  `generate-image` skill gives the model a checklist to run before every
+  prompt, drawn from vendor guides, text-to-image research, and brief practice:
+  purpose and one concrete subject first, nothing invented, attributes bound to
+  their nouns, explicit counts and placement, exact text, edits as one explicit
+  operation plus a keep list, transparency stated in the prompt, and review
+  against every requirement.
 - Showed ask questions, option descriptions, and previews as full Markdown in the
   interactive picker instead of one condensed line.
 - Allowed pasting images into ask `Other` answers and notes; they reach the model

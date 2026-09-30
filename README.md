@@ -99,17 +99,20 @@ Unknown arguments are rejected with an error. The backend ignores size and
 quality, so the prompt should state the aspect ratio. Output is about 1.57
 megapixels, and the server chooses the quality.
 
-The bundled `generate-image` skill teaches the model how to prompt, based on
-OpenAI's GPT Image guidance and other vendors' prompting guides
-(`docs/research/image-prompting-*.md`). It covers:
+The bundled `generate-image` skill is a checklist the model runs on every
+prompt before sending it. The criteria come from vendor prompting guides,
+text-to-image research and benchmarks, and creative-brief practice
+(`docs/research/image-prompting-*.md`, `docs/research/image-prompt-criteria-*.md`):
 
-- the prompt order: purpose, scene, details, shape in words, and a short list
-  of things to leave out
-- exact text in quotes, with a count and "No other text"
-- edits as one change plus a list of what stays unchanged, with a role for
-  each reference image
-- transparency described in the prompt, not only the flag
-- one change per retry
+- every prompt: purpose first, one concrete main subject, every requested
+  element with nothing invented, visible terms instead of praise, attributes
+  bound to their nouns, positive scene content, and constraints last
+- when relevant: shape, counts, placement, actions, people, specialist terms,
+  overlay space, and consistent image sets
+- text and graphics: exact quoted strings, real data, original logos
+- edits: roles first, one explicit operation with its scope, a keep list, rules
+  for each kind of operation, and self-contained follow-ups
+- transparency described in the prompt, and review against every requirement
 
 PNG, GIF, BMP, and other non-JPEG references are sent as lossless WebP (about
 25% smaller than PNG, same image-token cost). JPEG and WebP references are sent
