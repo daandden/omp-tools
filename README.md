@@ -1,7 +1,7 @@
 # omp-tools
 
-Local OMP adapters: flexible questions and advisor concern follow-up. Formerly
-`omp-ask`.
+Local OMP adapters: flexible questions, Codex Images `generate_image`, and
+advisor concern follow-up. Formerly `omp-ask`.
 
 ## `ask`
 
@@ -74,6 +74,57 @@ ask:
   enabled: true
 ```
 
+## `generate_image`
+
+Replaces native `generate_image`. It calls the Codex Images endpoint
+(`chatgpt.com/backend-api/codex/images/generations` and `/edits`) directly, the
+way the official Codex CLI does, instead of the Responses image tool. There, a
+chat model rewrites your prompt and the model only gets text back. Here, the
+prompt goes to the image backend unchanged with no system instructions, and the
+model sees the generated image.
+
+It needs a ChatGPT/Codex login: log in to `openai-codex` with `/login`. It never
+falls back to another provider or to native `generate_image`.
+
+Arguments match Codex's:
+
+- `prompt` (required): the image or edit description.
+- `transparent_background`: request a transparent background.
+- `referenced_image_paths`: absolute paths of images to edit or draw from.
+- `num_last_images_to_include` (1–5): use the last N images in the
+  conversation, such as pasted images, tool results, and earlier generated
+  images. It can't be combined with `referenced_image_paths`.
+
+Unknown arguments are rejected with an error. The backend ignores size and
+quality, so the prompt should state the aspect ratio. Output is about 1.57
+megapixels, and the server chooses the quality. The bundled
+`generate-image` skill teaches the model this.
+
+PNG, GIF, BMP, and other non-JPEG references are sent as lossless WebP (about
+25% smaller than PNG, same image-token cost). JPEG and WebP references are sent
+unchanged. The result is saved as lossless WebP to
+`$TMPDIR/omp-image-<id>.webp`. The model gets the image, the saved path, and the
+size and quality the backend reported.
+
+Guards:
+
+- A request body over 64 MB is rejected before sending. Larger bodies get false
+  `moderation_blocked` errors, or the backend silently drops the references and
+  returns an unrelated image.
+- An edit that reports 0 input image tokens fails instead of returning an image
+  that ignored the references.
+- Requests time out after 5 minutes. Cancelling the tool cancels the request.
+- A usage limit error names the limit, the plan, and the reset time, and tells
+  the model not to retry before then.
+
+Disable native image generation. The plugin's tool takes precedence either
+way, because native is added after extensions and skips taken names:
+
+```yaml
+generate_image:
+  enabled: false
+```
+
 ## Advisor concern follow-up
 
 OMP steers an advisor `concern` into the agent while it works, but a concern
@@ -120,13 +171,17 @@ packages or install a second loose copy of the ask extension.
 ```bash
 bun install --ignore-scripts
 bun run check    # warns if SDK types differ from `omp --version`, then typechecks
+bun test         # generate_image behavior tests (stubbed fetch)
 bun run update   # omp update + newest SDK types, then check
 ```
 
 Runtime value imports of `@oh-my-pi/*` resolve to the running OMP's own modules.
 Development types track the `latest` SDK release; run `bun run update` so omp
-and the types move together. There are currently no automated test files.
-Registration changes require a fresh-session OMP smoke check.
+and the types move together. `bun test` covers `generate_image` against a
+stubbed endpoint. Registration changes require a fresh-session OMP smoke check.
 
 A fresh OMP 18.3.1 session verified the Markdown picker (single question,
 `Other` custom answer, two questions with multi-select, Esc cancel).
+
+A fresh OMP 18.4.4 session verified `generate_image` live: a generation, an edit
+with a PNG reference path, and an edit with `num_last_images_to_include`.

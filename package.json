@@ -2,11 +2,12 @@
 	"name": "omp-tools",
 	"version": "0.2.0",
 	"private": true,
-	"description": "OMP flexible ask adapter and advisor concern follow-up",
+	"description": "OMP flexible ask adapter, Codex Images generate_image, and advisor concern follow-up",
 	"license": "MIT",
 	"type": "module",
 	"scripts": {
 		"check": "bun scripts/check-sdk-version.ts && tsgo --noEmit",
+		"test": "bun test",
 		"update": "bun scripts/update-sdk.ts"
 	},
 	"devDependencies": {
@@ -18,6 +19,7 @@
 	"omp": {
 		"extensions": [
 			"./extensions/flexible-ask.ts",
+			"./extensions/generate-image.ts",
 			"./extensions/advisor-concern-wake.ts"
 		]
 	}

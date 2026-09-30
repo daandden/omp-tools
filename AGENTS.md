@@ -6,15 +6,17 @@
 change model-facing option-count and when-to-ask guidance and show questions
 as full Markdown in the interactive picker; outside the TUI it delegates to
 native `ask`. It ships an always-apply rule that routes all user input through
-`ask`. It also wakes the agent for advisor concerns that arrive after its final
-answer.
+`ask`. It replaces native `generate_image` with a tool that calls the Codex
+Images endpoint directly with Codex OAuth. It also wakes the agent for advisor
+concerns that arrive after its final answer.
 
 ## Architecture & Data Flow
 
-- `package.json` registers `extensions/flexible-ask.ts` and
-  `extensions/advisor-concern-wake.ts` as entry points. OMP also loads
-  `rules/*.md` from the plugin root (the `omp-plugins` discovery provider,
-  priority 90); a same-named rule in `~/.omp/agent/rules/` shadows it.
+- `package.json` registers `extensions/flexible-ask.ts`,
+  `extensions/generate-image.ts`, and `extensions/advisor-concern-wake.ts` as
+  entry points. OMP also loads `rules/*.md` and `skills/*/SKILL.md` from the
+  plugin root (the `omp-plugins` discovery provider, priority 90); a same-named
+  rule in `~/.omp/agent/rules/` shadows it.
 - The extension registers a shadow `ask` description/schema. In `ctx.mode ===
   "tui"` with `ctx.hasUI`, it shows its own picker (`extensions/ask-dialog.ts`)
   through `ctx.ui.custom` and formats results with native wording and details.
@@ -29,6 +31,19 @@ answer.
   `ask.notify`, and the explicit error when native ask delegation is unavailable.
 - Keep native `ask` enabled. Replace legacy `omp-ask` installations rather than
   loading duplicate wrappers.
+- `generate_image` posts to `chatgpt.com/backend-api/codex/images/generations`
+  (no references) or `/edits` with Codex's exact body and headers, using the
+  `openai-codex` credential from `ctx.modelRegistry.getApiKeyForProvider`; no
+  other provider, no fallback to native. Native `generate_image` is
+  settings-gated and installed after extensions, skipping taken names, so the
+  plugin tool wins even when `generate_image.enabled` is true. The schema stays
+  open because OMP's argument validator deletes unknown keys from closed
+  schemas (`pi-ai` `coerceArgsFromIssues`); `execute` rejects them instead.
+- Keep the request guards: 64 MB body cap (larger bodies get false
+  `moderation_blocked` or silently dropped references), the 0-image-token
+  dropped-references check on edits, and the 5-minute timeout combined with the
+  tool signal. The result is lossless WebP in `content` only, never
+  `details.images` (the TUI would show it twice).
 
 ## Important Files
 
@@ -62,6 +77,19 @@ answer.
 - `rules/use-ask-for-user-input.md`: always-apply rule; all user input goes
   through `ask`, overriding question formats skills prescribe.
 - `extensions/assets.d.ts`: ambient typing for the static Markdown import.
+- `extensions/generate-image.ts`: `generate_image` registration, argument
+  checks, result text, and saving to `$TMPDIR/omp-image-<id>.webp`.
+- `extensions/generate-image.md`: static model-facing tool description.
+- `extensions/codex-images.ts`: Codex Images request body, headers (account id
+  and residency from the token's JWT claims, reimplemented because
+  `@oh-my-pi/pi-catalog` is not served), guards, and error text.
+- `extensions/reference-images.ts`: reference images from absolute paths or the
+  active branch (`getBranch()`, including native `details.images`); JPEG and
+  WebP unchanged, everything else lossless WebP.
+- `skills/generate-image/SKILL.md`: how the model should prompt and pass
+  references.
+- `test/`: `bun test` behavior tests for `generate_image` through `execute`
+  with a stubbed `fetch`.
 - `extensions/advisor-concern-wake.ts`: listens for preserved `advisor` cards
   (`message_end`, `customType: "advisor"`) with `concern` notes and, once the
   session is idle, sends them with `deliverAs: "aside"`. Keep `aside`: its idle
@@ -89,6 +117,7 @@ Run from the repository root:
 ```sh
 bun install --ignore-scripts
 bun run check
+bun test
 bun run update
 omp plugin link "$PWD"
 ```
@@ -121,17 +150,20 @@ and Bundler resolution. SDK packages supply development types. Runtime value
 imports of `@oh-my-pi/*` resolve to the host's in-process modules through OMP's
 extension specifier shim; in compiled binaries only exported subpaths are served
 (`@oh-my-pi/pi-tui`, `/chrome`, `/render`, `/theme`,
-`@oh-my-pi/pi-coding-agent`, `/modes/*`, `/tools/*`, `/utils/*`). The root `./*`
+`@oh-my-pi/pi-coding-agent`, `/modes/*`, `/tools/*`, `/utils/*`, and the
+`@oh-my-pi/pi-utils` root). The root `./*`
 wildcard is not served, so never import files such as
 `@oh-my-pi/pi-tui/overlays/*`, `/keybinding-matchers`, `/chrome/form-theme`, or
 `/prompt/*`; they load a second copy from node_modules and fail. Both SDK packages use
 the `"latest"` specifier; `bun.lock` records the resolved version, so update
 through `bun run update` to keep types and the installed omp in step.
 
-Run typechecking after code changes. There are currently no automated test files
-or repository CI. Registration/ask changes require a fresh-session OMP smoke;
-typechecking alone does not exercise host integration or UI. OMP 18.3.1 was used
-for the latest fresh-session picker and rendering smoke.
+Run typechecking and `bun test` after code changes; tests cover
+`generate_image` only, and there is no repository CI. Registration/ask changes
+require a fresh-session OMP smoke; typechecking alone does not exercise host
+integration or UI. OMP 18.3.1 was used for the latest fresh-session picker and
+rendering smoke; OMP 18.4.4 for the live `generate_image` generate and edit
+smoke.
 
 ## Agent skills
 

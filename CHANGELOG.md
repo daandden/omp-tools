@@ -6,6 +6,14 @@
 
 - Woke the agent to check advisor concerns that arrive after its final answer,
   instead of leaving them as a card until the next prompt.
+- Added `generate_image`, replacing native `generate_image`. It calls the Codex
+  Images endpoint directly with a ChatGPT/Codex login, the way the Codex CLI
+  does: the prompt goes unchanged and without system instructions, the model
+  sees the generated image as lossless WebP, and arguments match Codex's
+  (`prompt`, `transparent_background`, `referenced_image_paths`,
+  `num_last_images_to_include`). It guards against oversized requests and
+  dropped references, and it explains login and usage-limit errors. A bundled
+  `generate-image` skill covers prompting and references.
 - Showed ask questions, option descriptions, and previews as full Markdown in the
   interactive picker instead of one condensed line.
 - Allowed pasting images into ask `Other` answers and notes; they reach the model
@@ -35,9 +43,3 @@
 
 - Fixed multi-question ask answers dropping ticked options when a checkbox
   question also had `Other` text.
-
-### Removed
-
-- Removed custom image generation, including its implementation, request tests,
-  description assets, manifest registration, and image-specific documentation.
-  The plugin now provides only the flexible native ask adapter.
