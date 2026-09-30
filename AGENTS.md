@@ -87,9 +87,8 @@ concerns that arrive after its final answer.
   active branch (`getBranch()`, including native `details.images`); JPEG and
   WebP unchanged, everything else lossless WebP.
 - `skills/generate-image/SKILL.md`: how the model should prompt, edit, pass
-  references, and iterate. `prompt-patterns.md` beside it holds templates and
-  before/after examples; `docs/research/image-prompting-*.md` holds the cited
-  research behind both.
+  references, and iterate; `docs/research/image-prompting-*.md` holds the cited
+  research behind it.
 - `test/`: `bun test` behavior tests for `generate_image` through `execute`
   with a stubbed `fetch`.
 - `extensions/advisor-concern-wake.ts`: listens for preserved `advisor` cards

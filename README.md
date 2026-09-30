@@ -111,9 +111,6 @@ OpenAI's GPT Image guidance and other vendors' prompting guides
 - transparency described in the prompt, not only the flag
 - one change per retry
 
-`skills/generate-image/prompt-patterns.md` holds templates and before/after
-examples.
-
 PNG, GIF, BMP, and other non-JPEG references are sent as lossless WebP (about
 25% smaller than PNG, same image-token cost). JPEG and WebP references are sent
 unchanged. The result is saved as lossless WebP to

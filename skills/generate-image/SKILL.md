@@ -9,8 +9,6 @@ Use `generate_image` for new images, for edits of attached, pasted, or earlier g
 
 The prompt is used exactly as written, so put everything the image needs in it. Size and quality can't be set: the shape follows the prompt, and more concrete prompts get higher quality.
 
-Templates and before/after examples: [prompt-patterns.md](prompt-patterns.md).
-
 ## New images
 
 Write the prompt as a short spec in plain sentences, in this order:
