@@ -1,1 +1,1 @@
-The advisor raised these concerns after your final answer. Check each one against the actual state: read the code and run the relevant check. If a concern holds, fix it. If it does not, say briefly why.
+Advisor concerns after your final answer. Verify each against the actual state; fix any that hold.
