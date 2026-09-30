@@ -18,7 +18,7 @@ The prompt is used exactly as written, and the model sees nothing else: no conve
 - **Binding**: the prompt is written in grammatical sentences, and each attribute sits next to the noun it describes. Keyword lists are rewritten as sentences.
 - **Positive content**: scene content says what is there, not what is absent. A user's "without X" is rewritten as the state that replaces X.
 - **Constraints last**: the prompt ends with a short list of what must stay the same and which artifacts to exclude (text, watermarks, logos, and any direction the user rejected).
-- **Density**: each requirement is stated once. Detail goes into scene-level properties (setting, lighting, style, palette) before per-object detail. A request with more than about a dozen distinct elements is split into panels or separate images.
+- **Density**: each requirement is stated once. Detail goes into scene-level properties (setting, lighting, style, palette) before per-object detail. A crowded request keeps the composition the user asked for; manage it with labeled lines, a stated layout (rows, regions, foreground and background), and short per-object descriptions. Offer panels or separate images only as a suggestion to the user.
 - **Checkable**: each requirement can be verified by looking at the result.
 
 ## When the content calls for it
