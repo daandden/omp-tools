@@ -46,5 +46,14 @@
 
 ### Fixed
 
+- Checked the `generate-image` skill against GPT Image 2.5 (Flare, Sunburst),
+  which may serve the Codex endpoint whatever `model` says. OpenAI kept its
+  prompts for 2.5, so the rules stay model-agnostic. The skill now rewrites
+  supplied JSON or tag prompts into sentences, names concrete values for open
+  choices, turns group relations into per-group counts, quotes only final
+  strings, phrases compositing as an edit of image 1, treats cutout and
+  background-removal requests as transparency, checks the alpha channel and
+  fine edges, reviews diagram labels and period details, and tells the user the
+  model or version can't be chosen.
 - Fixed multi-question ask answers dropping ticked options when a checkbox
   question also had `Other` text.

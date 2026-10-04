@@ -102,17 +102,21 @@ megapixels, and the server chooses the quality.
 The bundled `generate-image` skill is a checklist the model runs on every
 prompt before sending it. The criteria come from vendor prompting guides,
 text-to-image research and benchmarks, and creative-brief practice
-(`docs/research/image-prompting-*.md`, `docs/research/image-prompt-criteria-*.md`):
+(`docs/research/image-prompting-*.md`, `docs/research/image-prompt-criteria-*.md`,
+`docs/research/image-prompt-format.md`, `docs/research/gpt-image-2.5-*.md`).
+OpenAI kept its gpt-image-2 prompts for GPT Image 2.5, and the endpoint ignores
+`model`, so the rules work whichever model serves:
 
 - every prompt: purpose first, one concrete main subject, every requested
   element with nothing invented, visible terms instead of praise, attributes
   bound to their nouns, positive scene content, and constraints last
 - when relevant: shape, counts, placement, actions, people, specialist terms,
   overlay space, and consistent image sets
-- text and graphics: exact quoted strings, real data, original logos
+- text and graphics: exact quoted final strings, real data, original logos
 - edits: roles first, one explicit operation with its scope, a keep list, rules
   for each kind of operation, and self-contained follow-ups
-- transparency described in the prompt, and review against every requirement
+- transparency set for cutouts and checked in the alpha channel, and review
+  against every requirement
 
 PNG, GIF, BMP, and other non-JPEG references are sent as lossless WebP (about
 25% smaller than PNG, same image-token cost). JPEG and WebP references are sent

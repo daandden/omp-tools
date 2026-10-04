@@ -89,7 +89,10 @@ concerns that arrive after its final answer.
 - `skills/generate-image/SKILL.md`: the pre-send criteria for prompts and edits,
   plus reference, transparency, and retry rules. It is generic and has no
   examples; the cited research behind it is in
-  `docs/research/image-prompting-*.md` and `image-prompt-criteria-*.md`.
+  `docs/research/image-prompting-*.md`, `image-prompt-criteria-*.md`,
+  `image-prompt-format.md` (prose vs labeled lines vs JSON), and
+  `gpt-image-2.5-*.md` (rules checked against Images 2.5; the endpoint ignores
+  `model`, so rules stay model-agnostic).
 - `test/`: `bun test` behavior tests for `generate_image` through `execute`
   with a stubbed `fetch`.
 - `extensions/advisor-concern-wake.ts`: listens for preserved `advisor` cards

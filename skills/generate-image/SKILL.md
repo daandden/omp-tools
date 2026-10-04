@@ -15,20 +15,20 @@ The prompt is used exactly as written, and the model sees nothing else: no conve
 - **Subject**: one primary subject, named as a concrete, visible thing, ahead of everything secondary. Abstract ideas and moods are turned into visible content.
 - **Coverage**: every element the user asked for is present. Nothing is added that the user didn't imply: no extra subjects, props, brands, slogans, or palettes.
 - **Visible terms**: every modifier names a visible property (light source and direction, material, color, texture, expression). No praise, quality boosters, emphasis by repetition, weights, or other tools' flags.
-- **Binding**: the prompt is written in grammatical sentences, and each attribute sits next to the noun it describes. Keyword lists are rewritten as sentences.
+- **Binding**: the prompt is written in grammatical sentences, and each attribute sits next to the noun it describes. Keyword lists, tag lists, and JSON the user supplies are rewritten as sentences, keeping every field. A complex prompt may use short labeled lines (`Scene:`, `Subject:`, `Text:`, `Keep:`), each a full sentence.
 - **Positive content**: scene content says what is there, not what is absent. A user's "without X" is rewritten as the state that replaces X.
 - **Constraints last**: the prompt ends with a short list of what must stay the same and which artifacts to exclude (text, watermarks, logos, and any direction the user rejected).
 - **Density**: each requirement is stated once. Detail goes into scene-level properties (setting, lighting, style, palette) before per-object detail. A crowded request keeps the composition the user asked for; manage it with labeled lines, a stated layout (rows, regions, foreground and background), and short per-object descriptions. Offer panels or separate images only as a suggestion to the user.
-- **Checkable**: each requirement can be verified by looking at the result.
+- **Checkable**: each requirement can be verified by looking at the result. When the user asks for an unusual property without naming it, the prompt names a concrete value. An implied physical result, such as a reflection or a shadow, is stated as what is visible.
 
 ## When the content calls for it
 
 - **Shape** (new images): orientation and aspect ratio in words, with a composition that fits. In tall formats, keep important content away from the bottom edge.
-- **Setting**: say where the scene is, or that the subject is isolated. For historical or real events, name the place and period.
+- **Setting**: say where the scene is, or that the subject is isolated. For historical or real events, name the place and the date or period.
 - **Mood or brand tone**: express it as light, palette, expression, and density, not adjectives alone.
 - **Exact colors**: pair each hex code with a color name and the object it applies to. State color temperature and sharpness whenever the intent is neutral, cool, soft, or blurred.
 - **Several objects**: each object gets its own phrase with its own attributes. Instances of the same kind are listed one by one, each with what sets it apart.
-- **Counts**: numerals with an unambiguous unit. Larger counts also get an arrangement. "Every" or "all" is backed by a count.
+- **Counts**: numerals with an unambiguous unit. Larger counts also get an arrangement. "Every" or "all" is backed by a count. Relations between groups (equal, multiple, or per-container counts) are rewritten as a number for each group, or as a list per instance.
 - **Placement**: each placement names the object, an anchor (another named object or a region of the frame), and whose left or right is meant. Placements that go against normal expectations are stated explicitly.
 - **Actions**: say who does what to whom, in the active voice. For several people, give each one's pose and points of contact.
 - **People**: framing (including whether the full body shows), gaze, and interaction with objects.
@@ -40,7 +40,7 @@ The prompt is used exactly as written, and the model sees nothing else: no conve
 
 ## Text, data, and graphics
 
-- Every rendered string is quoted exactly, short, and essential. Text the user supplied is copied character for character, never reworded or expanded. Long or legal copy is added afterwards, outside the image.
+- Every rendered string is quoted exactly, short, and essential. Text the user supplied is copied character for character, never reworded or expanded. Example, placeholder, and conditional strings are resolved before sending; only the final string is quoted. Long or legal copy is added afterwards, outside the image.
 - Each string has a font style, size, color, placement, and count, on a contrasting plain area. Its language and script are stated when they are not English.
 - Rare words are spelled out letter by letter.
 - The prompt states that no other text is allowed.
@@ -70,8 +70,8 @@ By operation:
 - **Change an attribute**: a concrete target value, and the details on the object that must survive.
 - **Restyle**: the direction (restyle this image keeping its composition, or new content in this style), with concrete style properties and no new elements.
 - **Background**: the subject locked, the new setting described, and whether the subject is relit to match.
-- **Text or translation**: the old and new strings quoted, or the target language and which text is in scope. Typography and placement are kept.
-- **Compose**: each moved element's source, destination, and what it must match, plus one sentence describing the final scene.
+- **Text or translation**: the old and new strings quoted, or the target language and which text is in scope. Typography and placement are kept. In the result, check each edited string and look for words left in the original language.
+- **Compose**: phrased as an edit of the base image that adds elements from the other images, not as combining or merging them. Each moved element's source, destination, and what it must match, plus one sentence describing the final scene.
 - **Outcome edits** (aging, weather, time passing): the visible result stated explicitly.
 
 Follow-up edits:
@@ -81,20 +81,21 @@ Follow-up edits:
 
 ## Transparency
 
-- Set `transparent_background: true` and describe an isolated subject on a fully transparent background, with no backdrop, checkerboard, or shadow. Any backdrop the prompt describes overrides the flag.
+- When the user asks for a transparent background, a cutout, or background removal, set `transparent_background: true` and describe an isolated subject on a fully transparent background, with no backdrop, checkerboard, or shadow. Any backdrop the prompt describes overrides the flag.
 - For charts and icons, name the regions that stay transparent.
 - On every later edit, set the flag again and ask to preserve the transparent background.
-- A checkerboard painted into the result means transparency was lost: retry and restate it.
+- Check the saved file's alpha channel with a local tool, including fine edges (hair, glass, shadows). A painted checkerboard or a file with no alpha channel means transparency was lost: retry and restate it.
 
 ## Review and iterate
 
-Check the result against every requirement in the prompt: coverage, text spelling, counts, placement, the keep list, and the shape.
+Check the result against every requirement in the prompt: coverage, text spelling and legibility, diagram labels and the relationships they show, counts, placement, period details in historical scenes, the keep list, and the shape.
 - If a new image misses one requirement, resend the same prompt once before changing it.
 - Rewrite a new-image prompt as one integrated description, not the old one with a patch added. If quality is `low`, add scene-level detail (lighting, materials, setting), not more elements.
 - Fix an edit one thing per call: send the result back as image 1 with the change and the full keep list.
 - If one part regressed, send the original and the draft with roles, and say which parts to take from each.
 - For regions that must stay pixel-identical, paste them back from the original with local tools. For an exact aspect ratio, crop.
-- Tell the user about anything the tool can't deliver: vector output, exact pixel sizes, an exact match to official logo artwork.
+- Tell the user about anything the tool can't deliver: vector output, exact pixel sizes, a chosen image model or version (such as GPT Image 2.5 Flare or Sunburst), an exact match to official logo artwork.
+- Don't tell the user which image model made a result. The tool doesn't report it, and the server picks the model.
 
 ## Files
 
