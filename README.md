@@ -148,24 +148,44 @@ generate_image:
 OMP steers an advisor `concern` into the agent while it works, but a concern
 that arrives after the final answer only shows as a card until your next
 prompt. This extension starts a new turn for such concerns and asks the agent to
-verify each one and fix any that hold. Nits stay passive,
-and blockers already wake the agent in OMP.
+verify each one and fix any that hold. The card is already in the agent's
+context, so the wake message only points at it instead of repeating the notes.
+Nits stay passive, and blockers already wake the agent in OMP.
 
-It sends the concern the same way OMP sends a note that should start a turn
+It sends the wake the same way OMP sends a note that should start a turn
 when idle, so OMP's own rules still apply. After you interrupt a run (Esc), or
-in plan mode, the concern is added to the conversation without starting a turn.
+in plan mode, the wake is added to the conversation without starting a turn.
 ACP clients that refuse agent-started turns get it on their next turn. The
-extension also skips a wake when you have already queued a message, and wakes
-at most twice per prompt you send so the advisor and agent cannot loop. The
-count resets on every prompt you send, in the TUI, RPC, and ACP alike.
+extension also skips a wake when you have already queued a message.
+
+The woken turn is reviewed too, so the advisor can raise another concern. To
+stop an endless advisor/agent loop without stopping real work, every wake in a
+prompt cycle (one prompt you send until the next) must pass three checks:
+
+1. **The concern is new.** OMP's judge (TypeSafe Jev through the `judge` model
+   role) compares it with the concerns the agent was already woken for. A
+   concern that raises the same issue stays a card: the agent already answered
+   it. When the `judge` role does not resolve to Jev, or the judge call fails,
+   the extension compares words instead (half or more shared words is the same
+   issue).
+2. **The last wake changed something.** The woken turn ran `edit`, `write`,
+   `ast_edit`, `bash`, `eval`, or `task` without an error. If the agent only
+   read and replied, it did not agree with the advisor, and you decide.
+3. **Fewer than 6 wakes** in this prompt cycle, as a safety limit.
+
+When check 2 or 3 holds back a new concern, you get a notification that says
+why; the card stays, and you can send a prompt if you want the agent to act.
+Every prompt you send starts a new cycle, in the TUI, RPC, and ACP alike.
 Switching sessions (`/new`, resume, fork) or jumping in `/tree` drops any
-concern still waiting, so it never lands in the other conversation, and resets
-the count.
+concern still waiting, so it never lands in the other conversation, and starts
+a new cycle.
 
 Limits:
 
 - Extensions cannot see the `advisor.immuneTurns` cooldown, so it does not
   delay these wakes.
+- Notifications need a UI. In RPC or ACP without one, a held-back concern stays
+  a card without a notification.
 - Off in print and JSON mode (`omp -p`, `--mode json`). After the last prompt,
   print mode prints the final answer and only records late advisor notes before
   exiting, so a new turn's answer would never be shown. Late concerns there stay

@@ -5,7 +5,10 @@
 ### Added
 
 - Woke the agent to check advisor concerns that arrive after its final answer,
-  instead of leaving them as a card until the next prompt.
+  instead of leaving them as a card until the next prompt. Wakes in one prompt
+  cycle stop when a concern repeats an earlier one (checked by OMP's judge,
+  TypeSafe Jev, or by shared words without it), when the last woken turn
+  changed no files, or after 6 wakes; the last two cases notify you.
 - Added `generate_image`, replacing native `generate_image`. It calls the Codex
   Images endpoint directly with a ChatGPT/Codex login, the way the Codex CLI
   does: the prompt goes unchanged and without system instructions, the model
@@ -43,9 +46,6 @@
   their rounds as chat text.
 - Resynced the ask description with OMP's current native wording, restoring
   "Clarifying custom input? Answer first; re-ask unresolved questions."
-
-### Fixed
-
 - Checked the `generate-image` skill against GPT Image 2.5 (Flare, Sunburst),
   which may serve the Codex endpoint whatever `model` says. OpenAI kept its
   prompts for 2.5, so the rules stay model-agnostic. The skill now rewrites
@@ -55,5 +55,8 @@
   background-removal requests as transparency, checks the alpha channel and
   fine edges, reviews diagram labels and period details, and tells the user the
   model or version can't be chosen.
+
+### Fixed
+
 - Fixed multi-question ask answers dropping ticked options when a checkbox
   question also had `Other` text.

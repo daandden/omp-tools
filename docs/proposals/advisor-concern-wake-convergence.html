@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Advisor concern wake: more than 2 wakes, no endless loop</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --color-paper:       #f5f5f5;
+      --color-ink:         #2d3142;
+      --color-muted:       #4f5d75;
+      --color-soft:        #7a8399;
+      --color-rule:        rgba(45,49,66,0.12);
+      --color-accent:      #eb6c36;
+      --color-accent-tint: rgba(235,108,54,0.08);
+      --font-sans:   'Geist', system-ui, sans-serif;
+      --font-serif:  'Instrument Serif', 'Times New Roman', serif;
+      --font-mono:   'Geist Mono', ui-monospace, Menlo, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      min-height: 100vh;
+      padding: 3rem 2rem;
+      color: var(--color-ink);
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.75rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.75rem, 3vw + 1rem, 2.5rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+      margin-bottom: 0.5rem;
+    }
+    h2 {
+      font-family: var(--font-serif);
+      font-size: 1.5rem;
+      font-weight: 400;
+      margin: 2.5rem 0 0.75rem;
+    }
+    h2 .num {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--color-soft);
+      margin-right: 0.5rem;
+      vertical-align: middle;
+    }
+    .subtitle { font-size: 1rem; line-height: 1.55; color: var(--color-muted); max-width: 70ch; }
+    p, li { font-size: 0.9375rem; line-height: 1.6; }
+    .prose { max-width: 76ch; }
+    .prose p + p, .prose p + ul, .prose ul + p, .prose ol + p { margin-top: 0.75rem; }
+    .prose ul, .prose ol { margin-left: 1.25rem; }
+    .prose li { margin-bottom: 0.35rem; }
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.82em;
+      background: rgba(45,49,66,0.06);
+      border-radius: 4px;
+      padding: 0.05em 0.3em;
+    }
+    strong { font-weight: 600; }
+
+    .words {
+      margin-top: 2rem;
+      background: #ffffff;
+      border: 1px solid var(--color-rule);
+      border-radius: 6px;
+      padding: 1.25rem 1.5rem;
+      display: grid;
+      grid-template-columns: 9rem 1fr;
+      gap: 0.5rem 1.25rem;
+      max-width: 900px;
+    }
+    .words .eyebrow { grid-column: 1 / -1; margin-bottom: 0.25rem; }
+    .words dt { font-weight: 600; font-size: 0.9rem; }
+    .words dd { font-size: 0.9rem; color: var(--color-muted); line-height: 1.5; }
+
+    .figure { margin-top: 1rem; }
+    .figure-label {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--color-soft);
+      margin-bottom: 0.5rem;
+    }
+    .diagram-container { overflow-x: auto; }
+    svg { width: 100%; min-width: 960px; display: block; }
+
+    .examples {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    @media (max-width: 900px) { .examples { grid-template-columns: 1fr; } }
+    .card {
+      background: #ffffff;
+      border-radius: 6px;
+      border: 1px solid var(--color-rule);
+      padding: 1.25rem;
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      margin-bottom: 0.75rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid rgba(45,49,66,0.08);
+    }
+    .card-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .card-dot.coral { background: var(--color-accent); }
+    .card-dot.ink { background: var(--color-ink); }
+    .card h3 { font-size: 0.95rem; font-weight: 600; }
+    .card .eyebrow { margin-bottom: 0.4rem; font-size: 0.6rem; }
+    .steps { list-style: none; counter-reset: step; }
+    .steps li {
+      counter-increment: step;
+      position: relative;
+      padding-left: 2rem;
+      margin-bottom: 0.6rem;
+      font-size: 0.875rem;
+      line-height: 1.5;
+    }
+    .steps li::before {
+      content: counter(step);
+      position: absolute;
+      left: 0;
+      top: 0.05rem;
+      width: 1.3rem;
+      height: 1.3rem;
+      border: 1px solid var(--color-rule);
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: var(--color-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .who { font-family: var(--font-mono); font-size: 0.72rem; color: var(--color-soft); letter-spacing: 0.04em; }
+    .result {
+      display: inline-block;
+      margin-top: 0.2rem;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+      border: 1px solid var(--color-rule);
+      color: var(--color-muted);
+    }
+    .result.wake { border-color: rgba(45,49,66,0.35); color: var(--color-ink); }
+    .result.diff { border-color: var(--color-accent); color: var(--color-accent); background: var(--color-accent-tint); }
+
+    .notice {
+      margin-top: 1rem;
+      max-width: 76ch;
+      background: #ffffff;
+      border: 1px solid var(--color-rule);
+      border-left: 3px solid var(--color-soft);
+      border-radius: 6px;
+      padding: 0.9rem 1.1rem;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      line-height: 1.6;
+      color: var(--color-ink);
+    }
+    .notice + .notice { margin-top: 0.5rem; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+      background: #ffffff;
+      border: 1px solid var(--color-rule);
+      font-size: 0.875rem;
+    }
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 0.65rem 0.85rem;
+      border-bottom: 1px solid rgba(45,49,66,0.08);
+      line-height: 1.5;
+    }
+    th {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      background: rgba(45,49,66,0.03);
+    }
+    tr:last-child td { border-bottom: none; }
+    tr.chosen td { background: var(--color-accent-tint); }
+
+    details {
+      margin-top: 1rem;
+      background: #ffffff;
+      border: 1px solid var(--color-rule);
+      border-radius: 6px;
+      padding: 1rem 1.25rem;
+      max-width: 900px;
+    }
+    summary { cursor: pointer; font-weight: 600; font-size: 0.9rem; }
+    details .prose { margin-top: 0.75rem; }
+
+    .footer {
+      margin-top: 3rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid rgba(45,49,66,0.10);
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      color: var(--color-soft);
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <p class="eyebrow">Proposal · advisor-concern-wake extension · 2026-10-01</p>
+    <h1>Advisor concern wake: more than 2 wakes, no endless loop</h1>
+    <p class="subtitle">This page tells what the extension does now, why it has a limit of 2, and what I recommend to change.</p>
+
+    <dl class="words">
+      <p class="eyebrow">Words on this page</p>
+      <dt>Advisor</dt><dd>A second model. It reads each turn of the agent and can send notes to the agent.</dd>
+      <dt>Concern</dt><dd>An advisor note of medium importance. A <code>nit</code> is less important. A <code>blocker</code> is more important.</dd>
+      <dt>Card</dt><dd>The box in the chat that shows a concern. The agent can also read the card.</dd>
+      <dt>Wake</dt><dd>The extension starts a new agent turn, so that the agent examines the concern.</dd>
+      <dt>Prompt cycle</dt><dd>All work from one prompt that you send until your next prompt.</dd>
+    </dl>
+
+    <h2><span class="num">01</span>What the extension does now</h2>
+    <div class="prose">
+      <ol>
+        <li>You send a prompt. The agent does the work and gives a final answer.</li>
+        <li>The advisor reads that turn. It can send a concern after the final answer.</li>
+        <li>OMP shows the concern as a card. OMP does not start the agent again.</li>
+        <li>The extension starts the agent again: a wake. The agent reads the card and examines the concern.</li>
+        <li>The extension does this a maximum of <strong>2 times</strong> in one prompt cycle.</li>
+      </ol>
+    </div>
+
+    <h2><span class="num">02</span>Why the limit exists</h2>
+    <div class="prose">
+      <p>The advisor also reads the turn that a wake starts. It can send a new concern about that turn. The new concern causes a new wake. Without a limit, this loop can continue without end.</p>
+    </div>
+    <div class="figure">
+      <p class="figure-label">Figure 1 · The loop today, and where the limit stops it</p>
+      <div class="diagram-container">
+        <svg viewBox="0 40 1280 400" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="wake-today-title wake-today-desc">
+          <title id="wake-today-title">Concern wake loop today</title>
+          <desc id="wake-today-desc">Flowchart showing that each advisor concern wakes the agent, the woken turn can cause a new concern, and after two wakes the concern stays as a card with no message to the user.</desc>
+          <defs>
+            <marker id="wt-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+              <polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/>
+            </marker>
+            <marker id="wt-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+              <polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/>
+            </marker>
+            <marker id="wt-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+              <polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/>
+            </marker>
+          </defs>
+
+          <rect x="0" y="40" width="1280" height="400" fill="#f5f5f5"/>
+
+          <!-- ARROWS -->
+          <line x1="200" y1="200" x2="238" y2="200" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wt-arrow)"/>
+          <line x1="440" y1="200" x2="478" y2="200" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wt-arrow)"/>
+          <line x1="680" y1="200" x2="718" y2="200" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wt-arrow)"/>
+          <line x1="880" y1="200" x2="918" y2="200" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wt-arrow)"/>
+          <rect x="888" y="180" width="24" height="12" rx="2" fill="#f5f5f5"/>
+          <text x="900" y="189" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">YES</text>
+          <!-- NO → card stays -->
+          <line x1="800" y1="256" x2="800" y2="318" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#wt-arrow-accent)"/>
+          <rect x="808" y="276" width="24" height="12" rx="2" fill="#f5f5f5"/>
+          <text x="820" y="285" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+          <!-- Loop back: new turn -->
+          <path d="M 1020 172 L 1020 96 Q 1020 88 1012 88 L 348 88 Q 340 88 340 96 L 340 170"
+                fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#wt-arrow)"/>
+          <rect x="644" y="68" width="72" height="12" rx="2" fill="#f5f5f5"/>
+          <text x="680" y="77" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NEW TURN</text>
+
+          <!-- NODES -->
+          <rect x="40" y="172" width="160" height="56" rx="20" fill="#f5f5f5"/>
+          <rect x="40" y="172" width="160" height="56" rx="20" fill="rgba(79,93,117,0.10)" stroke="#7a8399" stroke-width="1"/>
+          <text x="120" y="198" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">You send a prompt</text>
+          <text x="120" y="214" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">count = 0</text>
+
+          <rect x="240" y="172" width="200" height="56" rx="6" fill="#f5f5f5"/>
+          <rect x="240" y="172" width="200" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+          <text x="340" y="198" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Agent does the work</text>
+          <text x="340" y="214" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">gives a final answer</text>
+
+          <rect x="480" y="172" width="200" height="56" rx="6" fill="#f5f5f5"/>
+          <rect x="480" y="172" width="200" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+          <text x="580" y="198" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Advisor sends a concern</text>
+          <text x="580" y="214" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">OMP shows a card</text>
+
+          <polygon points="720,200 800,144 880,200 800,256" fill="#f5f5f5"/>
+          <polygon points="720,200 800,144 880,200 800,256" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+          <text x="800" y="196" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Fewer than</text>
+          <text x="800" y="212" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">2 wakes?</text>
+
+          <rect x="920" y="172" width="200" height="56" rx="6" fill="#f5f5f5"/>
+          <rect x="920" y="172" width="200" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+          <text x="1020" y="198" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Extension wakes agent</text>
+          <text x="1020" y="214" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">count + 1</text>
+
+          <rect x="700" y="320" width="200" height="56" rx="20" fill="#f5f5f5"/>
+          <rect x="700" y="320" width="200" height="56" rx="20" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+          <text x="800" y="346" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Card stays</text>
+          <text x="800" y="362" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">no wake · no message</text>
+
+          <text x="940" y="344" fill="#4f5d75" font-size="14" font-style="italic" font-family="'Instrument Serif', serif">The limit counts wakes only.</text>
+          <text x="940" y="364" fill="#4f5d75" font-size="14" font-style="italic" font-family="'Instrument Serif', serif">It does not look at what the agent did.</text>
+
+          <!-- LEGEND -->
+          <line x1="40" y1="400" x2="1240" y2="400" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+          <text x="40" y="424" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+          <rect x="140" y="412" width="28" height="16" rx="8" fill="rgba(79,93,117,0.10)" stroke="#7a8399" stroke-width="1"/>
+          <text x="176" y="424" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Start / end</text>
+          <rect x="320" y="412" width="28" height="16" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+          <text x="356" y="424" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Step</text>
+          <polygon points="484,420 496,412 508,420 496,428" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+          <text x="516" y="424" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Question</text>
+          <rect x="640" y="412" width="28" height="16" rx="8" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+          <text x="676" y="424" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Where the problem is</text>
+          <line x1="900" y1="420" x2="928" y2="420" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#wt-arrow)"/>
+          <text x="936" y="424" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">The woken turn starts the loop again</text>
+        </svg>
+      </div>
+    </div>
+
+    <h2><span class="num">03</span>The problem with the limit</h2>
+    <div class="prose">
+      <ul>
+        <li>The limit counts wakes. It does not look at what the agent did after each wake.</li>
+        <li>Thus, a 3rd real problem gets no wake, also when the agent fixed the first 2 problems correctly.</li>
+        <li>The extension does not tell you that it stopped. You see only a card.</li>
+      </ul>
+    </div>
+
+    <h2><span class="num">04</span>Recommended change: 3 questions</h2>
+    <div class="prose">
+      <p>Before each wake, the extension asks 3 questions. It wakes the agent only when all 3 answers are "yes".</p>
+      <ol>
+        <li><strong>Is the concern new?</strong> OMP's judge (the TypeSafe Jev model) compares the concern with the concerns that the agent examined in this prompt cycle. If it finds the same issue, do not wake. The agent already gave its answer. If Jev is not available, the extension compares the words.</li>
+        <li><strong>Did the last wake change files?</strong> Look at the tools that the agent used after the last wake. If the agent did not edit files and did not run a command, it did not agree with the advisor. Do not wake again. For the first wake, the answer is "yes".</li>
+        <li><strong>Are there fewer than 6 wakes?</strong> This is only a safety limit. Question 1 and question 2 usually stop a loop before this.</li>
+      </ol>
+      <p>When question 2 or question 3 stops a wake, the extension shows you a message. The card stays. You decide: send a prompt if you want the agent to act.</p>
+    </div>
+    <div class="figure">
+      <p class="figure-label">Figure 2 · The recommended rules</p>
+      <div class="diagram-container">
+        <svg viewBox="0 160 1280 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="wake-new-title wake-new-desc">
+          <title id="wake-new-title">Recommended concern wake rules</title>
+          <desc id="wake-new-desc">Flowchart showing a new concern card checked by three questions, is it new, did the last wake change files, and are there fewer than six wakes, before the extension wakes the agent; otherwise the card stays, and the user gets a message when the agent did not act or the safety limit is reached.</desc>
+          <defs>
+            <marker id="wn-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+              <polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/>
+            </marker>
+            <marker id="wn-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+              <polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/>
+            </marker>
+            <marker id="wn-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+              <polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/>
+            </marker>
+          </defs>
+
+          <rect x="0" y="160" width="1280" height="520" fill="#f5f5f5"/>
+
+          <!-- ARROWS -->
+          <line x1="200" y1="320" x2="238" y2="320" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wn-arrow)"/>
+          <line x1="400" y1="320" x2="458" y2="320" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wn-arrow)"/>
+          <rect x="420" y="300" width="24" height="12" rx="2" fill="#f5f5f5"/>
+          <text x="432" y="309" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">YES</text>
+          <line x1="620" y1="320" x2="678" y2="320" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wn-arrow)"/>
+          <rect x="640" y="300" width="24" height="12" rx="2" fill="#f5f5f5"/>
+          <text x="652" y="309" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">YES</text>
+          <line x1="840" y1="320" x2="898" y2="320" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wn-arrow)"/>
+          <rect x="860" y="300" width="24" height="12" rx="2" fill="#f5f5f5"/>
+          <text x="872" y="309" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">YES</text>
+          <line x1="1060" y1="320" x2="1098" y2="320" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wn-arrow)"/>
+          <line x1="320" y1="376" x2="320" y2="478" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wn-arrow)"/>
+          <rect x="328" y="420" width="24" height="12" rx="2" fill="#f5f5f5"/>
+          <text x="340" y="429" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+          <line x1="540" y1="376" x2="540" y2="478" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wn-arrow)"/>
+          <rect x="548" y="420" width="24" height="12" rx="2" fill="#f5f5f5"/>
+          <text x="560" y="429" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+          <line x1="760" y1="376" x2="760" y2="478" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wn-arrow)"/>
+          <rect x="768" y="420" width="24" height="12" rx="2" fill="#f5f5f5"/>
+          <text x="780" y="429" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+          <path d="M 1172 292 L 1172 208 Q 1172 200 1164 200 L 128 200 Q 120 200 120 208 L 120 290"
+                fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#wn-arrow)"/>
+          <rect x="592" y="180" width="96" height="12" rx="2" fill="#f5f5f5"/>
+          <text x="640" y="189" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NEXT CONCERN</text>
+
+          <!-- Question tags -->
+          <text x="320" y="252" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.12em">QUESTION 1</text>
+          <text x="540" y="252" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.12em">QUESTION 2</text>
+          <text x="760" y="252" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.12em">QUESTION 3</text>
+
+          <!-- NODES -->
+          <rect x="40" y="292" width="160" height="56" rx="20" fill="#f5f5f5"/>
+          <rect x="40" y="292" width="160" height="56" rx="20" fill="rgba(79,93,117,0.10)" stroke="#7a8399" stroke-width="1"/>
+          <text x="120" y="318" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">New concern card</text>
+          <text x="120" y="334" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">agent is idle</text>
+
+          <polygon points="240,320 320,264 400,320 320,376" fill="#f5f5f5"/>
+          <polygon points="240,320 320,264 400,320 320,376" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+          <text x="320" y="312" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Is the</text>
+          <text x="320" y="328" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">concern new?</text>
+
+          <polygon points="460,320 540,264 620,320 540,376" fill="#f5f5f5"/>
+          <polygon points="460,320 540,264 620,320 540,376" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+          <text x="540" y="312" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Did last wake</text>
+          <text x="540" y="328" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">change files?</text>
+          <text x="540" y="344" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">1st wake: yes</text>
+
+          <polygon points="680,320 760,264 840,320 760,376" fill="#f5f5f5"/>
+          <polygon points="680,320 760,264 840,320 760,376" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+          <text x="760" y="312" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Fewer than</text>
+          <text x="760" y="328" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">6 wakes?</text>
+
+          <rect x="900" y="292" width="160" height="56" rx="6" fill="#f5f5f5"/>
+          <rect x="900" y="292" width="160" height="56" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+          <text x="980" y="318" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Wake the agent</text>
+          <text x="980" y="334" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">agent reads the card</text>
+
+          <rect x="1100" y="292" width="144" height="56" rx="6" fill="#f5f5f5"/>
+          <rect x="1100" y="292" width="144" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+          <text x="1172" y="318" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Agent works</text>
+          <text x="1172" y="334" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">files changed?</text>
+
+          <rect x="240" y="480" width="160" height="56" rx="20" fill="#f5f5f5"/>
+          <rect x="240" y="480" width="160" height="56" rx="20" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+          <text x="320" y="506" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Card stays</text>
+          <text x="320" y="522" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">agent answered it</text>
+
+          <rect x="500" y="480" width="320" height="56" rx="20" fill="#f5f5f5"/>
+          <rect x="500" y="480" width="320" height="56" rx="20" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+          <text x="660" y="506" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Card stays + message to you</text>
+          <text x="660" y="522" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">you decide</text>
+
+          <text x="900" y="400" fill="#4f5d75" font-size="14" font-style="italic" font-family="'Instrument Serif', serif">Each prompt that you send starts a new cycle.</text>
+          <text x="900" y="420" fill="#4f5d75" font-size="14" font-style="italic" font-family="'Instrument Serif', serif">The count goes back to 0.</text>
+
+          <!-- LEGEND -->
+          <line x1="40" y1="600" x2="1240" y2="600" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+          <text x="40" y="632" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+          <rect x="140" y="620" width="28" height="16" rx="8" fill="rgba(79,93,117,0.10)" stroke="#7a8399" stroke-width="1"/>
+          <text x="176" y="632" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Start / end</text>
+          <rect x="320" y="620" width="28" height="16" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+          <text x="356" y="632" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Step</text>
+          <polygon points="484,628 496,620 508,628 496,636" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+          <text x="516" y="632" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Question</text>
+          <rect x="640" y="620" width="28" height="16" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+          <text x="676" y="632" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Main change: question 2, the wake</text>
+          <line x1="900" y1="628" x2="928" y2="628" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#wn-arrow)"/>
+          <text x="936" y="632" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Advisor reads the turn, next concern</text>
+        </svg>
+      </div>
+    </div>
+
+    <h2><span class="num">05</span>Two examples</h2>
+    <div class="examples">
+      <div class="card">
+        <p class="eyebrow">Example A · real problems</p>
+        <div class="card-header"><span class="card-dot coral"></span><h3>The new rules continue</h3></div>
+        <ol class="steps">
+          <li><span class="who">ADVISOR</span><br>"The test for the new option is missing."<br><span class="result wake">wake 1</span></li>
+          <li><span class="who">AGENT</span><br>Adds the test. Files changed.</li>
+          <li><span class="who">ADVISOR</span><br>"The new test does not examine the error case."<br><span class="result wake">new concern · files changed → wake 2</span></li>
+          <li><span class="who">AGENT</span><br>Adds the error case. Files changed.</li>
+          <li><span class="who">ADVISOR</span><br>"The README does not tell about the new option."<br><span class="result diff">new rules: wake 3 · today: card only, no message</span></li>
+        </ol>
+      </div>
+      <div class="card">
+        <p class="eyebrow">Example B · disagreement</p>
+        <div class="card-header"><span class="card-dot ink"></span><h3>The new rules stop</h3></div>
+        <ol class="steps">
+          <li><span class="who">ADVISOR</span><br>"This function can return null."<br><span class="result wake">wake 1</span></li>
+          <li><span class="who">AGENT</span><br>Reads the code. Answers: "It cannot return null." No files changed.</li>
+          <li><span class="who">ADVISOR</span><br>"Make sure that this function cannot return null."<br><span class="result">almost the same → card only (question 1)</span></li>
+          <li><span class="who">ADVISOR</span><br>A different concern.<br><span class="result">last wake changed no files → card + message to you (question 2)</span></li>
+        </ol>
+      </div>
+    </div>
+
+    <h2><span class="num">06</span>What you will see</h2>
+    <div class="prose">
+      <p>When question 2 or question 3 stops a wake, a message like one of these shows at the bottom of the screen:</p>
+    </div>
+    <div class="notice">Advisor concern not sent to the agent: the agent changed no files after the last concern. Send a prompt if you want the agent to act.</div>
+    <div class="notice">Advisor concern not sent to the agent: 6 wakes in this prompt cycle. Send a prompt if you want the agent to act.</div>
+
+    <h2><span class="num">07</span>Other options that I compared</h2>
+    <table>
+      <thead><tr><th>Option</th><th>Good</th><th>Bad</th></tr></thead>
+      <tbody>
+        <tr><td>Make the limit higher, for example 5</td><td>Very easy.</td><td>It still counts only. A loop continues longer before it stops.</td></tr>
+        <tr><td>After the limit, show a pop-up: "Wake the agent?"</td><td>You decide each time.</td><td>The pop-up stops you while you type. If you are away, nothing happens.</td></tr>
+        <tr><td>A new tool: the agent marks each concern "fixed" or "not a problem"</td><td>Most exact.</td><td>More work for the agent. The agent can forget to use the tool.</td></tr>
+        <tr class="chosen"><td><strong>Recommended: 3 questions + message</strong></td><td>Real problem chains continue. Disagreements stop at once. You know when it stops.</td><td>Jev can make an error, and without Jev the word check misses different words. Question 2 counts a test command as a change.</td></tr>
+      </tbody>
+    </table>
+
+    <h2><span class="num">08</span>Risks</h2>
+    <div class="prose">
+      <ul>
+        <li>Jev can find "the same issue" by mistake. Without Jev, two different concerns can use the same words, and the word check can make the same mistake. In both cases the card stays, so you can see the concern.</li>
+        <li>A command that only runs tests counts as "files changed". Then the agent can wake again. The limit of 6 stops this.</li>
+        <li>Some modes have no screen for the message (RPC and ACP). In these modes, the stop is silent, as it is now.</li>
+      </ul>
+    </div>
+
+    <details>
+      <summary>For engineers: how to make the change</summary>
+      <div class="prose">
+        <ul>
+          <li>Changes are in <code>extensions/advisor-concern-wake.ts</code> and <code>extensions/concern-match.ts</code>. The current guards stay: idle wait, skip when you queued a message, drop at session change, off in print and JSON mode, <code>aside</code> delivery.</li>
+          <li><strong>Question 1:</strong> when <code>hasNativeJudge</code> is true, one call to the host judge (<code>resolveJudge</code> from <code>@oh-my-pi/pi-coding-agent/judgment</code>) with one Choice question per new concern: which earlier concern raises the same issue, or <code>none</code>. Without a native judge, on an error, or after 15 s: word overlap (Jaccard ≥ 0.5, words folded as core's <code>normalizeAdvisorNote</code>). Core already removes exact repeats.</li>
+          <li><strong>Question 2:</strong> set <code>lastWakeChangedFiles = false</code> when the wake is sent. On <code>tool_execution_end</code> in the woken turn, set it to <code>true</code> if <code>isError</code> is false and the tool is <code>edit</code>, <code>write</code>, <code>ast_edit</code>, <code>bash</code>, <code>eval</code>, or <code>task</code>. Before the first wake, the value is <code>true</code>. If no turn starts (plan mode, interrupt), the value stays <code>false</code>.</li>
+          <li><strong>Question 3:</strong> <code>MAX_WAKES_PER_PROMPT = 6</code>.</li>
+          <li><strong>Message:</strong> <code>ctx.ui.notify(text, "info")</code> when <code>ctx.hasUI</code>.</li>
+          <li><strong>Reset:</strong> on <code>before_agent_start</code> (your prompt) and after a session switch, branch, or tree jump.</li>
+          <li><strong>Tests:</strong> similar concern stays a card; no file change then a new concern gives a message; a chain with file changes wakes 6 times, then gives a message; your prompt resets all.</li>
+        </ul>
+      </div>
+    </details>
+
+    <div class="footer">
+      <span>omp-tools · advisor-concern-wake · proposal</span>
+      <span>Facts from OMP 18.4.4 SDK source: advisor/emission-guard.ts, session/session-advisors.ts, extensibility/extensions/types.ts</span>
+    </div>
+
+  </div>
+</body>
+</html>

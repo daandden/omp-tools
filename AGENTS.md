@@ -94,23 +94,43 @@ concerns that arrive after its final answer.
   `gpt-image-2.5-*.md` (rules checked against Images 2.5; the endpoint ignores
   `model`, so rules stay model-agnostic).
 - `test/`: `bun test` behavior tests for `generate_image` through `execute`
-  with a stubbed `fetch`.
+  with a stubbed `fetch`, and for `advisor-concern-wake` through its event
+  handlers with a mocked `@oh-my-pi/pi-coding-agent/judgment`.
 - `extensions/advisor-concern-wake.ts`: listens for preserved `advisor` cards
   (`message_end`, `customType: "advisor"`) with `concern` notes and, once the
-  session is idle, sends them with `deliverAs: "aside"`. Keep `aside`: its idle
+  session is idle, sends a short wake prompt with `deliverAs: "aside"`. The
+  card is already in LLM context (a `developer` `<advisory>` message), so the
+  wake must not repeat the notes. Keep `aside`: its idle
   branch in core `sendCustomMessage` folds into context under plan mode or an
   active user interrupt (`autoResumeSuppressed`) and defers for ACP clients; a
-  steer with `triggerTurn` only checks ACP. Local guards: queued messages, a
-  per-prompt wake cap (reset on `before_agent_start`, which fires for user
-  prompts in every mode but not for the extension's agent-initiated turn;
-  `input` is TUI-only), and dropping held notes on `session_before_switch` /
-  `_branch` / `_tree` (the runner and its timers outlive `/new`, and core's
-  aside generation check runs at send time); the after-events reset the cap.
+  steer with `triggerTurn` only checks ACP. Local guards: queued messages and
+  three per-prompt-cycle checks before each wake. (1) New concern: one host
+  judge call (`resolveJudge` from `@oh-my-pi/pi-coding-agent/judgment` with the
+  root `settings` and `ctx.modelRegistry`, used only when `hasNativeJudge`)
+  asks one Choice per new concern against the woken ones
+  (`extensions/concern-match.ts`); no native judge, an error, or a 15 s timeout
+  falls back to word-overlap Jaccard ≥ 0.5. (2) The last woken turn
+  (`agent_start` after the send to `agent_end`) ran a `CHANGING_TOOLS` tool
+  without `isError`; the flag drops to false at send, so a folded aside with no
+  turn counts as no change. (3) `MAX_WAKES_PER_PROMPT = 6`. Checks 2 and 3
+  notify through `ctx.ui.notify` (when `ctx.hasUI`); a repeat stays silent. The
+  cycle resets on `before_agent_start`, which fires for user prompts in every
+  mode but not for the extension's agent-initiated turn (`input` is TUI-only),
+  and a counter drops a judge result that lands after the reset or after any
+  assistant `message_start` (a blocker or extension turn that ran during the
+  judge call already saw the cards). Held notes are
+  dropped on `session_before_switch` / `_branch` / `_tree` (the runner and its
+  timers outlive `/new`, and core's aside generation check runs at send time);
+  the after-events reset the cycle.
   `advisor.immuneTurns` is core-private and not applied. Disabled when
   `ctx.mode` is `"print"` or `"json"`: print mode enters a preserve-only
   headless advisor drain after the last prompt (`prepareForHeadlessAdvisorDrain`),
   prints the final text, then disposes, so a woken turn would never be emitted.
   `advisor-concern-wake.md` holds the wake prompt.
+- `extensions/concern-match.ts`: check 1 for the concern wake. `judgeRepeats`
+  builds one judge request (state: `earlier_concerns` and `new_concerns`; one
+  Choice per new concern over the earlier ids plus `none`), and
+  `wordOverlapRepeats` is the fallback.
 - `package.json`: OMP discovery, scripts, and SDK dependency pins.
 - `tsconfig.json`: strict, no-emit TypeScript configuration for extensions.
 - `README.md` and `CHANGELOG.md`: update when changing user-visible behavior.
@@ -155,8 +175,8 @@ and Bundler resolution. SDK packages supply development types. Runtime value
 imports of `@oh-my-pi/*` resolve to the host's in-process modules through OMP's
 extension specifier shim; in compiled binaries only exported subpaths are served
 (`@oh-my-pi/pi-tui`, `/chrome`, `/render`, `/theme`,
-`@oh-my-pi/pi-coding-agent`, `/modes/*`, `/tools/*`, `/utils/*`, and the
-`@oh-my-pi/pi-utils` root). The root `./*`
+`@oh-my-pi/pi-coding-agent`, `/judgment`, `/modes/*`, `/tools/*`, `/utils/*`,
+and the `@oh-my-pi/pi-utils` root; `/judgment` was checked in OMP 18.4.8). The root `./*`
 wildcard is not served, so never import files such as
 `@oh-my-pi/pi-tui/overlays/*`, `/keybinding-matchers`, `/chrome/form-theme`, or
 `/prompt/*`; they load a second copy from node_modules and fail. Both SDK packages use
@@ -164,11 +184,12 @@ the `"latest"` specifier; `bun.lock` records the resolved version, so update
 through `bun run update` to keep types and the installed omp in step.
 
 Run typechecking and `bun test` after code changes; tests cover
-`generate_image` only, and there is no repository CI. Registration/ask changes
+`generate_image` and `advisor-concern-wake`, and there is no repository CI.
+Registration/ask changes
 require a fresh-session OMP smoke; typechecking alone does not exercise host
 integration or UI. OMP 18.3.1 was used for the latest fresh-session picker and
 rendering smoke; OMP 18.4.4 for the live `generate_image` generate and edit
-smoke.
+smoke; OMP 18.4.8 for the host judge call behind the concern-wake checks.
 
 ## Agent skills
 
