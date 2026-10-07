@@ -18,30 +18,48 @@ prescribe (for example grilling's `❓ Q1 … ➡️` rounds).
 In the interactive TUI the wrapper shows its own picker so questions keep their
 Markdown: headings, lists, paragraph breaks, and code blocks. Option
 descriptions and previews are Markdown too. Tall questions scroll with
-PgUp/PgDn; the first ↑/↓ or Enter after scrolling brings the cursor back into
-view instead of acting on a hidden row. The picker keeps the native controls:
-tabs and a Submit review for several or multi-select questions, `Other (type
-your own)`, `n` notes, `ask.timeout` auto-selection, and `ask.notify`.
+PgUp/PgDn; the first move or action key after scrolling brings the cursor back
+into view instead of acting on a hidden row. The picker keeps the native
+structure: tabs and a Submit review for several or multi-select questions,
+`Other (type your own)`, `ask.timeout` auto-selection, and `ask.notify`.
 
-Answering differs from native `ask` in two ways:
+Each key means the same thing in every picker:
 
-- A single-choice question still has one answer, an option or `Other` text.
-  Add detail to the chosen option with a note: with the cursor on it, the
-  footer shows `n add note to this choice`. Enter on the picked option
-  unselects it.
+| Key | Action |
+|---|---|
+| j/k or ↑/↓ | Move between rows (on the Submit tab, scroll) |
+| h/l, ←/→, or Tab | Switch tabs (when there is a Submit tab) |
+| Space | Toggle the row and stay; single-select un-picks the others |
+| Enter | Finish the question: single-select picks the row first, then the next question; the last goes to the Submit tab, or submits when there is none. On the Submit tab, submit |
+| n | Edit the row's text: the option's note, the `Other` answer, or, on the Submit tab, the Submit note |
+| x | Clear that text (on `Other`, also un-pick it) |
+
+Space or Enter on an empty `Other` opens its editor. In an editor, Enter (or
+Ctrl+Q) saves and stays on the row, and Esc discards the edit. Saving `Other`
+text picks it.
+
+Answering differs from native `ask`:
+
+- Nothing typed is lost by picking. Every option keeps its own note through
+  select and deselect, and un-picking `Other` keeps its text (`n` and save picks
+  it again).
+- The Submit tab has a Submit note for the whole ask.
+- On timeout, unanswered questions get the recommended option.
 - The agent gets a compact labeled summary instead of `id: value` lines: each
   question's id and first line, `Selected:` with a short description of each
-  option, `Other:` for your own text, `Note (<option>):`, and `Unanswered` for
-  skipped questions. Checkbox questions send ticked options and `Other` text
-  together (native ask drops the ticks).
+  option, `Other:` for your own text, `Note (<option>):` for every note
+  (`Note (<option>, not picked):` on options you did not pick), `Unanswered`
+  for skipped questions, and `Note on all answers:` for the Submit note.
+  Checkbox questions send ticked options and `Other` text together (native ask
+  drops the ticks).
 
-The `Other` answer and note editors are the main prompt's own editor, so they
+The `Other` answer, option-note, and Submit note editors are the main prompt's own editor, so they
 behave like it: the same suggestions (`@` files, `^` models, `/` file commands
 and skills, internal URLs such as `skill://`, `rule://`, `local://`, `agent://`,
 `artifact://`, and `omp://`, emoji, GitHub refs, and other extensions'
 providers), ghost-text word completion, typo detection and autocorrect, vim
 mode, and multi-line input (Shift+Enter, Ctrl+J, or Alt+Enter inserts a
-newline; Enter or Ctrl+Q submits). Ctrl+C clears the text (it never exits omp
+newline; Enter or Ctrl+Q saves). Ctrl+C clears the text (it never exits omp
 from here).
 
 Answers only reference things; nothing in them runs. `/` suggests commands you
@@ -50,7 +68,7 @@ and skills, each with its own icon; skills insert as `/<name>` without the
 `skill:` prefix, and only names that start with (or have a hyphenated part
 starting with) what you typed are offered. Built-in and extension commands are
 not suggested. `skill://` and `rule://` also work. `#` prompt actions are
-hidden, accepting a suggestion only inserts its text, and Enter submits exactly
+hidden, accepting a suggestion only inserts its text, and Enter saves exactly
 what you typed, so a `/command` is never run or auto-completed. There is no
 history, push-to-talk, or draft saving. The external editor key
 (`app.editor.external`, Ctrl+G by default) opens the current text in
@@ -61,6 +79,25 @@ reads a copied image, a copied Finder file, or an image path on the clipboard,
 and pasting an image file path also attaches it. Each image shows as the main
 prompt's image chip; deleting the chip drops the image. Images are sent to the
 model after the answer text, labeled `[Image #N]` to match.
+
+`?` asks a **Picker btw**: a side question about the ask or the conversation,
+answered inside the picker. The options give way to a thread with a question
+box below it (the same editor as `Other`, without image paste). Enter asks; the
+answer streams into the thread, and later questions in the same ask see the
+earlier ones. The side question also sees your answers so far (ticked options,
+`Other` text, notes), so "is my pick a good idea?" works. Esc while an answer
+streams cancels it and keeps the partial text; the next Esc returns to the
+options with your answers untouched, and `?` reopens the thread. PgUp/PgDn
+scroll a long thread. The thread is discarded when the ask ends, and the agent
+never sees it; to tell the agent something, put it in `Other` or a note.
+
+A Picker btw runs through the same side-request pipeline as OMP's `/btw`
+(the conversation so far, no tools run, nothing added to the session), but it
+is not OMP's `/btw`: it is not saved to BTW history and cannot be branched or
+copied from a panel. Your main prompt is never touched. `ask.timeout` stops
+when you press `?` and stays stopped (the title reads `Ask (timer paused)`)
+until your next key in the options, which restarts it in full. On an OMP
+without side requests, `? btw` is not offered.
 
 Outside the TUI (RPC/ACP/print, subagents), and for inputs native `ask` rejects,
 execution delegates to native `ask`. Differences from the native picker:
@@ -219,7 +256,16 @@ and the types move together. `bun test` covers `generate_image` against a
 stubbed endpoint. Registration changes require a fresh-session OMP smoke check.
 
 A fresh OMP 18.3.1 session verified the Markdown picker (single question,
-`Other` custom answer, two questions with multi-select, Esc cancel).
+`Other` custom answer, two questions with multi-select, Esc cancel). A fresh
+OMP 18.6.1 session verified the Picker btw: an answer that named the ticked
+option, a follow-up that quoted the earlier question, Esc cancelling a streaming
+answer and then returning to the options, the timer staying paused for over the
+timeout and restarting in full on the next key, the thread kept on reopening,
+and the agent not seeing the thread after the ask.
+
+A fresh OMP 18.8.0 session verified the picker keys: Enter picking a
+single-choice option and moving on, Space ticking a checkbox, a note saved with
+Enter staying on its row, a Submit note, and the answer text the agent got.
 
 A fresh OMP 18.4.4 session verified `generate_image` live: a generation, an edit
 with a PNG reference path, and an edit with `num_last_images_to_include`.

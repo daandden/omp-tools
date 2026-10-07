@@ -30,6 +30,7 @@ import { type AutocompleteProvider, TERMINAL } from "@oh-my-pi/pi-tui";
 import { sanitizeCarriageReturns } from "@oh-my-pi/pi-tui/render";
 import { type MarkdownAskResult, showMarkdownAskDialog } from "./ask-dialog";
 import { formatAskAnswers } from "./ask-result";
+import { pickerBtwRunner } from "./picker-btw";
 import flexibleAskDescription from "./flexible-ask.md" with { type: "text" };
 
 /** Labels the native runtime reserves for its own action rows. */
@@ -117,6 +118,7 @@ async function askWithMarkdownDialog(
 			notify: message => ctx.ui.notify(message, "warning"),
 			autocomplete,
 			fileCommands: await loadFileCommandNames(ctx.cwd),
+			askBtw: pickerBtwRunner(ctx),
 		});
 	} catch (error) {
 		if (error instanceof Error && error.name === "AbortError") throw new ToolAbortError("Ask input was cancelled");
@@ -129,6 +131,10 @@ async function askWithMarkdownDialog(
 
 	const results: QuestionResult[] = questions.map((question, index) => {
 		const answer = dialogResult.results[index];
+		// Native details hold one note string per question.
+		const note = answer?.notes
+			.map(({ option, note, picked }) => `${option}${picked ? "" : " (not picked)"}: ${note}`)
+			.join("\n");
 		return {
 			id: question.id,
 			question: question.question,
@@ -136,19 +142,19 @@ async function askWithMarkdownDialog(
 			multi: question.multi ?? false,
 			selectedOptions: answer?.selectedOptions ?? [],
 			customInput: answer?.customInput,
-			note: answer?.note,
+			note: note || undefined,
 			timedOut: answer?.timedOut,
 		};
 	});
-	const text = formatAskAnswers(questions, dialogResult.results);
+	const submitNote = dialogResult.submitNote;
+	const text = formatAskAnswers(questions, dialogResult.results, submitNote?.text);
 	// Pasted images follow the answer text, each introduced by the label the
 	// user's text refers to (`[Image #N]`), plus its file path when pasted from disk.
-	const imageBlocks: AgentToolResult<AskToolDetails>["content"] = dialogResult.results.flatMap(answer =>
-		answer.images.flatMap(({ label, image, source }) => [
-			{ type: "text" as const, text: source ? `${label} ${source}` : label },
-			image,
-		]),
-	);
+	const images = [...dialogResult.results.flatMap(answer => answer.images), ...(submitNote?.images ?? [])];
+	const imageBlocks: AgentToolResult<AskToolDetails>["content"] = images.flatMap(({ label, image, source }) => [
+		{ type: "text" as const, text: source ? `${label} ${source}` : label },
+		image,
+	]);
 	const [single] = results;
 	if (results.length === 1 && single) {
 		// An empty multi-select submission is a valid "select none" answer;

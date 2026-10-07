@@ -1,8 +1,8 @@
 // Model-facing text for answers from the Markdown ask picker. The model sees
 // only this text (result `details` never reach it), so every part is labeled,
 // compactly: picked options (with a short description, which otherwise lives
-// only in the model's own tool call), `Other` text, notes and the option they
-// are attached to, and unanswered questions.
+// only in the model's own tool call), `Other` text, every option note with its
+// option and whether it was picked, unanswered questions, and the Submit note.
 import type { ExtensionAskDialogQuestion } from "@oh-my-pi/pi-coding-agent";
 import type { MarkdownAskResultItem } from "./ask-dialog";
 
@@ -52,27 +52,31 @@ function answerLines(question: ExtensionAskDialogQuestion, answer: MarkdownAskRe
 		lines.push(`${indent}${label}: ${selected.map(option => optionText(question, option)).join(", ")}`);
 	}
 	if (answer?.customInput !== undefined) lines.push(...labeledBlock(indent, "Other", answer.customInput));
-	if (answer?.note) {
-		lines.push(...labeledBlock(indent, `Note (${answer.noteFor ?? "Other"})`, answer.note));
+	for (const { option, note, picked } of answer?.notes ?? []) {
+		lines.push(...labeledBlock(indent, `Note (${option}${picked ? "" : ", not picked"})`, note));
 	}
-	if (lines.length === 0) lines.push(`${indent}Unanswered`);
+	if (selected.length === 0 && answer?.customInput === undefined) lines.unshift(`${indent}Unanswered`);
 	return lines;
 }
 
-/** Labeled result text for every question, in order. */
+/** Labeled result text for every question, in order, then the Submit note. */
 export function formatAskAnswers(
 	questions: readonly ExtensionAskDialogQuestion[],
 	answers: readonly MarkdownAskResultItem[],
+	submitNote: string | undefined,
 ): string {
+	const lines: string[] = [];
 	if (questions.length === 1) {
 		const [question] = questions;
-		return question ? ["User's answer:", ...answerLines(question, answers[0], "")].join("\n") : "";
+		if (question) lines.push("User's answer:", ...answerLines(question, answers[0], ""));
+	} else {
+		const answered = questions.filter((_, index) => isAnswered(answers[index])).length;
+		lines.push(`User answered ${answered}/${questions.length}:`);
+		questions.forEach((question, index) => {
+			lines.push(`- ${question.id}: ${questionTitle(question.question)}${question.multi ? " [multi]" : ""}`);
+			lines.push(...answerLines(question, answers[index], "  "));
+		});
 	}
-	const answered = questions.filter((_, index) => isAnswered(answers[index])).length;
-	const lines = [`User answered ${answered}/${questions.length}:`];
-	questions.forEach((question, index) => {
-		lines.push(`- ${question.id}: ${questionTitle(question.question)}${question.multi ? " [multi]" : ""}`);
-		lines.push(...answerLines(question, answers[index], "  "));
-	});
+	if (submitNote !== undefined) lines.push(...labeledBlock("", "Note on all answers", submitNote));
 	return lines.join("\n");
 }

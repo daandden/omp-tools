@@ -26,6 +26,9 @@
   interactive picker instead of one condensed line.
 - Allowed pasting images into ask `Other` answers and notes; they reach the model
   with the answer.
+- Added `?` in the ask picker to ask a side question without leaving it: the
+  answer streams into the picker, sees your answers so far, and supports
+  follow-ups. The agent never sees it, and the ask timeout pauses meanwhile.
 - Made ask `Other` answers and notes use the main prompt's editor: the same
   suggestions (`/` file commands and skills, `skill://`, `rule://`, and other internal URLs),
   word completion, autocorrect, vim mode, and multi-line keys; the external
@@ -39,8 +42,17 @@
 - Renamed the plugin from `omp-ask` to `omp-tools`; flexible native ask remains included.
 - Sent ask answers to the agent as a labeled summary per question (picked
   options with descriptions, the user's own `Other` text, notes, unanswered).
-- Showed `n add note to this choice` and `Enter unselect` on a picked
-  single-choice ask option.
+- Gave every ask picker key one meaning: j/k (or ↑/↓) move, h/l (or ←/→/Tab)
+  switch tabs, Space toggles the row and stays, Enter finishes the question
+  (single-choice picks the row first; a lone single-choice question submits), `n`
+  edits the row's note or `Other` text, and `x` clears it. In editors Enter saves
+  and stays, and Esc discards.
+- Kept notes and `Other` text when options are picked or un-picked: each option
+  has its own note, every note reaches the agent (`not picked` when its option
+  isn't), and `Other` text stays after un-picking.
+- Added a Submit note on the ask picker's Submit tab, sent as `Note on all
+  answers`.
+- Auto-selected the recommended option on ask timeout, ignoring notes.
 - Told the model to use ask for decisions a skill, workflow, or instruction
   leaves to the user, not only for tradeoffs; skills such as grilling asked
   their rounds as chat text.

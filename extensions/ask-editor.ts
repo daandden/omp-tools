@@ -24,6 +24,7 @@ import {
 	getKeybindings,
 	matchesKey,
 	Spacer,
+	sliceByColumn,
 	type TUI,
 } from "@oh-my-pi/pi-tui";
 import { editorKey } from "@oh-my-pi/pi-tui/chrome";
@@ -41,6 +42,12 @@ const answerFieldTheme: FormFieldTheme = {
 	error: text => theme.fg("error", text),
 	hint: text => theme.fg("dim", text),
 };
+
+/** Drop the first and last column of a boxed panel rendered at `width + 2`,
+ *  leaving horizontal rules and one-space content insets. */
+export function withoutSideBorders(lines: readonly string[], width: number): string[] {
+	return lines.map(line => sliceByColumn(line, 1, width));
+}
 
 /** Submit chord of the prompt-style editor: `app.message.followUp`, else Ctrl+Enter / Ctrl+Q. */
 function isFollowUpSubmit(data: string): boolean {
@@ -219,6 +226,10 @@ export interface AnswerEditorOptions {
 	editExternally(text: string): Promise<string | null>;
 	/** Called before every key (inactivity countdown reset). */
 	onInput(): void;
+	/** Keys the owner handles before the editor; return true to consume. */
+	onKey?(data: string): boolean;
+	/** Footer hint; defaults to submit, cancel, and external-editor keys. */
+	hint?: string;
 }
 
 function noop(): void {}
@@ -280,7 +291,7 @@ export class AnswerEditor extends HookEditorComponent {
 		const external = editorKey("app.editor.external") || "ctrl+g";
 		this.#field = new FormField(editor, {
 			theme: answerFieldTheme,
-			hint: `enter or ctrl+q submit  esc cancel  ${external} external editor`,
+			hint: options.hint ?? `enter or ctrl+q submit  esc cancel  ${external} external editor`,
 		});
 		this.addChild(this.#field);
 		this.addChild(new Spacer(1));
@@ -301,6 +312,10 @@ export class AnswerEditor extends HookEditorComponent {
 	override handleInput(data: string): void {
 		if (this.#closed) return;
 		this.#options.onInput();
+		if (this.#options.onKey?.(data)) {
+			this.#tui.requestRender();
+			return;
+		}
 		if (isExternalEditorKey(data)) {
 			void this.#openExternalEditor();
 		} else if (isFollowUpSubmit(data)) {

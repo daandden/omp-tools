@@ -31,7 +31,6 @@ import {
 	TabBar,
 	Text,
 	type TUI,
-	sliceByColumn,
 	truncateToWidth,
 	visibleWidth,
 	wrapTextWithAnsi,
@@ -47,8 +46,11 @@ import {
 } from "@oh-my-pi/pi-tui/chrome";
 import { disambiguateDisplayLabels, sanitizeCarriageReturns } from "@oh-my-pi/pi-tui/render";
 import { getMarkdownTheme, highlightCode, theme } from "@oh-my-pi/pi-tui/theme";
-import { AnswerEditor } from "./ask-editor";
+import { AnswerEditor, withoutSideBorders } from "./ask-editor";
 import { loadImagePaths, type PasteOutcome, type PastedImage, readClipboardPaste } from "./ask-images";
+import { formatAskAnswers } from "./ask-result";
+import type { AskPickerBtw } from "./picker-btw";
+import { PickerBtwView } from "./picker-btw-view";
 
 const OTHER_OPTION = "Other (type your own)";
 const SUBMIT_OPTION = "Submit";
@@ -68,15 +70,30 @@ export interface AskImage extends PastedImage {
 	label: string;
 }
 
-export interface MarkdownAskResultItem extends ExtensionAskDialogResultItem {
+/** A note on one option; every note is sent, `picked` tells whether its option is picked. */
+export interface OptionNote {
+	option: string;
+	note: string;
+	picked: boolean;
+}
+
+export interface MarkdownAskResultItem
+	extends Omit<ExtensionAskDialogResultItem, "note" | "noteImages" | "customInputImages"> {
+	/** Notes in option order, picked or not. */
+	notes: OptionNote[];
 	images: AskImage[];
-	/** What `note` is attached to: a picked option's label, or `undefined` for the `Other` text. */
-	noteFor?: string;
+}
+
+/** Free text written on the Submit tab for the whole ask. */
+export interface SubmitNote {
+	text: string;
+	images: AskImage[];
 }
 
 export interface MarkdownAskResult {
 	kind: "submit";
 	results: MarkdownAskResultItem[];
+	submitNote: SubmitNote | undefined;
 }
 
 interface DialogOptions {
@@ -89,21 +106,29 @@ interface DialogOptions {
 	autocomplete(): AutocompleteProvider | undefined;
 	/** File command names offered under `/` in the answer box. */
 	fileCommands: ReadonlySet<string>;
+	/** Picker btw side questions; `undefined` when the host has no side turns (`?` is then off). */
+	askBtw: AskPickerBtw | undefined;
+}
+
+/** Text written in the picker editor, with the images its labels refer to. */
+interface Draft {
+	text: string;
+	images: AskImage[];
 }
 
 interface QuestionState {
 	selectedOptions: Set<string>;
-	customInput: string | undefined;
-	note: string | undefined;
-	noteRowKey: string | undefined;
+	/** The `Other` text; kept when `Other` is un-picked. */
+	other: Draft | undefined;
+	otherPicked: boolean;
+	/** Notes by option index; kept through select and deselect. */
+	notes: Map<number, Draft>;
 	cursorIndex: number;
 	scrollOffset: number;
 	/** True after a cursor move: keep the cursor row in view. False after
 	 *  manual paging, so a long question can be read without snapping back. */
 	followCursor: boolean;
 	timedOut: boolean;
-	customImages: AskImage[];
-	noteImages: AskImage[];
 }
 
 interface QuestionRow {
@@ -125,20 +150,14 @@ interface DialogCallbacks {
 
 interface PromptRequest {
 	title: string;
-	prefill: string | undefined;
-	/** Images already attached to this field, kept while their label stays in the text. */
-	images: AskImage[];
-	apply(value: string, images: AskImage[]): void;
+	/** Text and images already in this field; images stay while their label stays in the text. */
+	current: Draft | undefined;
+	/** Receives the saved text; empty text clears the field. */
+	apply(draft: Draft | undefined): void;
 }
 
 function clamp(value: number, min: number, max: number): number {
 	return Math.max(min, Math.min(value, max));
-}
-
-/** Drop the first and last column of a boxed panel rendered at `width + 2`,
- *  leaving horizontal rules and one-space content insets. */
-function withoutSideBorders(lines: readonly string[], width: number): string[] {
-	return lines.map(line => sliceByColumn(line, 1, width));
 }
 
 function displayText(text: string): string {
@@ -180,27 +199,25 @@ function questionRows(question: ExtensionAskDialogQuestion): QuestionRow[] {
 	return rows;
 }
 
-/** The note to submit, and the row it belongs to. Notes on rows that are not picked are dropped. */
-function submittedNote(
-	question: ExtensionAskDialogQuestion,
-	state: QuestionState,
-): { note: string; noteFor: string | undefined } | undefined {
-	if (state.note === undefined || state.noteRowKey === undefined) return undefined;
-	if (state.noteRowKey === "other") {
-		return state.customInput !== undefined ? { note: state.note, noteFor: undefined } : undefined;
-	}
-	const match = /^option:(\d+)$/.exec(state.noteRowKey);
-	const option = match?.[1] === undefined ? undefined : question.options[Number.parseInt(match[1], 10)];
-	return option && state.selectedOptions.has(option.label) ? { note: state.note, noteFor: option.label } : undefined;
+function isAnswered(state: QuestionState): boolean {
+	return state.selectedOptions.size > 0 || state.otherPicked;
 }
 
-/** Submit-tab summary: picked options, then the `Other` text, for both single and multi questions. */
+/** Every option note, in option order. */
+function optionNotes(question: ExtensionAskDialogQuestion, state: QuestionState): OptionNote[] {
+	return question.options.flatMap((option, index) => {
+		const note = state.notes.get(index);
+		return note ? [{ option: option.label, note: note.text, picked: state.selectedOptions.has(option.label) }] : [];
+	});
+}
+
+/** Submit-tab summary: picked options, then the picked `Other` text, for both single and multi questions. */
 function answerSummary(question: ExtensionAskDialogQuestion, state: QuestionState): string {
 	const display = displayOptionLabels(question);
 	const parts = question.options.flatMap((option, index) =>
 		state.selectedOptions.has(option.label) ? [display[index] ?? sanitizeCarriageReturns(option.label)] : [],
 	);
-	if (state.customInput !== undefined) parts.push(`Other: “${inlineText(state.customInput)}”`);
+	if (state.otherPicked && state.other) parts.push(`Other: “${inlineText(state.other.text)}”`);
 	return parts.length > 0 ? parts.join(", ") : theme.fg("warning", "unanswered");
 }
 
@@ -267,9 +284,40 @@ function isSpace(data: string): boolean {
 	return matchesKey(data, "space") || data === " ";
 }
 
-function isNoteKey(data: string): boolean {
-	const key = data.length === 1 ? data : decodePrintableKey(data);
+/** The printable character a key sends, for single-letter shortcuts. */
+function printableKey(data: string): string | undefined {
+	return data.length === 1 ? data : decodePrintableKey(data);
+}
+
+function isUpKey(data: string): boolean {
+	return getKeybindings().matches(data, "tui.select.up") || printableKey(data) === "k";
+}
+
+function isDownKey(data: string): boolean {
+	return getKeybindings().matches(data, "tui.select.down") || printableKey(data) === "j";
+}
+
+/** Tab/→/l next tab, Shift+Tab/←/h previous tab. */
+function handleTabKey(data: string, switchTab: (direction: 1 | -1) => void): boolean {
+	if (handleTabSwitchKey(data, switchTab)) return true;
+	const key = printableKey(data);
+	if (key !== "h" && key !== "l") return false;
+	switchTab(key === "l" ? 1 : -1);
+	return true;
+}
+
+function isEditKey(data: string): boolean {
+	const key = printableKey(data);
 	return key === "n" || key === "N";
+}
+
+function isClearKey(data: string): boolean {
+	const key = printableKey(data);
+	return key === "x" || key === "X";
+}
+
+function isBtwKey(data: string): boolean {
+	return printableKey(data) === "?";
 }
 
 class MarkdownAskDialog implements Component, Focusable {
@@ -288,9 +336,16 @@ class MarkdownAskDialog implements Component, Focusable {
 	#bodyRows = MIN_BODY_ROWS;
 	#countdown: CountdownTimer | undefined;
 	#remainingSeconds: number | undefined;
+	/** Stopped by `?`; the next key in the options restarts it in full. */
+	#countdownPaused = false;
 	#timeoutPending = false;
 	#closed = false;
 	#prompt: AnswerEditor | undefined;
+	/** The Picker btw thread; kept for this ask once `?` opens it. */
+	#btw: PickerBtwView | undefined;
+	#btwOpen = false;
+	/** Rows of the last options render; the Picker btw view is at least this tall. */
+	#optionsHeight = 0;
 	/** Images pasted into the open prompt; filtered by label on submit. */
 	#promptImages: AskImage[] = [];
 	/** Dialog-wide counter so `[Image #N]` labels stay unique across fields. */
@@ -303,6 +358,8 @@ class MarkdownAskDialog implements Component, Focusable {
 	#previewCache = new Map<string, string[]>();
 	/** Cursor visibility from the last rendered question body. */
 	#renderedCursor: { questionIndex: number; cursorIndex: number; visible: boolean } | undefined;
+	/** Written on the Submit tab; sent once for the whole ask. */
+	#submitNote: Draft | undefined;
 
 	constructor(questions: ExtensionAskDialogQuestion[], tui: TUI, callbacks: DialogCallbacks, options: DialogOptions) {
 		this.#questions = questions;
@@ -312,15 +369,13 @@ class MarkdownAskDialog implements Component, Focusable {
 		const timeoutMs = options.timeout;
 		this.#states = questions.map(question => ({
 			selectedOptions: new Set<string>(),
-			customInput: undefined,
-			note: undefined,
-			noteRowKey: undefined,
+			other: undefined,
+			otherPicked: false,
+			notes: new Map<number, Draft>(),
 			cursorIndex: clamp(question.recommended ?? 0, 0, Math.max(0, question.options.length - 1)),
 			scrollOffset: 0,
 			followCursor: false,
 			timedOut: false,
-			customImages: [],
-			noteImages: [],
 		}));
 		if (this.#hasSubmitTab()) {
 			this.#panel.addChild(this.#header);
@@ -344,6 +399,7 @@ class MarkdownAskDialog implements Component, Focusable {
 
 	setUseTerminalCursor(useTerminalCursor: boolean): void {
 		this.#prompt?.setUseTerminalCursor(useTerminalCursor);
+		this.#btw?.setUseTerminalCursor(useTerminalCursor);
 	}
 
 	invalidate(): void {
@@ -353,6 +409,7 @@ class MarkdownAskDialog implements Component, Focusable {
 		this.#previewCache.clear();
 		this.#panel.invalidate();
 		this.#prompt?.invalidate?.();
+		this.#btw?.invalidate();
 	}
 
 	dispose(): void {
@@ -360,11 +417,19 @@ class MarkdownAskDialog implements Component, Focusable {
 		this.#countdown?.dispose();
 		this.#prompt?.dispose();
 		this.#prompt = undefined;
+		this.#btw?.dispose();
+		this.#btw = undefined;
 		this.#panel.dispose();
 	}
 
 	handleInput(data: string): void {
 		if (this.#closed) return;
+		if (this.#btwOpen) {
+			// The question box normally holds TUI focus; the countdown stays paused.
+			this.#btw?.handleInput(data);
+			return;
+		}
+		this.#countdownPaused = false;
 		this.#countdown?.reset();
 		if (this.#prompt) {
 			// The prompt normally holds TUI focus; keep routing through its wrapper.
@@ -376,24 +441,49 @@ class MarkdownAskDialog implements Component, Focusable {
 			this.#finish(undefined);
 			return;
 		}
-		if (this.#hasSubmitTab() && handleTabSwitchKey(data, direction => this.#switchTab(direction))) {
+		if (isBtwKey(data) && this.#options.askBtw) {
+			this.#openBtw(this.#options.askBtw);
+			return;
+		}
+		if (this.#hasSubmitTab() && handleTabKey(data, direction => this.#switchTab(direction))) {
 			this.#requestRender();
 			return;
 		}
 		if (this.#isSubmitTab()) {
-			if (keybindings.matches(data, "tui.select.up")) this.#submitScroll = Math.max(0, this.#submitScroll - 1);
-			else if (keybindings.matches(data, "tui.select.down")) this.#submitScroll += 1;
-			else if (isEnter(data)) this.#submit();
-			this.#requestRender();
+			this.#handleSubmitTabInput(data);
 			return;
 		}
 		this.#handleQuestionInput(data);
+	}
+
+	/** `?`: swap the options for the Picker btw thread and pause the countdown. */
+	#openBtw(ask: AskPickerBtw): void {
+		this.#countdown?.dispose();
+		this.#countdownPaused = this.#countdown !== undefined;
+		this.#btw ??= new PickerBtwView({
+			tui: this.#tui,
+			ask,
+			draftAnswers: () => formatAskAnswers(this.#questions, this.#results(), this.#submitNote?.text),
+			heightRatio: DIALOG_HEIGHT_RATIO,
+			autocomplete: this.#options.autocomplete,
+			fileCommands: this.#options.fileCommands,
+			editExternally: text => this.#editExternally(text),
+			notify: this.#options.notify,
+			onClose: () => {
+				this.#btwOpen = false;
+				if (!this.#closed) this.#tui.setFocus(this);
+				this.#requestRender();
+			},
+		});
+		this.#btwOpen = true;
+		this.#btw.open();
 	}
 
 	render(width: number): readonly string[] {
 		const termRows = this.#tui.terminal?.rows ?? process.stdout.rows ?? 40;
 		// Panels render two columns wider, then lose their `│` side borders.
 		const innerWidth = Math.max(1, width - 2);
+		if (this.#btwOpen && this.#btw) return this.#btw.render(width, termRows, this.#optionsHeight);
 		if (this.#prompt) return this.#renderPrompt(width, innerWidth, termRows);
 
 		const tabRows = this.#hasSubmitTab() ? 2 : 0;
@@ -405,11 +495,17 @@ class MarkdownAskDialog implements Component, Focusable {
 		const body = this.#isSubmitTab()
 			? this.#renderSubmitBody(innerWidth, bodyRows)
 			: this.#renderQuestionBody(innerWidth, bodyRows);
-		this.#panel.title = this.#remainingSeconds === undefined ? "Ask" : `Ask (${this.#remainingSeconds}s)`;
+		this.#panel.title = this.#countdownPaused
+			? "Ask (timer paused)"
+			: this.#remainingSeconds === undefined
+				? "Ask"
+				: `Ask (${this.#remainingSeconds}s)`;
 		this.#body.setLines(body.lines);
 		this.#body.setHeight(bodyRows);
 		this.#footer.setLines([theme.fg("dim", truncateToWidth(this.#footerHint(body.indicator), innerWidth))]);
-		return withoutSideBorders(this.#panel.render(width + 2), width);
+		const lines = withoutSideBorders(this.#panel.render(width + 2), width);
+		this.#optionsHeight = lines.length;
+		return lines;
 	}
 
 	// ---------------------------------------------------------------------------
@@ -461,9 +557,9 @@ class MarkdownAskDialog implements Component, Focusable {
 			width,
 			state.cursorIndex,
 			[...state.selectedOptions].join("\u0000"),
-			state.customInput ?? "\u0001",
-			state.noteRowKey ?? "",
-			state.note ?? "",
+			state.other?.text ?? "\u0001",
+			state.otherPicked,
+			[...state.notes].map(([option, note]) => `${option}\u0000${note.text}`).join("\u0000"),
 		].join("\u0002");
 		const cacheKey = `${index}:${width}`;
 		const cached = this.#layoutCache.get(cacheKey);
@@ -496,22 +592,20 @@ class MarkdownAskDialog implements Component, Focusable {
 		width: number,
 	): string[] {
 		const option = row.kind === "option" ? question.options[row.optionIndex ?? -1] : undefined;
-		const checked = option ? state.selectedOptions.has(option.label) : state.customInput !== undefined;
+		const checked = option ? state.selectedOptions.has(option.label) : state.otherPicked;
 		// No `❯` cursor column: the focused row shows as an accent, bold label
 		// with an accent marker; the marker glyph alone shows the checked state.
 		const color = selected ? "accent" : checked ? "toolOutput" : "text";
 		const markerColor = checked ? "success" : selected ? "accent" : "dim";
 		const marker = `${theme.fg(markerColor, optionMarker(question.multi, checked))} `;
-		const noteMarker = state.note && state.noteRowKey === row.key ? theme.fg("success", "  ✎ note") : "";
 		const style = (t: string) => (selected ? theme.bold(theme.fg(color, t)) : theme.fg(color, t));
 		const label = renderInlineMarkdown(row.label, getMarkdownTheme(), style);
-		const labelWidth = Math.max(1, width - visibleWidth(marker) - (noteMarker ? visibleWidth(noteMarker) : 0));
-		const wrapped = wrapTextWithAnsi(label, labelWidth);
-		// Label wrap lines, descriptions, previews, and custom answers all start
-		// at the label's text column so the option reads as one aligned block.
+		const wrapped = wrapTextWithAnsi(label, Math.max(1, width - visibleWidth(marker)));
+		// Label wrap lines, descriptions, previews, notes, and custom answers all
+		// start at the label's text column so the option reads as one aligned block.
 		const labelColumn = visibleWidth(marker);
 		const indent = padding(labelColumn);
-		const lines = [`${marker}${wrapped[0] ?? ""}${noteMarker}`];
+		const lines = [`${marker}${wrapped[0] ?? ""}`];
 		for (let i = 1; i < wrapped.length; i++) lines.push(`${indent}${wrapped[i] ?? ""}`);
 
 		const detailWidth = Math.max(1, width - labelColumn);
@@ -527,9 +621,13 @@ class MarkdownAskDialog implements Component, Focusable {
 				lines.push(`${detailIndent}${theme.fg("border", "│")} ${line}`);
 			}
 		}
-		if (row.kind === "other" && state.customInput !== undefined) {
-			const answer = truncateToWidth(inlineText(state.customInput), detailWidth, Ellipsis.Unicode);
-			lines.push(theme.fg("muted", `${detailIndent}${answer}`));
+		// Unpicked text stays visible (dim) so nothing typed looks lost.
+		const text = row.kind === "other" ? state.other?.text : state.notes.get(row.optionIndex ?? -1)?.text;
+		if (text !== undefined) {
+			const prefix = row.kind === "other" ? "" : "✎ ";
+			const shown = truncateToWidth(`${prefix}${inlineText(text)}`, detailWidth, Ellipsis.Unicode);
+			const textColor = row.kind === "other" ? (checked ? "muted" : "dim") : "success";
+			lines.push(theme.fg(textColor, `${detailIndent}${shown}`));
 		}
 		return lines;
 	}
@@ -594,25 +692,39 @@ class MarkdownAskDialog implements Component, Focusable {
 
 	#renderSubmitBody(width: number, rows: number): { lines: string[]; indicator: string } {
 		const lines: string[] = [];
-		const unanswered = this.#states.filter(state => state.selectedOptions.size === 0 && state.customInput === undefined)
-			.length;
+		const unanswered = this.#states.filter(state => !isAnswered(state)).length;
 		if (unanswered > 0) {
 			lines.push(
 				theme.fg("warning", `${unanswered} unanswered question${unanswered === 1 ? "" : "s"}; Enter still submits.`),
 			);
 			lines.push("");
 		}
+		const noteLine = (label: string, text: string) => {
+			const prefix = `   ${label}: `;
+			const room = Math.max(1, width - visibleWidth(prefix));
+			return theme.fg("muted", `${prefix}${truncateToWidth(inlineText(text), room, Ellipsis.Unicode)}`);
+		};
 		for (let index = 0; index < this.#questions.length; index++) {
 			const question = this.#questions[index];
 			const state = this.#states[index];
 			if (!question || !state) continue;
 			const summary = `${theme.fg("dim", `${index + 1}. ${tabLabel(question, index)}:`)} ${answerSummary(question, state)}`;
 			lines.push(truncateToWidth(summary, width, Ellipsis.Unicode));
-			const note = submittedNote(question, state)?.note;
-			if (note?.trim()) {
-				lines.push(theme.fg("muted", `   Note: ${truncateToWidth(inlineText(note), Math.max(1, width - 9), Ellipsis.Unicode)}`));
+			for (const { option, note, picked } of optionNotes(question, state)) {
+				lines.push(noteLine(`Note (${inlineText(option)}${picked ? "" : ", not picked"})`, note));
 			}
 		}
+		lines.push("");
+		const submitNote = this.#submitNote;
+		lines.push(
+			submitNote
+				? truncateToWidth(
+						`${theme.fg("dim", "Submit note:")} ${theme.fg("muted", inlineText(submitNote.text))}`,
+						width,
+						Ellipsis.Unicode,
+					)
+				: theme.fg("dim", "Submit note: none"),
+		);
 		lines.push("");
 		lines.push(theme.fg("accent", `${theme.nav.cursor} ${SUBMIT_OPTION}`));
 		this.#submitScroll = clamp(this.#submitScroll, 0, Math.max(0, lines.length - rows));
@@ -645,24 +757,35 @@ class MarkdownAskDialog implements Component, Focusable {
 
 	#footerHint(indicator: string): string {
 		const cancel = `${cancelKeyLabel()} cancel`;
+		const btw = this.#options.askBtw ? " · ? btw" : "";
 		const scroll = indicator ? ` · ${pageKeysLabel()} ${indicator} scroll` : "";
-		if (this.#isSubmitTab()) return `Enter submit · ↑/↓ scroll · Tab/←/→ · ${cancel}`;
-		const index = this.#questionIndex();
-		const question = this.#questions[index];
-		const state = this.#states[index];
-		const enterAction = this.#questions.length > 1 ? "next" : "submit";
-		const onPicked = question && state ? this.#isPickedRow(question, state, state.cursorIndex) : false;
-		const enter = question?.multi ? `Space toggle · Enter ${enterAction}` : onPicked ? "Enter unselect" : "Enter select";
-		const note = onPicked ? "n add note to this choice" : "n note";
-		const tabs = this.#hasSubmitTab() ? " · Tab/←/→" : "";
-		return `${enter} · ${note} · ↑/↓ move${tabs}${scroll} · ${cancel}`;
+		const tabs = this.#hasSubmitTab() ? " · h/l tabs" : "";
+		if (this.#isSubmitTab()) {
+			const note = this.#submitNote ? "n edit submit note · x clear it" : "n add submit note";
+			return `Enter submit · ${note} · j/k scroll${tabs}${btw} · ${cancel}`;
+		}
+		const question = this.#questions[this.#questionIndex()];
+		const state = this.#states[this.#questionIndex()];
+		const row = question && state ? questionRows(question)[state.cursorIndex] : undefined;
+		if (!question || !state || !row) return `j/k move${tabs}${scroll}${btw} · ${cancel}`;
+		const next = this.#hasSubmitTab() ? "next" : "submit";
+		const text = row.kind === "other" ? state.other : state.notes.get(row.optionIndex ?? -1);
+		const noun = row.kind === "other" ? "answer" : "note";
+		let keys: string;
+		if (row.kind === "other" && !text) {
+			keys = "Space/Enter/n type answer";
+		} else {
+			const picked = this.#isPickedRow(question, state, row);
+			const enter = question.multi ? `Enter ${next}` : `Enter pick & ${next}`;
+			const edit = text ? `n edit ${noun} · x clear ${noun}` : `n add ${noun}`;
+			keys = `Space ${picked ? "unpick" : "pick"} · ${enter} · ${edit}`;
+		}
+		return `${keys} · j/k move${tabs}${scroll}${btw} · ${cancel}`;
 	}
 
-	/** Whether the row at `rowIndex` is currently answered: a picked option, or `Other` with text. */
-	#isPickedRow(question: ExtensionAskDialogQuestion, state: QuestionState, rowIndex: number): boolean {
-		const row = questionRows(question)[rowIndex];
-		if (!row) return false;
-		if (row.kind === "other") return state.customInput !== undefined;
+	/** Whether `row` is picked: a selected option, or a picked `Other`. */
+	#isPickedRow(question: ExtensionAskDialogQuestion, state: QuestionState, row: QuestionRow): boolean {
+		if (row.kind === "other") return state.otherPicked;
 		const option = question.options[row.optionIndex ?? -1];
 		return option !== undefined && state.selectedOptions.has(option.label);
 	}
@@ -671,6 +794,32 @@ class MarkdownAskDialog implements Component, Focusable {
 	// Input
 	// ---------------------------------------------------------------------------
 
+	/** Enter submits; `n`/`x` edit or clear the Submit note; j/k scroll. */
+	#handleSubmitTabInput(data: string): void {
+		if (isUpKey(data)) this.#submitScroll = Math.max(0, this.#submitScroll - 1);
+		else if (isDownKey(data)) this.#submitScroll += 1;
+		else if (isClearKey(data)) this.#submitNote = undefined;
+		else if (isEnter(data)) {
+			this.#submit();
+			return;
+		} else if (isEditKey(data)) {
+			this.#openPrompt({
+				title: "Submit note",
+				current: this.#submitNote,
+				apply: draft => {
+					this.#submitNote = draft;
+				},
+			});
+			return;
+		}
+		this.#requestRender();
+	}
+
+	/**
+	 * One meaning per key: Space toggles the row, Enter finishes the question
+	 * (single-select picks the row first), `n` edits the row's text, `x` clears
+	 * it. An `Other` without text opens its editor on Space or Enter.
+	 */
 	#handleQuestionInput(data: string): void {
 		const index = this.#questionIndex();
 		const question = this.#questions[index];
@@ -691,10 +840,10 @@ class MarkdownAskDialog implements Component, Focusable {
 			this.#requestRender();
 			return;
 		}
-		if (keybindings.matches(data, "tui.select.up") || keybindings.matches(data, "tui.select.down")) {
+		if (isUpKey(data) || isDownKey(data)) {
 			// The first move after reading reveals the cursor instead of skipping past it.
 			if (state.followCursor || this.#cursorVisible(index)) {
-				const delta = keybindings.matches(data, "tui.select.up") ? -1 : 1;
+				const delta = isUpKey(data) ? -1 : 1;
 				state.cursorIndex = clamp(state.cursorIndex + delta, 0, Math.max(0, rows.length - 1));
 			}
 			state.followCursor = true;
@@ -703,68 +852,81 @@ class MarkdownAskDialog implements Component, Focusable {
 		}
 		const row = rows[state.cursorIndex];
 		if (!row) return;
-		const note = isNoteKey(data);
 		const enter = isEnter(data);
-		const space = question.multi === true && isSpace(data);
-		if (!note && !enter && !space) return;
+		const space = isSpace(data);
+		const edit = isEditKey(data);
+		const clear = isClearKey(data);
+		if (!enter && !space && !edit && !clear) return;
 		// Never act on a row the user cannot see; reveal it first.
 		if (!this.#cursorVisible(index)) {
 			state.followCursor = true;
 			this.#requestRender();
 			return;
 		}
-		if (note) {
+		if (edit || (row.kind === "other" && !state.other && !clear)) {
+			this.#editRow(question, state, row);
+			return;
+		}
+		if (clear) {
+			if (row.kind === "other") {
+				state.other = undefined;
+				state.otherPicked = false;
+			} else {
+				state.notes.delete(row.optionIndex ?? -1);
+			}
+			this.#requestRender();
+			return;
+		}
+		if (space) {
+			if (this.#isPickedRow(question, state, row)) this.#unpickRow(question, state, row);
+			else this.#pickRow(question, state, row);
+			this.#requestRender();
+			return;
+		}
+		if (!question.multi) this.#pickRow(question, state, row);
+		this.#advance();
+	}
+
+	/** Pick `row`; single-select un-picks every other row, keeping their text. */
+	#pickRow(question: ExtensionAskDialogQuestion, state: QuestionState, row: QuestionRow): void {
+		const option = question.options[row.optionIndex ?? -1];
+		if (!question.multi) {
+			state.selectedOptions.clear();
+			state.otherPicked = false;
+		}
+		if (row.kind === "other") state.otherPicked = true;
+		else if (option) state.selectedOptions.add(option.label);
+	}
+
+	#unpickRow(question: ExtensionAskDialogQuestion, state: QuestionState, row: QuestionRow): void {
+		const option = question.options[row.optionIndex ?? -1];
+		if (row.kind === "other") state.otherPicked = false;
+		else if (option) state.selectedOptions.delete(option.label);
+	}
+
+	/** Open the row's editor: the option's Note, or the `Other` text (saving non-empty text picks it). */
+	#editRow(question: ExtensionAskDialogQuestion, state: QuestionState, row: QuestionRow): void {
+		if (row.kind === "other") {
 			this.#openPrompt({
-				title: `Note for ${inlineText(row.label)}`,
-				prefill: state.noteRowKey === row.key ? state.note : undefined,
-				images: state.noteRowKey === row.key ? state.noteImages : [],
-				apply: (value, images) => {
-					state.note = value;
-					state.noteRowKey = row.key;
-					state.noteImages = images;
+				title: "Other answer",
+				current: state.other,
+				apply: draft => {
+					state.other = draft;
+					if (draft) this.#pickRow(question, state, row);
+					else state.otherPicked = false;
 				},
 			});
 			return;
 		}
-		if (row.kind === "other") {
-			this.#openPrompt({
-				title: "Custom answer",
-				prefill: state.customInput,
-				images: state.customImages,
-				apply: (value, images) => this.#applyCustomInput(question, state, row, value, images),
-			});
-			return;
-		}
-		const option = question.options[row.optionIndex ?? -1];
-		if (!option) return;
-		if (question.multi) {
-			if (enter) {
-				this.#advance();
-				return;
-			}
-			if (state.selectedOptions.has(option.label)) {
-				state.selectedOptions.delete(option.label);
-				if (state.noteRowKey === row.key) this.#clearNote(state);
-			} else {
-				state.selectedOptions.add(option.label);
-			}
-			this.#requestRender();
-			return;
-		}
-		if (state.selectedOptions.has(option.label)) {
-			// Enter on the picked option unselects it (the Other text, if any, stays).
-			state.selectedOptions.clear();
-			if (state.noteRowKey === row.key) this.#clearNote(state);
-			this.#requestRender();
-			return;
-		}
-		// Single choice has one answer: picking an option replaces any Other text.
-		// Notes (`n`) supplement the choice instead.
-		state.selectedOptions = new Set([option.label]);
-		state.customInput = undefined;
-		state.customImages = [];
-		if (state.noteRowKey !== undefined && state.noteRowKey !== row.key) this.#clearNote(state);
-		this.#advance();
+		const optionIndex = row.optionIndex ?? -1;
+		this.#openPrompt({
+			title: `Note for ${inlineText(row.label)}`,
+			current: state.notes.get(optionIndex),
+			apply: draft => {
+				if (draft) state.notes.set(optionIndex, draft);
+				else state.notes.delete(optionIndex);
+			},
+		});
 	}
 
 	/** Whether the cursor row was on screen in the last render. Unrendered
@@ -778,49 +940,15 @@ class MarkdownAskDialog implements Component, Focusable {
 		return rendered.visible;
 	}
 
-	#applyCustomInput(
-		question: ExtensionAskDialogQuestion,
-		state: QuestionState,
-		row: QuestionRow,
-		value: string,
-		images: AskImage[],
-	): void {
-		if (value.trim() === "") {
-			// Submitting an empty value unselects the custom answer.
-			state.customInput = undefined;
-			state.customImages = [];
-			if (state.noteRowKey === row.key) this.#clearNote(state);
-			return;
-		}
-		state.customInput = value;
-		state.customImages = images;
-		// Single choice has one answer: Other text replaces the picked option.
-		if (!question.multi) {
-			state.selectedOptions.clear();
-			if (state.noteRowKey !== undefined && state.noteRowKey !== row.key) this.#clearNote(state);
-		}
-		if (question.multi && this.#questions.length === 1) {
-			this.#activeTab = this.#questions.length;
-			this.#submitScroll = 0;
-		} else {
-			this.#advance();
-		}
-	}
-
-	#clearNote(state: QuestionState): void {
-		state.note = undefined;
-		state.noteRowKey = undefined;
-		state.noteImages = [];
-	}
-
 	#switchTab(direction: 1 | -1): void {
 		const tabCount = this.#questions.length + 1;
 		this.#activeTab = (this.#activeTab + direction + tabCount) % tabCount;
 		this.#submitScroll = 0;
 	}
 
+	/** Next question; the last one goes to the Submit tab, or submits when there is none. */
 	#advance(): void {
-		if (this.#questions.length === 1) {
+		if (!this.#hasSubmitTab()) {
 			this.#submit();
 			return;
 		}
@@ -831,7 +959,7 @@ class MarkdownAskDialog implements Component, Focusable {
 	}
 
 	// ---------------------------------------------------------------------------
-	// Custom answer / note editor
+	// Note / Other / Submit note editor: Enter saves and stays, Esc discards
 	// ---------------------------------------------------------------------------
 
 	#openPrompt(request: PromptRequest): void {
@@ -846,20 +974,20 @@ class MarkdownAskDialog implements Component, Focusable {
 			}
 			this.#requestRender();
 		};
-		this.#promptImages = [...request.images];
+		this.#promptImages = [...(request.current?.images ?? [])];
+		const external = editorKey("app.editor.external") || "ctrl+g";
 		const prompt = new AnswerEditor(this.#tui, {
 			title: request.title,
-			prefill: request.prefill,
+			prefill: request.current?.text,
 			maxHeight: PROMPT_EDITOR_ROWS,
 			autocomplete: this.#options.autocomplete(),
 			fileCommands: this.#options.fileCommands,
+			hint: `enter or ctrl+q save  esc discard  ${external} external editor`,
 			onSubmit: value => {
 				if (!this.#closed) {
 					// Deleting an image chip (or its `[Image #N]` text) drops that image.
-					request.apply(
-						value,
-						this.#promptImages.filter(image => value.includes(image.label)),
-					);
+					const images = this.#promptImages.filter(image => value.includes(image.label));
+					request.apply(value.trim() === "" ? undefined : { text: value, images });
 				}
 				close();
 			},
@@ -949,14 +1077,8 @@ class MarkdownAskDialog implements Component, Focusable {
 			const question = this.#questions[index];
 			const state = this.#states[index];
 			if (!question || !state) continue;
-			if (state.selectedOptions.size > 0 || state.customInput !== undefined) continue;
-			const noted = /^option:(\d+)$/.exec(state.noteRowKey ?? "");
-			const notedIndex = noted?.[1] === undefined ? Number.NaN : Number.parseInt(noted[1], 10);
-			const fallbackIndex =
-				Number.isInteger(notedIndex) && question.options[notedIndex]
-					? notedIndex
-					: clamp(question.recommended ?? 0, 0, Math.max(0, question.options.length - 1));
-			const fallback = question.options[fallbackIndex];
+			if (isAnswered(state)) continue;
+			const fallback = question.options[clamp(question.recommended ?? 0, 0, Math.max(0, question.options.length - 1))];
 			if (fallback) state.selectedOptions.add(fallback.label);
 			state.timedOut = true;
 		}
@@ -964,10 +1086,15 @@ class MarkdownAskDialog implements Component, Focusable {
 	}
 
 	#submit(): void {
-		const results: MarkdownAskResultItem[] = this.#questions.flatMap((question, index) => {
+		this.#finish({ kind: "submit", results: this.#results(), submitNote: this.#submitNote });
+	}
+
+	/** Every question's answer as it stands; also the Picker btw's draft. */
+	#results(): MarkdownAskResultItem[] {
+		return this.#questions.flatMap((question, index) => {
 			const state = this.#states[index];
 			if (!state) return [];
-			const note = submittedNote(question, state);
+			const other = state.otherPicked ? state.other : undefined;
 			return [
 				{
 					id: question.id,
@@ -977,18 +1104,13 @@ class MarkdownAskDialog implements Component, Focusable {
 					selectedOptions: question.options
 						.map(option => option.label)
 						.filter(label => state.selectedOptions.has(label)),
-					customInput: state.customInput,
-					note: note?.note,
-					noteFor: note?.noteFor,
+					customInput: other?.text,
+					notes: optionNotes(question, state),
 					timedOut: state.timedOut || undefined,
-					images: [
-						...(state.customInput !== undefined ? state.customImages : []),
-						...(note !== undefined ? state.noteImages : []),
-					],
+					images: [...(other?.images ?? []), ...[...state.notes.values()].flatMap(note => note.images)],
 				},
 			];
 		});
-		this.#finish({ kind: "submit", results });
 	}
 
 	#finish(result: MarkdownAskResult | undefined): void {

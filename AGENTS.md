@@ -26,6 +26,17 @@ concerns that arrive after its final answer.
   (reserved or duplicate labels, duplicate ids), it delegates to
   `ctx.invokeTool(params, { signal, onUpdate })` so native errors and fallbacks
   apply unchanged.
+- `?` in the picker opens a Picker btw (`extensions/picker-btw-view.ts`): a
+  side question answered inside the picker through `ctx.runEphemeralTurn`
+  (`extensions/picker-btw.ts`, prompt `picker-btw.md` with the unsubmitted
+  answers from `formatAskAnswers`). It is not native `/btw`: extensions cannot
+  start that (InteractiveMode's BtwController) or register a `btw` command
+  (built-in names are reserved and skipped). The thread replays earlier turns as
+  `history` under one `conversationKey` per ask, rotated after a cancelled or
+  failed turn; the answer is the streamed text, because `replyText` is
+  deduplicated and capped at 4 KiB. `?` disposes the countdown and the next key
+  in the options restarts it; the view and any running turn are disposed with
+  the dialog. `?` is off when `runEphemeralTurn` is missing.
 - Preserve `approval: "read"`, `concurrency: "exclusive"`, cancellation
   (`ctx.abort()` plus `ToolAbortError`), `ask.timeout` auto-selection,
   `ask.notify`, and the explicit error when native ask delegation is unavailable.
@@ -51,9 +62,15 @@ concerns that arrive after its final answer.
   native-shaped result `details`.
 - `extensions/ask-result.ts`: the labeled model-facing answer text (the model
   sees only this text, never `details`).
-- `extensions/ask-dialog.ts`: Markdown picker mirroring the native pi-tui
-  `AskDialogComponent` (tabs, Submit review, multi-select, Other, notes,
-  timeout); diff it against upstream when OMP changes the native dialog.
+- `extensions/ask-dialog.ts`: Markdown picker with the native pi-tui
+  `AskDialogComponent` structure (tabs, Submit review, multi-select, Other,
+  timeout) but its own key flow, one meaning per key in every picker: j/k or
+  ↑/↓ move, h/l or ←/→/Tab switch tabs, Space toggles the row, Enter finishes
+  the question (single-select picks the row first; no Submit tab means submit),
+  `n` edits the row's text (option note, `Other`, Submit note), `x` clears it;
+  editors save on Enter and stay, Esc discards. Notes are per option, survive
+  picking, and are all sent; `Other` text survives un-picking. Diff the
+  structure against upstream when OMP changes the native dialog.
 - `extensions/ask-editor.ts`: `Other`/note text box. Wraps the main prompt's
   `CustomEditor` with the host's suggestion provider (borrowed in
   `flexible-ask.ts` through `ctx.ui.addAutocompleteProvider`) for references
@@ -69,6 +86,8 @@ concerns that arrive after its final answer.
   the host does not claim the image-paste key.
 - `extensions/ask-images.ts`: clipboard and path image loading for the picker's
   editors, using the host's clipboard/image-loading helpers.
+- `extensions/picker-btw.ts`, `picker-btw.md`, `picker-btw-view.ts`: the
+  Picker btw side-turn runner, its prompt, and its thread view.
 - `extensions/flexible-ask.md`: static model-facing description; keep aligned
   with upstream `packages/coding-agent/src/prompts/tools/ask.md` except the
   option count (no fixed count instead of 2–5) and user-owned decisions (ask
@@ -189,7 +208,8 @@ Registration/ask changes
 require a fresh-session OMP smoke; typechecking alone does not exercise host
 integration or UI. OMP 18.3.1 was used for the latest fresh-session picker and
 rendering smoke; OMP 18.4.4 for the live `generate_image` generate and edit
-smoke; OMP 18.4.8 for the host judge call behind the concern-wake checks.
+smoke; OMP 18.4.8 for the host judge call behind the concern-wake checks; OMP
+18.6.1 for the Picker btw; OMP 18.8.0 for the picker key flow and Submit note.
 
 ## Agent skills
 
