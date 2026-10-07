@@ -53,9 +53,11 @@
 - Added a Submit note on the ask picker's Submit tab, sent as `Note on all
   answers`.
 - Auto-selected the recommended option on ask timeout, ignoring notes.
-- Told the model to use ask for decisions a skill, workflow, or instruction
-  leaves to the user, not only for tradeoffs; skills such as grilling asked
-  their rounds as chat text.
+- Dropped the option count from the ask description: it now asks for distinct
+  options with no number (native says 2–5), and otherwise matches native ask's
+  wording, including when to ask. The exception for decisions a skill,
+  workflow, or instruction leaves to the user is gone; the always-apply rule
+  still routes all user input through ask.
 - Resynced the ask description with OMP's current native wording, restoring
   "Clarifying custom input? Answer first; re-ask unresolved questions."
 - Checked the `generate-image` skill against GPT Image 2.5 (Flare, Sunburst),

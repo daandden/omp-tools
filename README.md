@@ -5,11 +5,9 @@ advisor concern follow-up. Formerly `omp-ask`.
 
 ## `ask`
 
-Replaces the model-facing option-count guidance with “as many concise, distinct
-options as there are materially different tradeoffs — no fixed count.” It also
-tells the model to ask when a skill, workflow, or instruction leaves a decision
-to the user (interview rounds, approvals, confirmations), not only for
-tradeoffs.
+Removes the model-facing option count: the description asks for distinct
+options without a number (native says 2–5). The rest of the description,
+including when to ask, matches native `ask`.
 
 The plugin ships an always-apply rule, `rules/use-ask-for-user-input.md`: all
 user input goes through `ask`, overriding question formats that skills

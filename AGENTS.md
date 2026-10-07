@@ -3,7 +3,7 @@
 ## Project Overview
 
 `omp-tools` is an Oh My Pi (OMP) plugin. It shadows the native `ask` tool to
-change model-facing option-count and when-to-ask guidance and show questions
+drop the model-facing option count and show questions
 as full Markdown in the interactive picker; outside the TUI it delegates to
 native `ask`. It ships an always-apply rule that routes all user input through
 `ask`. It replaces native `generate_image` with a tool that calls the Codex
@@ -90,9 +90,7 @@ concerns that arrive after its final answer.
   Picker btw side-turn runner, its prompt, and its thread view.
 - `extensions/flexible-ask.md`: static model-facing description; keep aligned
   with upstream `packages/coding-agent/src/prompts/tools/ask.md` except the
-  option count (no fixed count instead of 2–5) and user-owned decisions (ask
-  for decisions a skill, workflow, or instruction leaves to the user; never
-  default-pick those).
+  option count (the plugin states no number instead of 2–5).
 - `rules/use-ask-for-user-input.md`: always-apply rule; all user input goes
   through `ask`, overriding question formats skills prescribe.
 - `extensions/assets.d.ts`: ambient typing for the static Markdown import.

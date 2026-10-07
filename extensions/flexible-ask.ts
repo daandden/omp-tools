@@ -1,13 +1,11 @@
-// Flexible Ask: shadow the built-in `ask` tool with different option-count
-// and when-to-ask guidance and a full-Markdown picker.
+// Flexible Ask: shadow the built-in `ask` tool with option guidance that
+// states no count and a full-Markdown picker.
 //
 // Minimal-diff contract: ./flexible-ask.md mirrors
-// `packages/coding-agent/src/prompts/tools/ask.md` verbatim except two
-// deviations: the option count ("2–5 distinct options" -> no fixed count)
-// and user-owned decisions (ask for decisions a skill, workflow, or
-// instruction leaves to the user; never default-pick those). Keep it that
-// way; any other prose drift is a bug. Prompt lives in a static .md, never
-// built in code.
+// `packages/coding-agent/src/prompts/tools/ask.md` verbatim except one
+// deviation: the option count ("2–5 distinct options each" -> "distinct
+// options", no number). Keep it that way; any other prose drift is a bug.
+// Prompt lives in a static .md, never built in code.
 //
 // Execution: in the interactive TUI the wrapper shows its own picker
 // (./ask-dialog.ts) because the native dialog flattens questions to one
