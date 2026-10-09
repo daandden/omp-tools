@@ -209,8 +209,8 @@ rendering smoke; OMP 18.4.4 for the live `generate_image` generate and edit
 smoke; OMP 18.4.8 for the host judge call behind the concern-wake checks; OMP
 18.6.1 for the Picker btw; OMP 18.8.0 for the picker key flow and Submit note.
 
-## Agent skills
+## vstack
 
-- Issue tracker: GitHub Issues. See `docs/agents/issue-tracker.md`.
-- Triage labels: default vocabulary. See `docs/agents/triage-labels.md`.
-- Domain docs: single-context. See `docs/agents/domain.md`.
+- Issue tracker: GitHub Issues. See `docs/vstack/issue-tracker.md`.
+- Triage labels: default vocabulary. See `docs/vstack/triage-labels.md`.
+- Domain docs: single-context. See `docs/vstack/domain.md`.
