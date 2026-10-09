@@ -7,17 +7,24 @@ import {
 	getKeybindings,
 	Markdown,
 	matchesKey,
+	md,
+	type NativeChild,
+	type NativeNode,
+	type NativeScroll,
+	node,
 	replaceTabs,
+	span,
 	type TUI,
+	text,
 	wrapTextWithAnsi,
 } from "@oh-my-pi/pi-tui";
-import { editorKey } from "@oh-my-pi/pi-tui/chrome";
 import { getMarkdownTheme, theme } from "@oh-my-pi/pi-tui/theme";
-import { AnswerEditor, withoutSideBorders } from "./ask-editor";
+import { AnswerEditor, externalEditorKey, scrollBox, withoutSideBorders } from "./ask-editor";
 import { type AskPickerBtw, type PickerBtwTurn, renderPickerBtwPrompt } from "./picker-btw";
 
 /** Rows reserved for the question box. */
 const QUESTION_EDITOR_ROWS = 4;
+const EMPTY_THREAD = "Ask about this question or the conversation. The agent never sees the answer.";
 
 /** The interrupt key, as the question box's editor reads it (raw Escape when unbound). */
 function isInterrupt(data: string): boolean {
@@ -54,6 +61,8 @@ export class PickerBtwView {
 	#maxScroll = 0;
 	#threadRows = 1;
 	#markdown = new WeakMap<PickerBtwTurn, { source: string; markdown: Markdown }>();
+	/** PgUp/PgDn forwarded to Tern, which owns the scroller there. */
+	#nativeScroll: NativeScroll | undefined;
 	#disposed = false;
 
 	constructor(options: PickerBtwViewOptions) {
@@ -65,14 +74,18 @@ export class PickerBtwView {
 		if (this.#disposed) return;
 		this.#editor?.dispose();
 		const keybindings = getKeybindings();
-		const external = editorKey("app.editor.external") || "ctrl+g";
 		const editor = new AnswerEditor(this.#options.tui, {
 			title: "Picker btw · only you see the answers",
 			prefill,
 			maxHeight: QUESTION_EDITOR_ROWS,
 			autocomplete: this.#options.autocomplete(),
 			fileCommands: this.#options.fileCommands,
-			hint: `enter ask  esc cancel answer, then back  pgup/pgdn scroll  ${external} external editor`,
+			hints: [
+				{ keys: ["enter"], label: "ask" },
+				{ keys: ["escape"], label: "cancel answer, then back" },
+				{ keys: ["pageUp", "pageDown"], label: "scroll" },
+				{ keys: [externalEditorKey()], label: "external editor" },
+			],
 			onSubmit: text => this.#submit(text),
 			onCancel: () => this.#close(),
 			onPasteImage: async () => {
@@ -159,9 +172,37 @@ export class PickerBtwView {
 		return [theme.fg("dim", ` thread${position}`), ...shown.map(line => ` ${line}`), ...editorLines];
 	}
 
+	/** The Tern view: the thread, `lines` text lines tall and scrolling, then the question box, which describes itself. */
+	describe(lines: number): NativeChild[] {
+		const thread =
+			this.#turns.length === 0
+				? [text([span(EMPTY_THREAD, "dim")], { wrap: "word" })]
+				: this.#turns.map((turn, index) => this.#describeTurn(turn, index));
+		// Each new question brings the thread's end into view; Tern keeps the scroll position otherwise.
+		const content: NativeNode = { ...node("col", { gap: "sm" }, thread), reveal: { at: "end", n: this.#turns.length } };
+		const threadNode = scrollBox(content, { lines, fixed: true, key: "thread", scroll: this.#nativeScroll });
+		return this.#editor ? [threadNode, this.#editor] : [threadNode];
+	}
+
+	#describeTurn(turn: PickerBtwTurn, index: number): NativeNode {
+		const children: NativeChild[] = [
+			text([span("› ", "accent"), span(replaceTabs(turn.question).trim(), "muted")], { wrap: "word" }),
+		];
+		if (turn.answer.trim()) children.push(md(turn.answer, { stream: turn.status === "running" }));
+		if (turn.status === "running") {
+			children.push(node("spinner", { style: "dots", label: [span("Answering… esc cancels", "dim")] }));
+		} else if (turn.status === "cancelled") {
+			children.push(text([span("Cancelled", "warning")]));
+		} else if (turn.status === "error") {
+			const message = replaceTabs(turn.error ?? "Failed").replace(/\s+/g, " ").trim();
+			children.push(text([span(`Error: ${message}`, "error")], { wrap: "word" }));
+		}
+		return node("col", { gap: "xs" }, children, `turn${index}`);
+	}
+
 	#threadLines(width: number): string[] {
 		if (this.#turns.length === 0) {
-			return [theme.fg("dim", "Ask about this question or the conversation. The agent never sees the answer.")];
+			return [theme.fg("dim", EMPTY_THREAD)];
 		}
 		const lines: string[] = [];
 		for (const turn of this.#turns) {
@@ -194,6 +235,7 @@ export class PickerBtwView {
 		this.#scroll = Math.max(0, Math.min(this.#maxScroll, this.#scroll + direction * step));
 		// Paging back to the end follows new text again.
 		this.#follow = this.#scroll >= this.#maxScroll;
+		this.#nativeScroll = { by: direction < 0 ? "page-up" : "page-down", n: (this.#nativeScroll?.n ?? 0) + 1 };
 		this.#options.tui.requestRender();
 	}
 

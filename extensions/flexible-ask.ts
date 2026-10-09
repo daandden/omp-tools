@@ -21,10 +21,11 @@ import type {
 	QuestionResult,
 	ToolDefinition,
 } from "@oh-my-pi/pi-coding-agent";
-import { discoverSlashCommands, logger, settings } from "@oh-my-pi/pi-coding-agent";
+import { askToolRenderer, discoverSlashCommands, logger, settings } from "@oh-my-pi/pi-coding-agent";
 import { cfgAskNotify, cfgAskTimeout } from "@oh-my-pi/pi-coding-agent/modes/settings";
 import { ToolAbortError } from "@oh-my-pi/pi-coding-agent/tools/tool-errors";
-import { type AutocompleteProvider, TERMINAL } from "@oh-my-pi/pi-tui";
+import { type AutocompleteProvider, span, TERMINAL, text } from "@oh-my-pi/pi-tui";
+import type { NativeToolView } from "@oh-my-pi/pi-tui/tools/renderer";
 import { sanitizeCarriageReturns } from "@oh-my-pi/pi-tui/render";
 import { type MarkdownAskResult, showMarkdownAskDialog } from "./ask-dialog";
 import { formatAskAnswers } from "./ask-result";
@@ -33,6 +34,58 @@ import flexibleAskDescription from "./flexible-ask.md" with { type: "text" };
 
 /** Labels the native runtime reserves for its own action rows. */
 const RESERVED_OPTION_LABELS = new Set(["Other (type your own)", "Chat about this", "Next →"]);
+
+/** Native ask details plus the Submit note, which only the picker writes. */
+type FlexibleAskDetails = AskToolDetails & {
+	/** Shown on the Tern card; the model reads it in the result text. */
+	submitNote?: string;
+};
+
+/** Result views, keyed by `details` so an unchanged card keeps its nodes. */
+const resultViews = new WeakMap<FlexibleAskDetails, NativeToolView | undefined>();
+/** Views with a plain head target, keyed by the native view they rewrite. */
+const plainTargetViews = new WeakMap<NativeToolView, NativeToolView>();
+
+const HEADING_MARKER = /^\s*#{1,6}\s+/;
+
+/** Native ask heads the card with the question's first line; drop its Markdown heading marker. */
+function withPlainTarget(view: NativeToolView | undefined): NativeToolView | undefined {
+	const target = view?.tool?.target;
+	if (!view || typeof target !== "string" || !HEADING_MARKER.test(target)) return view;
+	let plain = plainTargetViews.get(view);
+	if (!plain) {
+		plain = { ...view, tool: { ...view.tool, target: target.replace(HEADING_MARKER, "") } };
+		plainTargetViews.set(view, plain);
+	}
+	return plain;
+}
+
+/** The native ask card for the result, with the Submit note below the answers. */
+function describeAskResult(
+	result: AgentToolResult<FlexibleAskDetails>,
+	args: Parameters<typeof askToolRenderer.describeResult>[2],
+): NativeToolView | undefined {
+	const details = result.details;
+	if (details && resultViews.has(details)) return resultViews.get(details);
+	const view = askToolRenderer.describeResult(result, undefined, args);
+	const note = details?.submitNote;
+	const withNote =
+		view && note
+			? {
+					...view,
+					body: [
+						...(view.body ?? []),
+						text([span("Note on all answers: ", "dim"), span(note, "muted")], {
+							wrap: "word",
+							role: "omp.tool.context",
+						}),
+					],
+				}
+			: view;
+	const described = withPlainTarget(withNote);
+	if (details) resultViews.set(details, described);
+	return described;
+}
 
 interface AskQuestionParams {
 	id: string;
@@ -95,7 +148,7 @@ async function askWithMarkdownDialog(
 	questions: ExtensionAskDialogQuestion[],
 	signal: AbortSignal | undefined,
 	autocomplete: () => AutocompleteProvider | undefined,
-): Promise<AgentToolResult<AskToolDetails>> {
+): Promise<AgentToolResult<FlexibleAskDetails>> {
 	const timeoutSeconds = cfgAskTimeout.get(settings);
 	if (cfgAskNotify.get(settings) !== "off") {
 		TERMINAL.sendNotification({
@@ -149,7 +202,7 @@ async function askWithMarkdownDialog(
 	// Pasted images follow the answer text, each introduced by the label the
 	// user's text refers to (`[Image #N]`), plus its file path when pasted from disk.
 	const images = [...dialogResult.results.flatMap(answer => answer.images), ...(submitNote?.images ?? [])];
-	const imageBlocks: AgentToolResult<AskToolDetails>["content"] = images.flatMap(({ label, image, source }) => [
+	const imageBlocks: AgentToolResult<FlexibleAskDetails>["content"] = images.flatMap(({ label, image, source }) => [
 		{ type: "text" as const, text: source ? `${label} ${source}` : label },
 		image,
 	]);
@@ -161,7 +214,7 @@ async function askWithMarkdownDialog(
 			ctx.abort();
 			throw new ToolAbortError("Ask tool was cancelled by the user");
 		}
-		const details: AskToolDetails = {
+		const details: FlexibleAskDetails = {
 			question: single.question,
 			options: single.options,
 			multi: single.multi,
@@ -169,10 +222,11 @@ async function askWithMarkdownDialog(
 			customInput: single.customInput,
 			note: single.note,
 			timedOut: single.timedOut,
+			submitNote: submitNote?.text,
 		};
 		return { content: [{ type: "text", text }, ...imageBlocks], details };
 	}
-	return { content: [{ type: "text", text }, ...imageBlocks], details: { results } };
+	return { content: [{ type: "text", text }, ...imageBlocks], details: { results, submitNote: submitNote?.text } };
 }
 
 export default function flexibleAsk(pi: ExtensionAPI) {
@@ -209,7 +263,7 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 		});
 	});
 
-	const definition: ToolDefinition<typeof parameters, AskToolDetails> = {
+	const definition: ToolDefinition<typeof parameters, FlexibleAskDetails> = {
 		name: "ask",
 		label: "Ask",
 		description: flexibleAskDescription.trimEnd(),
@@ -217,6 +271,9 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 		// Native ask is read-tier; omitted defaults to exec and would
 		// re-prompt/deny differently. Keep the tier.
 		approval: "read",
+		// Tern draws the card with native ask's views, so it reads the same as a native ask.
+		describeCall: args => withPlainTarget(askToolRenderer.describeCall(args)),
+		describeResult: (result, _options, args) => describeAskResult(result, args),
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			if (!ctx.invokeTool) throw new Error("Native ask tool unavailable for delegation");
 			const questions = sanitizeQuestions(params.questions);
@@ -226,9 +283,9 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 			return askWithMarkdownDialog(ctx, questions, signal, () => hostAutocomplete);
 		},
 	};
-	// `concurrency` is not part of the extension ToolDefinition type, but
-	// RegisteredToolAdapter forwards definition keys to the agent loop. Native
-	// ask runs alone in its batch; two concurrent pickers would steal each
-	// other's editor slot.
-	pi.registerTool(Object.assign(definition, { concurrency: "exclusive" as const }));
+	// `concurrency` and `mergeCallAndResult` are not part of the extension
+	// ToolDefinition type, but RegisteredToolAdapter forwards definition keys.
+	// Native ask runs alone in its batch; two concurrent pickers would steal
+	// each other's editor slot. Its result card replaces the call card.
+	pi.registerTool(Object.assign(definition, { concurrency: "exclusive" as const, mergeCallAndResult: true }));
 }

@@ -109,6 +109,43 @@ ask:
   enabled: true
 ```
 
+### In Tern
+
+In [Tern](https://docs.stencil.so/tern/) (and other terminals that speak the
+Tern Surface Protocol), the picker is drawn by the terminal instead of as text
+rows. It sits in the composer's place, like native `ask`, but spans the full
+width of the pane instead of the composer's width. Each option is a row: the
+marker, then the label with its Markdown description, preview, and note or
+`Other` text below it. The rows use Tern's theme as native `ask`'s rows do:
+its UI font, primary and muted text colors, a gray fill on the highlighted row
+and on hover, a Recommended badge, and a filled marker on a picked row. They
+switch with Tern's light and dark appearance. The countdown is a ring.
+A row of buttons below the options shows each key with its keycap. The editors
+for `Other`, notes, the Submit note, and the Picker btw are Tern's own text
+fields, without the main prompt's model chip and send button.
+
+The question and its options sit in one box of fixed height for the whole
+ask. Switching tabs, opening an editor, or opening the Picker btw does not
+resize the picker. The box is as tall as the tallest tab needs, up to half the
+pane. Taller content scrolls inside it: use the wheel, PgUp/PgDn, or j/k (the
+highlighted row stays in view). A question first shows from its top. When the
+highlighted row is below the box, the first key only brings it into view, so
+no key acts on a row you have not seen. In an editor or the Picker btw, the box
+above it shows the question, every answer (for the Submit note), or the thread.
+
+The keys stay the same. The pointer runs the same paths:
+
+| Pointer | Same as |
+|---|---|
+| Click a tab | Switching to that tab |
+| Click an option | Moving to it, then Space |
+| Double-click an option | Moving to it, then Enter |
+| Click a button | Its key (`?`, Space, `n`, `x`, Esc, Enter) |
+
+The `ask` tool card in the transcript uses native ask's Tern view: the question
+and its answers with a check on each pick, plus the Submit note.
+`PI_TUI_NATIVE=0` keeps the text picker.
+
 ## `generate_image`
 
 Replaces native `generate_image`. It calls the Codex Images endpoint
@@ -174,6 +211,11 @@ Guards:
   the model not to retry before then.
 - A successful result notes when the image limit window is at least 80% used,
   with its reset time.
+
+In Tern, the tool card heads with the prompt's first line, the reference count,
+and the size and quality. Below it are the saved path (click to open the file),
+the near-limit warning, a folded copy of a long prompt, and the image. An error
+shows its message in red.
 
 Disable native image generation. The plugin's tool takes precedence either
 way, because native is added after extensions and skips taken names:
@@ -269,6 +311,15 @@ and the agent not seeing the thread after the ask.
 A fresh OMP 18.8.0 session verified the picker keys: Enter picking a
 single-choice option and moving on, Space ticking a checkbox, a note saved with
 Enter staying on its row, a Submit note, and the answer text the agent got.
+
+A fresh OMP 18.8.6 session in a headless Tern 0.6.3 window (`tern serve`,
+driven with `tern ctl`) verified the Tern views: the option rows, keys, row,
+tab, and button clicks, the note and `Other` editors, the Picker btw thread,
+the countdown ring, Cancel, the `ask` result card with its Submit note, and a
+live `generate_image` card with its image and an error card. It also verified
+one picker height across tabs, editors, and the Picker btw, and scrolling by
+wheel, PgDn, and j/k. The same session with `PI_TUI_NATIVE=0` verified the text
+picker.
 
 A fresh OMP 18.4.4 session verified `generate_image` live: a generation, an edit
 with a PNG reference path, and an edit with `num_last_images_to_include`.

@@ -10,7 +10,10 @@
 // `execute` runs, so the schema stays open and `execute` rejects them itself.
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ExtensionAPI, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
+import { pathToFileURL } from "node:url";
+import type { AgentToolResult, ExtensionAPI, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
+import { type NativeChild, node, span, text } from "@oh-my-pi/pi-tui";
+import type { NativeToolHead, NativeToolView } from "@oh-my-pi/pi-tui/tools/renderer";
 import { Snowflake } from "@oh-my-pi/pi-utils";
 import { requestImage } from "./codex-images";
 import description from "./generate-image.md" with { type: "text" };
@@ -22,11 +25,74 @@ interface GenerateImageDetails {
 	path: string;
 	size?: string;
 	quality?: string;
+	/** The near-limit warning appended to the result text, for the Tern card. */
+	quotaWarning?: string;
 	/** For tracing a result with OpenAI; not shown to the model. */
 	requestId?: string;
 	generationId?: string;
 	outputTokens?: number;
 }
+
+interface GenerateImageArgs {
+	prompt?: string;
+	transparent_background?: boolean;
+	referenced_image_paths?: string[];
+	num_last_images_to_include?: number;
+}
+
+/** The Tern card head: the prompt's first line, then reference and output facts. */
+function imageHead(args: GenerateImageArgs, details?: GenerateImageDetails): NativeToolHead {
+	const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
+	const meta: string[] = [];
+	const references = args.referenced_image_paths?.length ?? args.num_last_images_to_include;
+	if (references) meta.push(`${references} reference${references === 1 ? "" : "s"}`);
+	if (args.transparent_background) meta.push("transparent");
+	if (details?.size) meta.push(details.size);
+	if (details?.quality) meta.push(`quality ${details.quality}`);
+	return {
+		title: "Generate image",
+		target: prompt.split("\n", 1)[0] || undefined,
+		targetKind: "text",
+		meta: meta.length > 0 ? meta : undefined,
+	};
+}
+
+/** The whole prompt, folded, when the head's one line is unlikely to show it all. */
+function promptSection(args: GenerateImageArgs): NativeChild[] {
+	const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
+	if (!prompt.includes("\n") && prompt.length <= 100) return [];
+	return [node("section", { head: "Prompt", collapsible: true, collapsed: true }, [text(prompt, { wrap: "word" })], "prompt")];
+}
+
+/**
+ * The Tern card once the call ends: the saved file (click opens it), the
+ * near-limit warning, the folded prompt, then the image, which the host
+ * appends from `content`. Open from the start so the image shows.
+ */
+function describeImageResult(
+	result: AgentToolResult<GenerateImageDetails>,
+	args: GenerateImageArgs,
+): NativeToolView {
+	const details = result.details;
+	if (result.isError || !details) {
+		const message = result.content.flatMap(block => (block.type === "text" ? [block.text] : [])).join("\n").trim();
+		return {
+			tool: imageHead(args),
+			tone: "error",
+			body: message ? [text([span(message, "error")], { wrap: "word" })] : undefined,
+		};
+	}
+	const body: NativeChild[] = [
+		text([span("Saved to ", "dim"), span(details.path, "path", { href: pathToFileURL(details.path).href })], {
+			wrap: "char",
+		}),
+	];
+	if (details.quotaWarning) body.push(text([span(details.quotaWarning, "warning")], { wrap: "word" }));
+	body.push(...promptSection(args));
+	return { tool: imageHead(args, details), body, open: true };
+}
+
+const resultViews = new WeakMap<GenerateImageDetails, NativeToolView>();
 
 function savedImageHint(dir: string, file: string): string {
 	return (
@@ -54,6 +120,15 @@ export default function generateImage(pi: ExtensionAPI) {
 		description: description.trimEnd(),
 		parameters,
 		approval: "write",
+		describeCall: args => ({ tool: imageHead(args), body: promptSection(args) }),
+		describeResult: (result, _options, args) => {
+			// Keyed by `details` (one object per result) so an unchanged card keeps its nodes.
+			const cached = result.details && resultViews.get(result.details);
+			if (cached) return cached;
+			const view = describeImageResult(result, args ?? {});
+			if (result.details) resultViews.set(result.details, view);
+			return view;
+		},
 		async execute(toolCallId, params, signal, _onUpdate, ctx) {
 			const unknown = Object.keys(params).filter(key => !ARGUMENTS.includes(key));
 			if (unknown.length > 0) {
@@ -109,6 +184,7 @@ export default function generateImage(pi: ExtensionAPI) {
 					path: file,
 					size: generated.size,
 					quality: generated.quality,
+					quotaWarning: generated.quotaWarning,
 					requestId: generated.requestId,
 					generationId: generated.generationId,
 					outputTokens: generated.outputTokens,
@@ -116,5 +192,7 @@ export default function generateImage(pi: ExtensionAPI) {
 			};
 		},
 	};
-	pi.registerTool(definition);
+	// The result view replaces the call view (the host's `mergeCallAndResult`,
+	// forwarded from the definition like `concurrency` in flexible-ask.ts).
+	pi.registerTool(Object.assign(definition, { mergeCallAndResult: true }));
 }

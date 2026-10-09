@@ -37,6 +37,52 @@ concerns that arrive after its final answer.
   deduplicated and capped at 4 KiB. `?` disposes the countdown and the next key
   in the options restarts it; the view and any running turn are disposed with
   the dialog. `?` is off when `runEphemeralTurn` is missing.
+- In Tern (terminals that speak the Tern Surface Protocol), OMP calls a
+  component's `describe(cx)` instead of `render()`. The picker describes a
+  `col` with role `omp.editor` (in the composer's place, as pi-tui's
+  `AskDialogComponent`): `tabs`, a ring `meter` (re-described each second;
+  `CountdownTimer`'s `elapsed` node when the terminal lacks `meter`), one
+  compact `row` per option, and `omp.btn` buttons. Inline `min`/`max` widths
+  of 100% override the composer's measure, so the picker spans the pane. The
+  question and options sit in one `scrollBox` (`ask-editor.ts`): a capped
+  `list`, because a `col` with `max.h` only clips. Its `min.h` fixes the
+  height, sized once per pane from the classic layout's tallest tab at the
+  pane's width, and its row cap is scaled because a list
+  row is a text line plus 6px. The `scroll` request goes on the content, since
+  Tern scrolls the scroller at or above the asking node and the list's scroller
+  is inside the list node. Pointer `action` events run the same commands as
+  keys (`#runRowCommand`, `#runSubmitCommand`); option rows use `omp-tools.*`
+  roles, not `omp.ask.*`, and no `mark: "pick"`, which collapsed the marker
+  column. Tern's sheets only style `omp.*` roles, so the picker sends its own
+  stylesheet (`NATIVE_SHEET`, the `s` verb written to the terminal with every
+  `describe` when `cx.feature("styles")`; a sheet belongs to one surface, and
+  pi-tui opens a new inline surface on `gone` with the same describe context,
+  so a once-only send is lost): theme variables only (`--sans`, `--t1`,
+  `--t3`, `--l1`, `--l2`), so rows follow Tern's theme and appearance. The
+  sheet's row padding is in `NATIVE_STYLED_ROW_LINES`, the height estimate.
+  Tern's Markdown hangs list numbers left of a 2-cell indent, into the page
+  margin; a scroll box clips them, so the sheet pads each `scrollBox` scroller
+  by 2 cells on the left and cancels it with a negative margin.
+  Tern never reports what is on screen, so after PgUp/PgDn
+  (`#nativePagedAway`) the next j/k, action key, or button only reveals the
+  highlighted row (`#revealCursor` bumps its `reveal` token), as the classic
+  picker does with a row it did not draw. A question's first showing keeps the
+  question at the top: `#nativeHold` withholds the cursor's `reveal` until the
+  cursor moves or a reveal is asked for, and `#nativeCursorFits` (estimated
+  from the classic layout) sets `#nativePagedAway` when the row ends below the
+  box, checked again whenever the box size changes while the hold lasts. A
+  scroller mounted again (tab switch, back from an editor) reveals the
+  highlighted row by a placement `reveal`.
+  Wheel scrolling is not reported, so it does not trigger this guard.
+  `AnswerEditor` and the Picker btw view describe themselves with the
+  `CustomEditor` as a child component; `AnswerEditor` replaces the composer
+  layout and placeholder so no model chip or send bar shows.
+- Tool cards in Tern come from `describeCall`/`describeResult` on the
+  definition. An extension tool never gets the built-in renderer of its name,
+  so `ask` reuses the exported `askToolRenderer` (plus the Submit note, kept in
+  `details.submitNote`) and `generate_image` has its own view.
+  `mergeCallAndResult` is forwarded from the definition like `concurrency`. The
+  host appends result images from `content` after the view's body.
 - Preserve `approval: "read"`, `concurrency: "exclusive"`, cancellation
   (`ctx.abort()` plus `ToolAbortError`), `ask.timeout` auto-selection,
   `ask.notify`, and the explicit error when native ask delegation is unavailable.
@@ -208,7 +254,12 @@ extension specifier shim; in compiled binaries only exported subpaths are served
 and the `@oh-my-pi/pi-utils` root; `/judgment` was checked in OMP 18.4.8). The root `./*`
 wildcard is not served, so never import files such as
 `@oh-my-pi/pi-tui/overlays/*`, `/keybinding-matchers`, `/chrome/form-theme`, or
-`/prompt/*`; they load a second copy from node_modules and fail. Both SDK packages use
+`/prompt/*`; they load a second copy from node_modules and fail. The
+`@oh-my-pi/pi-tui` root exports the describe builders (`node`, `col`, `md`,
+`span`, `text`, `kbd`); `actionButton` and `hintsRow` from `/native/overlay`,
+which is not on the checked list, are mirrored in `ask-dialog.ts` and
+`ask-editor.ts`. Type-only imports such as
+`@oh-my-pi/pi-tui/tools/renderer` are erased and safe. Both SDK packages use
 the `"latest"` specifier; `bun.lock` records the resolved version, so update
 through `bun run update` to keep types and the installed omp in step.
 
@@ -219,7 +270,12 @@ require a fresh-session OMP smoke; typechecking alone does not exercise host
 integration or UI. OMP 18.3.1 was used for the latest fresh-session picker and
 rendering smoke; OMP 18.4.4 for the live `generate_image` generate and edit
 smoke; OMP 18.4.8 for the host judge call behind the concern-wake checks; OMP
-18.6.1 for the Picker btw; OMP 18.8.0 for the picker key flow and Submit note.
+18.6.1 for the Picker btw; OMP 18.8.0 for the picker key flow and Submit note;
+OMP 18.8.6 with Tern 0.6.3 for the Tern views. A headless Tern window drives
+that smoke: `tern serve --control <sock>`, then `tern ctl --control <sock>`
+`run`, `type`, `key`, `click '<css selector>'`, and `shot <name>` (PNG plus a
+layout JSON of every element). `PI_TUI_NATIVE=0` in the same window checks the
+text renderer.
 
 ## vstack
 

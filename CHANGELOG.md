@@ -4,6 +4,18 @@
 
 ### Added
 
+- Drew the ask picker and the `ask` and `generate_image` tool cards natively in
+  Tern (terminals that speak the Tern Surface Protocol). Each option is a row
+  with its full Markdown in Tern's theme (UI font, theme colors, a gray fill on
+  the highlighted row), the picker spans the pane's width, the
+  question and options sit in one box of fixed height that scrolls (wheel,
+  PgUp/PgDn, j/k), the countdown is a
+  ring, buttons show each key, and clicks run the key paths: a click on an
+  option is Space, a double-click is Enter, and tabs and buttons work. The
+  `Other`, note, and Picker btw editors are plain
+  Tern text fields. The `ask` card shows the answers like native ask, plus the
+  Submit note. The `generate_image` card shows the prompt, size, quality, the
+  saved path as a link, any near-limit warning, and the image.
 - Woke the agent to check advisor concerns that arrive after its final answer,
   instead of leaving them as a card until the next prompt. Wakes in one prompt
   cycle stop when a concern repeats an earlier one (checked by OMP's judge,

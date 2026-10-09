@@ -6,7 +6,7 @@
 // It subclasses `HookEditorComponent` only for focus routing: omp hands the
 // external-editor key to a focused `HookEditorComponent` instead of opening it
 // on the hidden main prompt. The base editor it builds is dropped; this class
-// renders and routes input itself.
+// renders, describes (in Tern), and routes input itself.
 import { CustomEditor, HookEditorComponent, settings } from "@oh-my-pi/pi-coding-agent";
 import {
 	cfgAutocompleteMaxVisible,
@@ -19,15 +19,23 @@ import {
 import {
 	type AutocompleteItem,
 	type AutocompleteProvider,
+	type DescribeContext,
 	FormField,
 	type FormFieldTheme,
 	getKeybindings,
+	kbd,
 	matchesKey,
+	type NativeChild,
+	type NativeNode,
+	type NativeScroll,
+	node,
+	row,
 	Spacer,
 	sliceByColumn,
+	span,
 	type TUI,
+	text,
 } from "@oh-my-pi/pi-tui";
-import { editorKey } from "@oh-my-pi/pi-tui/chrome";
 import { getEditorTheme, theme } from "@oh-my-pi/pi-tui/theme";
 
 // Compiled omp serves extensions only the packages' named export paths, not
@@ -47,6 +55,72 @@ const answerFieldTheme: FormFieldTheme = {
  *  leaving horizontal rules and one-space content insets. */
 export function withoutSideBorders(lines: readonly string[], width: number): string[] {
 	return lines.map(line => sliceByColumn(line, 1, width));
+}
+
+/** One key hint: the key ids that trigger it (`"enter"`, `"ctrl+q"`, `"escape"`) and what it does. */
+export interface KeyHint {
+	keys: readonly string[];
+	label: string;
+}
+
+/** A key id as the classic hint line spells it. */
+function keyLabel(key: string): string {
+	if (key === "escape") return "esc";
+	if (key === "pageUp") return "pgup";
+	if (key === "pageDown") return "pgdn";
+	return key;
+}
+
+/** The classic hint line: `enter or ctrl+q save  esc discard`. */
+export function hintText(hints: readonly KeyHint[]): string {
+	return hints.map(hint => `${hint.keys.map(keyLabel).join(" or ")} ${hint.label}`).join("  ");
+}
+
+/** The native hint strip: keycaps with muted labels, as pi-tui's `hintsRow` draws them. */
+export function hintsRow(hints: readonly KeyHint[], key = "hints"): NativeNode {
+	const children: NativeChild[] = hints.map(hint =>
+		row([...hint.keys.map(id => kbd(id)), text([span(hint.label, "muted")])], { gap: "xs", align: "center" }),
+	);
+	return node("row", { gap: "md", wrap: true, role: "omp.overlay.hints" }, children, key);
+}
+
+/** The first key bound to the external editor, else Ctrl+G. */
+export function externalEditorKey(): string {
+	return getKeybindings().getKeys("app.editor.external")[0] ?? "ctrl+g";
+}
+
+/**
+ * List rows per text line. A capped `list` counts its height in rows of one
+ * text line plus 6px (1.375 lines at a 16px line), while `min.h` counts text
+ * lines, so the scroller gets this many rows per line to stay inside the box.
+ */
+const LIST_ROWS_PER_LINE = 0.72;
+
+/**
+ * A box about `lines` text lines tall whose content scrolls with the wheel,
+ * a thin scrollbar, Tern's `scroll` requests, and `reveal`. `fixed` keeps
+ * the box that tall when the content is shorter. A `col` with `max.h` only
+ * clips, so the scroller is a capped `list`, which scrolls itself and places
+ * non-item children as they are.
+ */
+export function scrollBox(
+	content: NativeNode,
+	options: { lines: number; fixed: boolean; key: string; scroll: NativeScroll | undefined },
+): NativeNode {
+	const lines = Math.max(1, Math.floor(options.lines));
+	const rows = Math.max(1, Math.floor(lines * LIST_ROWS_PER_LINE));
+	// Tern scrolls the nearest scroller at or above the node that asks; the
+	// list's scroller sits inside the list node, so the content asks.
+	return node(
+		"list",
+		{
+			role: "omp-tools.ask-body",
+			max: { lines: rows },
+			...(options.fixed ? { min: { h: `${lines}lines` as const } } : {}),
+		},
+		[options.scroll ? { ...content, scroll: options.scroll } : content],
+		options.key,
+	);
 }
 
 /** Submit chord of the prompt-style editor: `app.message.followUp`, else Ctrl+Enter / Ctrl+Q. */
@@ -228,8 +302,8 @@ export interface AnswerEditorOptions {
 	onInput(): void;
 	/** Keys the owner handles before the editor; return true to consume. */
 	onKey?(data: string): boolean;
-	/** Footer hint; defaults to submit, cancel, and external-editor keys. */
-	hint?: string;
+	/** Footer key hints, as text in the classic TUI and as keycaps in Tern. */
+	hints: readonly KeyHint[];
 }
 
 function noop(): void {}
@@ -240,6 +314,8 @@ export class AnswerEditor extends HookEditorComponent {
 	readonly #tui: TUI;
 	readonly #options: AnswerEditorOptions;
 	#closed = false;
+	/** The Tern view: a card titled like the classic field, the editor (which describes itself), the key hints. */
+	readonly #nativeRoot: NativeNode;
 
 	constructor(tui: TUI, options: AnswerEditorOptions) {
 		super(tui, options.title, undefined, noop, noop, { promptStyle: true });
@@ -272,7 +348,10 @@ export class AnswerEditor extends HookEditorComponent {
 			editor.setAutocompleteProvider(answerAutocomplete(options.autocomplete, options.fileCommands));
 		}
 
-		// Prompt-style chrome, as in HookEditorComponent.
+		// Prompt-style chrome, as in HookEditorComponent. In Tern the editor is
+		// Editor's plain field, without the composer's model chip, send bar, and placeholder.
+		editor.describeLayout = input => ({ role: "omp.field", children: [input], caret: "input" });
+		editor.describePlaceholder = () => "";
 		editor.setBorderVisible(false);
 		editor.setPromptGutter("> ");
 		editor.setMaxHeight(options.maxHeight);
@@ -288,16 +367,18 @@ export class AnswerEditor extends HookEditorComponent {
 		editor.onPasteImagePath = path => options.onPasteImagePath(editor, path);
 		this.editor = editor;
 
-		const external = editorKey("app.editor.external") || "ctrl+g";
-		this.#field = new FormField(editor, {
-			theme: answerFieldTheme,
-			hint: options.hint ?? `enter or ctrl+q submit  esc cancel  ${external} external editor`,
-		});
+		this.#field = new FormField(editor, { theme: answerFieldTheme, hint: hintText(options.hints) });
 		this.addChild(this.#field);
 		this.addChild(new Spacer(1));
 		// Keep the host from claiming the image-paste key for its text-only
 		// prompt paste; the editor's own `onPasteImage` handles it.
 		Object.defineProperty(this, "pasteText", { value: undefined });
+		this.#nativeRoot = node("card", { role: this.nativeRole, head: options.title }, [editor, hintsRow(options.hints)]);
+	}
+
+	override describe(_cx: DescribeContext): NativeNode {
+		this.#field.focused = this.focused;
+		return this.#nativeRoot;
 	}
 
 	override render(width: number): readonly string[] {

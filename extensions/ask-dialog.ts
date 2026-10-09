@@ -2,7 +2,9 @@
 // and previews. Mirrors the native pi-tui AskDialogComponent (tabs, Submit
 // review tab, multi-select, "Other" custom input, notes, timeout countdown),
 // but renders the question as block Markdown inside the scrollable body
-// instead of a condensed inline header.
+// instead of a condensed inline header. In Tern (Surface Protocol terminals)
+// it describes the same state as native nodes instead (`describe`): each
+// option is a card with its Markdown, and pointer actions run the key paths.
 //
 // Runtime imports resolve to the host's in-process pi-tui/coding-agent
 // modules through OMP's extension specifier shim; they must stay on exported
@@ -17,20 +19,31 @@ import { getEditorCommand, openInEditor } from "@oh-my-pi/pi-coding-agent/utils/
 import {
 	type AutocompleteProvider,
 	type Component,
+	col,
+	type DescribeContext,
 	decodePrintableKey,
 	Ellipsis,
 	type Focusable,
 	getKeybindings,
+	kbd,
 	Markdown,
 	matchesKey,
+	md,
+	type NativeChild,
+	type NativeNode,
+	type NativeScroll,
+	type NativeUiEvent,
+	node,
 	padding,
 	renderInlineMarkdown,
 	replaceTabs,
 	ScrollView,
+	span,
 	type Tab,
 	TabBar,
 	Text,
 	type TUI,
+	text,
 	truncateToWidth,
 	visibleWidth,
 	wrapTextWithAnsi,
@@ -46,7 +59,7 @@ import {
 } from "@oh-my-pi/pi-tui/chrome";
 import { disambiguateDisplayLabels, sanitizeCarriageReturns } from "@oh-my-pi/pi-tui/render";
 import { getMarkdownTheme, highlightCode, theme } from "@oh-my-pi/pi-tui/theme";
-import { AnswerEditor, withoutSideBorders } from "./ask-editor";
+import { AnswerEditor, externalEditorKey, scrollBox, withoutSideBorders } from "./ask-editor";
 import { loadImagePaths, type PasteOutcome, type PastedImage, readClipboardPaste } from "./ask-images";
 import { formatAskAnswers } from "./ask-result";
 import type { AskPickerBtw } from "./picker-btw";
@@ -64,6 +77,20 @@ const MIN_BODY_ROWS = 5;
 const MAX_TAB_LABEL_WIDTH = 16;
 /** Rows reserved for the custom-answer/note editor while it is open. */
 const PROMPT_EDITOR_ROWS = 6;
+/** Lines Tern spends outside the scroller: the tab row, the button row, gaps, and insets. */
+const NATIVE_CHROME_LINES = 4;
+/** Share of the pane's rows the scroller may take. Tern's text line is taller than a terminal row, so this is under the classic ratio. */
+const NATIVE_HEIGHT_RATIO = 0.5;
+/** Columns the picker's insets take from the pane's width. */
+const NATIVE_INSET_COLS = 6;
+/** Lines of a Tern editor card (title, one text line, key hints, insets), less the gap it shares. */
+const NATIVE_EDITOR_LINES = 5;
+/** Lines of the Tern button row, which an open editor replaces. */
+const NATIVE_ACTION_LINES = 2;
+/** Text lines one Tern option row adds beyond its text: the gap between rows. */
+const NATIVE_ROW_GAP_LINES = 0.5;
+/** The same with the picker's sheet, whose rows also have 7px padding above and below. */
+const NATIVE_STYLED_ROW_LINES = 1.25;
 
 /** An image attached to a custom answer or note, referenced by `label` in its text. */
 export interface AskImage extends PastedImage {
@@ -156,6 +183,11 @@ interface PromptRequest {
 	apply(draft: Draft | undefined): void;
 }
 
+/** What a key or a pointer action does to the highlighted row. */
+type RowCommand = "enter" | "space" | "edit" | "clear";
+
+type Span = ReturnType<typeof span>;
+
 function clamp(value: number, min: number, max: number): number {
 	return Math.max(min, Math.min(value, max));
 }
@@ -211,13 +243,19 @@ function optionNotes(question: ExtensionAskDialogQuestion, state: QuestionState)
 	});
 }
 
-/** Submit-tab summary: picked options, then the picked `Other` text, for both single and multi questions. */
-function answerSummary(question: ExtensionAskDialogQuestion, state: QuestionState): string {
+/** Picked options, then the picked `Other` text, for both single and multi questions. */
+function answerParts(question: ExtensionAskDialogQuestion, state: QuestionState): string[] {
 	const display = displayOptionLabels(question);
 	const parts = question.options.flatMap((option, index) =>
 		state.selectedOptions.has(option.label) ? [display[index] ?? sanitizeCarriageReturns(option.label)] : [],
 	);
 	if (state.otherPicked && state.other) parts.push(`Other: “${inlineText(state.other.text)}”`);
+	return parts;
+}
+
+/** Submit-tab summary line. */
+function answerSummary(question: ExtensionAskDialogQuestion, state: QuestionState): string {
+	const parts = answerParts(question, state);
 	return parts.length > 0 ? parts.join(", ") : theme.fg("warning", "unanswered");
 }
 
@@ -320,6 +358,88 @@ function isBtwKey(data: string): boolean {
 	return printableKey(data) === "?";
 }
 
+/** The last segment of a native event key path (`"q0/option:1"` → `"option:1"`). */
+function leafKey(path: string): string {
+	return path.slice(path.lastIndexOf("/") + 1);
+}
+
+/** A label with inline code as mono spans, as the classic row renders inline Markdown. */
+function labelSpans(label: string, style: string | undefined): Span[] {
+	return label.split(/(`[^`]+`)/).flatMap(piece => {
+		if (piece === "") return [];
+		if (piece.length > 2 && piece.startsWith("`") && piece.endsWith("`")) {
+			return [span(piece.slice(1, -1), style ? `code ${style}` : "code")];
+		}
+		return [span(piece, style)];
+	});
+}
+
+/** Name of the picker's Tern stylesheet (`s` verb, one per surface; resending replaces it in place). */
+const NATIVE_SHEET_NAME = "omp-tools-ask";
+/**
+ * The option rows in Tern's own look, as Tern draws native ask's items: the UI
+ * font, primary label and muted description, a neutral fill on the
+ * highlighted row and a hover fill. Colors are Tern's theme variables, so the
+ * rows follow its theme (and the program palette where Tern applies it).
+ *
+ * Tern's Markdown gives a list 2 cells of indent and hangs its markers left of
+ * that (`1. ` in the terminal font is wider), into the page margin in the
+ * transcript. A scroll box clips at its edge, so it takes that room inside:
+ * padding on the scroller, cancelled by a negative margin so nothing moves.
+ */
+const NATIVE_SHEET = `
+.sf-list[data-role='omp-tools.ask-body'] > .sf-list-scroll {
+	margin-left: calc(-2 * var(--sf-cw));
+	padding-left: calc(2 * var(--sf-cw));
+}
+[data-role^='omp-tools.ask-row'] {
+	padding: 7px 10px;
+	border-radius: 10px;
+	font-family: var(--sans);
+	transition: background-color 120ms ease;
+}
+[data-role^='omp-tools.ask-row']:hover { background: var(--l1); }
+[data-role='omp-tools.ask-row.on'], [data-role='omp-tools.ask-row.on']:hover { background: var(--l2); }
+[data-role='omp-tools.ask-label'] { font: 500 14px/1.4 var(--sans); color: var(--t1); }
+[data-role='omp-tools.ask-label'] .sf-t-code { font-family: var(--tv-font, var(--mono)); font-size: 13px; }
+[data-role^='omp-tools.ask-row'] .sf-md, [data-role^='omp-tools.ask-row'] .sf-md .md { font-family: var(--sans); font-size: 13px; color: var(--t3); }
+[data-role^='omp-tools.ask-row'] .sf-md code { font-family: var(--tv-font, var(--mono)); }
+[data-role='omp-tools.ask-typed'] { font: 13px/1.4 var(--sans); }
+[data-role='omp-tools.ask-marker'] { line-height: calc(14px * 1.4); }
+[data-role='omp-tools.ask-answers'] { font-family: var(--sans); font-size: 13px; }
+`;
+
+/**
+ * The stylesheet message (`ESC _ tsp;s;{name,css} ESC \`) for the live surface;
+ * pi-tui sends no `s` of its own. A sheet belongs to one surface, and pi-tui
+ * opens a new inline surface (same describe context) when the terminal drops
+ * the old one, so the picker sends this with every describe.
+ */
+const NATIVE_SHEET_MESSAGE = `\x1b_tsp;s;${JSON.stringify({ name: NATIVE_SHEET_NAME, css: NATIVE_SHEET })}\x1b\\`;
+
+/** A button that runs one key's path, drawn as pi-tui's `actionButton` (label and keycap). */
+function actionButton(label: string, act: string, key: string, options: { accent?: boolean; title?: string } = {}): NativeNode {
+	return node(
+		"row",
+		{
+			role: "omp.btn",
+			gap: "xs",
+			align: "center",
+			actions: { click: act },
+			title: options.title ?? label,
+			...(options.accent ? { tone: "accent" as const } : {}),
+		},
+		[text(label), kbd(key)],
+		act,
+	);
+}
+
+/** A row of buttons; `null` is the spacer that end-aligns what follows. */
+function actionBar(buttons: readonly (NativeNode | null)[]): NativeNode {
+	const children = buttons.map(button => button ?? node("spacer", { grow: 1 }));
+	return node("row", { role: "omp.actions", gap: "sm", align: "center" }, children, "actions");
+}
+
 class MarkdownAskDialog implements Component, Focusable {
 	focused = false;
 	readonly #questions: ExtensionAskDialogQuestion[];
@@ -336,6 +456,10 @@ class MarkdownAskDialog implements Component, Focusable {
 	#bodyRows = MIN_BODY_ROWS;
 	#countdown: CountdownTimer | undefined;
 	#remainingSeconds: number | undefined;
+	/** When the countdown answers, as of its last (re)start; drives the Tern ring. */
+	#countdownDeadline = 0;
+	/** Re-describes the Tern ring once a second; its value is data, not a terminal clock. */
+	#ringTick: ReturnType<typeof setInterval> | undefined;
 	/** Stopped by `?`; the next key in the options restarts it in full. */
 	#countdownPaused = false;
 	#timeoutPending = false;
@@ -351,6 +475,8 @@ class MarkdownAskDialog implements Component, Focusable {
 	/** Dialog-wide counter so `[Image #N]` labels stay unique across fields. */
 	#imageCount = 0;
 	#stableHeight: { key: string; total: number } | undefined;
+	/** Heights of the Tern scrollers, fixed per pane size. */
+	#nativeHeight: { key: string; lines: number; width: number } | undefined;
 	/** Latest layout per `question:width`; rebuilt when answer/cursor state changes. */
 	#layoutCache = new Map<string, { stateKey: string; layout: QuestionLayout }>();
 	/** Markdown blocks keyed by color and source; reused across cursor moves. */
@@ -360,6 +486,26 @@ class MarkdownAskDialog implements Component, Focusable {
 	#renderedCursor: { questionIndex: number; cursorIndex: number; visible: boolean } | undefined;
 	/** Written on the Submit tab; sent once for the whole ask. */
 	#submitNote: Draft | undefined;
+	/** PgUp/PgDn and Submit-tab j/k forwarded to Tern, which owns the scroller there. */
+	#nativeScroll: NativeScroll | undefined;
+	/** Whether Tern draws the picker (`describe`) rather than the classic rows (`render`). */
+	#nativeMode = false;
+	/** Tern: the terminal takes stylesheets (`styles`), so the picker sends its sheet and rows take the native look. */
+	#nativeSheet = false;
+	/**
+	 * Tern: PgUp/PgDn moved the box away from the highlighted row, which may
+	 * now be hidden. The next j/k or action key brings it back instead of
+	 * acting, as the classic picker does with a row it did not draw.
+	 */
+	#nativePagedAway = false;
+	/** Tern: bumped to scroll the highlighted row into view again when it did not change. */
+	#nativeReveal = 0;
+	/** Tern: the scroller key in the last description; a scroller mounted anew starts at its top. */
+	#nativeShownBody: string | undefined;
+	/** Tern: questions whose scroller was shown; a first showing starts at the question, not the highlighted row. */
+	#nativeSeen = new Set<number>();
+	/** Tern: the first showing's cursor, unrevealed until it moves or a reveal is asked for; `size` is the box it was checked against. */
+	#nativeHold: { index: number; cursor: number; reveal: number; size: string } | undefined;
 
 	constructor(questions: ExtensionAskDialogQuestion[], tui: TUI, callbacks: DialogCallbacks, options: DialogOptions) {
 		this.#questions = questions;
@@ -391,6 +537,7 @@ class MarkdownAskDialog implements Component, Focusable {
 				tui,
 				seconds => {
 					this.#remainingSeconds = seconds;
+					this.#countdownDeadline = Date.now() + seconds * 1000;
 				},
 				() => this.#handleTimeout(),
 			);
@@ -404,6 +551,7 @@ class MarkdownAskDialog implements Component, Focusable {
 
 	invalidate(): void {
 		this.#stableHeight = undefined;
+		this.#nativeHeight = undefined;
 		this.#layoutCache.clear();
 		this.#markdownCache.clear();
 		this.#previewCache.clear();
@@ -415,6 +563,7 @@ class MarkdownAskDialog implements Component, Focusable {
 	dispose(): void {
 		this.#closed = true;
 		this.#countdown?.dispose();
+		this.#stopRingTick();
 		this.#prompt?.dispose();
 		this.#prompt = undefined;
 		this.#btw?.dispose();
@@ -480,6 +629,7 @@ class MarkdownAskDialog implements Component, Focusable {
 	}
 
 	render(width: number): readonly string[] {
+		this.#nativeMode = false;
 		const termRows = this.#tui.terminal?.rows ?? process.stdout.rows ?? 40;
 		// Panels render two columns wider, then lose their `│` side borders.
 		const innerWidth = Math.max(1, width - 2);
@@ -506,6 +656,406 @@ class MarkdownAskDialog implements Component, Focusable {
 		const lines = withoutSideBorders(this.#panel.render(width + 2), width);
 		this.#optionsHeight = lines.length;
 		return lines;
+	}
+
+	// ---------------------------------------------------------------------------
+	// Tern view: the same state as native nodes, in the composer's place
+	// ---------------------------------------------------------------------------
+
+	/**
+	 * A column with the prompt editor's root role (`omp.editor`), as pi-tui's
+	 * AskDialogComponent: the tabs and countdown, then the open editor, the
+	 * Picker btw thread, the Submit summary, or the question and its options,
+	 * then buttons for the keys. The middle part has one fixed height for the
+	 * whole ask and scrolls inside it, so the picker never jumps between tabs.
+	 */
+	describe(cx: DescribeContext): NativeNode {
+		// Classic-only scroll state: Tern owns the scroller; `#nativePagedAway` stands in for it.
+		this.#renderedCursor = undefined;
+		this.#nativeMode = true;
+		this.#nativeSheet = cx.feature("styles");
+		// Before the frame that uses it, on whatever surface is live; the same sheet replaces itself in place.
+		if (this.#nativeSheet) this.#tui.terminal.write(NATIVE_SHEET_MESSAGE);
+		const shownBody = this.#nativeShownBody;
+		this.#nativeShownBody = undefined;
+		const { lines, width } = this.#nativeHeights(cx);
+		const children: NativeChild[] = [];
+		const head = this.#describeHead(cx);
+		if (head) children.push(head);
+		if (this.#btwOpen && this.#btw) {
+			children.push(...this.#btw.describe(Math.max(3, lines - NATIVE_EDITOR_LINES + NATIVE_ACTION_LINES)));
+		} else if (this.#prompt) {
+			// Above the editor: what it annotates (the question, or every answer for the Submit note), in a fixed box.
+			const question = this.#isSubmitTab() ? undefined : this.#questions[this.#questionIndex()];
+			const content = question
+				? node("md", { text: displayText(question.question).trim(), role: "omp.ask.question" })
+				: node("col", { gap: "sm" }, this.#describeAnswers());
+			const room = Math.max(3, lines - NATIVE_EDITOR_LINES + NATIVE_ACTION_LINES);
+			children.push(scrollBox(content, { lines: room, fixed: true, key: "context", scroll: undefined }));
+			children.push(this.#prompt);
+		} else if (this.#isSubmitTab()) {
+			this.#describeSubmitBody(children, lines);
+		} else {
+			this.#describeQuestionBody(children, { lines, width }, shownBody);
+		}
+		// Inline `min`/`max` widths beat the composer's measure: the picker spans the pane.
+		return col(children, { role: "omp.editor", gap: "sm", min: { w: 1 }, max: { w: 1 } });
+	}
+
+	/**
+	 * Height of the one scrolling box (the question and its options, the
+	 * Submit tab, an editor's context, or the Picker btw thread), in text
+	 * lines, fixed per pane size so switching tabs or answering never resizes
+	 * the picker. It is the tallest question as the classic layout measures
+	 * it at the pane's width, capped like the classic panel; anything taller
+	 * scrolls.
+	 */
+	#nativeHeights(cx: DescribeContext): { lines: number; width: number } {
+		const termRows = this.#tui.terminal?.rows ?? process.stdout.rows ?? 40;
+		const width = Math.max(1, cx.cols - NATIVE_INSET_COLS);
+		const key = `${width}:${termRows}`;
+		if (this.#nativeHeight?.key === key) return this.#nativeHeight;
+		let tallest = 0;
+		for (let index = 0; index < this.#questions.length; index++) {
+			const question = this.#questions[index];
+			if (!question) continue;
+			// Tern sets a heading in a larger face than a text line, and puts a gap between rows.
+			const headings = displayText(question.question)
+				.split("\n")
+				.filter(line => /^\s*#{1,6}\s/.test(line)).length;
+			const gaps = this.#nativeRowExtra(questionRows(question).length);
+			tallest = Math.max(tallest, this.#questionLayout(index, width).lines.length + headings + gaps);
+		}
+		const submitLines = this.#hasSubmitTab() ? this.#questions.length * 2 + 3 : 0;
+		const cap = Math.max(MIN_BODY_ROWS, Math.floor(termRows * NATIVE_HEIGHT_RATIO) - NATIVE_CHROME_LINES);
+		this.#nativeHeight = { key, lines: clamp(Math.max(submitLines, tallest), MIN_BODY_ROWS, cap), width };
+		return this.#nativeHeight;
+	}
+
+	/** Question tabs (plus Submit) and the countdown; only the countdown while an editor is open. */
+	#describeHead(cx: DescribeContext): NativeNode | undefined {
+		const children: NativeChild[] = [];
+		if (this.#hasSubmitTab() && !this.#prompt && !this.#btwOpen) {
+			const items = this.#questions.map((question, index) => ({ id: String(index), label: tabLabel(question, index) }));
+			items.push({ id: "submit", label: SUBMIT_OPTION });
+			const active = this.#isSubmitTab() ? "submit" : String(this.#questionIndex());
+			children.push(node("tabs", { items, active, role: "omp.ask.questions" }, undefined, "tabs"));
+		}
+		const timer = this.#describeTimer(cx);
+		if (timer) children.push(node("spacer", { grow: 1 }), timer);
+		if (children.length === 0) return undefined;
+		return node("row", { role: "omp.ask.head", gap: "sm", align: "center" }, children, "head");
+	}
+
+	/** The countdown as pi-tui's ask draws it: a ring when Tern draws meters, else a terminal-clocked `elapsed`. */
+	#describeTimer(cx: DescribeContext): NativeNode | undefined {
+		const countdown = this.#countdown;
+		if (!countdown || this.#closed) return undefined;
+		if (this.#countdownPaused) {
+			this.#stopRingTick();
+			return node("text", { spans: [span("timer paused", "dim")] }, undefined, "paused");
+		}
+		const title = "Picks the recommended option when the time runs out";
+		if (!cx.supports("meter")) return node("row", { title }, [countdown.describe()], "elapsed");
+		this.#startRingTick();
+		const total = Math.max(1, this.#options.timeout ?? 1);
+		const left = Math.max(0, this.#countdownDeadline - Date.now());
+		return node(
+			"meter",
+			{
+				value: Math.round((left / total) * 1000) / 1000,
+				style: "ring",
+				size: "sm",
+				label: `${Math.ceil(left / 1000)}s`,
+				title,
+			},
+			undefined,
+			"timer",
+		);
+	}
+
+	#startRingTick(): void {
+		if (this.#ringTick) return;
+		this.#ringTick = setInterval(() => this.#requestRender(), 1000);
+		this.#ringTick.unref?.();
+	}
+
+	#stopRingTick(): void {
+		clearInterval(this.#ringTick);
+		this.#ringTick = undefined;
+	}
+
+	/**
+	 * The question as Markdown over its options, in one fixed-height box
+	 * (PgUp/PgDn, j/k, and the wheel scroll it), then the buttons.
+	 */
+	#describeQuestionBody(
+		children: NativeChild[],
+		size: { lines: number; width: number },
+		shownBody: string | undefined,
+	): void {
+		const index = this.#questionIndex();
+		const question = this.#questions[index];
+		const state = this.#states[index];
+		if (!question || !state) return;
+		const questionText = displayText(question.question).trim();
+		const rows = questionRows(question);
+		// Keyed per question: a click aimed at one question's rows never lands on the next, and each tab starts at its top.
+		const key = `q${index}`;
+		const mounted = shownBody !== key;
+		if (!this.#nativeSeen.has(index)) {
+			// First showing: keep the question in view. A highlighted row below the box counts as scrolled away, so the first key reveals it.
+			this.#nativeSeen.add(index);
+			this.#nativeHold = { index, cursor: state.cursorIndex, reveal: this.#nativeReveal, size: `${size.lines}:${size.width}` };
+			this.#nativePagedAway = !this.#nativeCursorFits(index, state.cursorIndex, size);
+		} else if (mounted) {
+			// Mounted again (a tab switch, or back from an editor): the scroller starts at its top, so bring the highlighted row in.
+			this.#nativeHold = undefined;
+			this.#nativePagedAway = false;
+		}
+		const hold = this.#nativeHold;
+		const held = hold?.index === index && hold.cursor === state.cursorIndex && hold.reveal === this.#nativeReveal;
+		if (!held) {
+			this.#nativeHold = undefined;
+		} else if (hold.size !== `${size.lines}:${size.width}`) {
+			// The pane was resized before any move: a row that fit can now end below the box.
+			hold.size = `${size.lines}:${size.width}`;
+			if (!this.#nativeCursorFits(index, state.cursorIndex, size)) this.#nativePagedAway = true;
+		}
+		const reveal = held ? "none" : mounted ? "mount" : "token";
+		this.#nativeShownBody = key;
+		const body: NativeChild[] = questionText ? [node("md", { text: questionText, role: "omp.ask.question" })] : [];
+		for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+			body.push(this.#describeRow(question, state, rows[rowIndex]!, rowIndex, reveal));
+		}
+		children.push(this.#scroller(body, size.lines, key));
+		children.push(this.#describeQuestionActions(question, state, rows[state.cursorIndex]));
+	}
+
+	/** Whether row `cursor` ends inside the box with the box at its top, estimated from the classic layout as `#nativeHeights` sizes it. */
+	#nativeCursorFits(index: number, cursor: number, size: { lines: number; width: number }): boolean {
+		const question = this.#questions[index];
+		if (!question) return true;
+		const layout = this.#questionLayout(index, size.width);
+		const headings = displayText(question.question)
+			.split("\n")
+			.filter(line => /^\s*#{1,6}\s/.test(line)).length;
+		const end = (layout.rowStarts[cursor + 1] ?? layout.lines.length) + headings + this.#nativeRowExtra(cursor + 1);
+		return end <= size.lines;
+	}
+
+	/** Text lines that `count` Tern rows add beyond their text: the gap between rows, plus the sheet's padding. */
+	#nativeRowExtra(count: number): number {
+		return Math.ceil(count * (this.#nativeSheet ? NATIVE_STYLED_ROW_LINES : NATIVE_ROW_GAP_LINES));
+	}
+
+	/** A fixed-height scroller; PgUp/PgDn and Submit-tab j/k move it. */
+	#scroller(children: readonly NativeChild[], lines: number, key: string): NativeNode {
+		return scrollBox(node("col", { gap: "sm" }, children), { lines, fixed: true, key, scroll: this.#nativeScroll });
+	}
+
+	/**
+	 * One option as a compact row: the marker, then the label over its
+	 * Markdown description, preview, and note or `Other` text, all hanging
+	 * from the label. The highlighted row's marker and label are accent (as in
+	 * the classic picker), and it is kept in view. A click is Space on it, a
+	 * double-click Enter.
+	 */
+	#describeRow(
+		question: ExtensionAskDialogQuestion,
+		state: QuestionState,
+		row: QuestionRow,
+		rowIndex: number,
+		reveal: "none" | "mount" | "token",
+	): NativeNode {
+		const option = row.kind === "option" ? question.options[row.optionIndex ?? -1] : undefined;
+		const checked = this.#isPickedRow(question, state, row);
+		const cursor = rowIndex === state.cursorIndex;
+		const recommended = row.kind === "option" && question.recommended === row.optionIndex;
+		const label =
+			recommended && row.label.endsWith(RECOMMENDED_SUFFIX) ? row.label.slice(0, -RECOMMENDED_SUFFIX.length) : row.label;
+		// With the sheet, the highlighted row is a neutral fill and the label stays primary text, as native ask's items.
+		const styled = this.#nativeSheet;
+		const labelStyle = !styled && cursor ? "accent strong" : undefined;
+		const labelText = node(
+			"text",
+			{ spans: labelSpans(label, labelStyle), wrap: "word", role: "omp-tools.ask-label" },
+			undefined,
+			"label",
+		);
+		const labelLine = recommended
+			? node(
+					"row",
+					{ gap: "sm", align: "center", wrap: true },
+					[labelText, node("badge", { text: "Recommended", tone: "success" })],
+					"label-line",
+				)
+			: labelText;
+
+		const lines: NativeChild[] = [labelLine];
+		const description = option?.description ? displayText(option.description).trim() : "";
+		if (description) lines.push(node("md", { text: description, role: "omp.ask.description" }, undefined, "description"));
+		const preview = option?.preview ? displayText(option.preview) : "";
+		if (preview.trim()) lines.push(node("md", { text: preview, role: "omp.ask.preview" }, undefined, "preview"));
+		const typed = row.kind === "other" ? state.other?.text : state.notes.get(row.optionIndex ?? -1)?.text;
+		if (typed !== undefined) {
+			const spans =
+				row.kind === "other"
+					? [span(inlineText(typed), checked ? "muted" : "dim")]
+					: [span("✎ ", "success"), span(inlineText(typed), "success")];
+			lines.push(node("text", { spans, wrap: "word", role: "omp-tools.ask-typed" }, undefined, "text"));
+		}
+		const markerStyle = checked ? (question.multi ? "success" : "strong") : !styled && cursor ? "accent" : "dim";
+		const marker = span(optionMarker(question.multi, checked), markerStyle);
+		const role = cursor ? "omp-tools.ask-row.on" : "omp-tools.ask-row";
+		return {
+			...node(
+				"row",
+				{
+					role,
+					gap: "sm",
+					align: "start",
+					actions: { click: "pick", dblclick: "enter" },
+				},
+				[
+					node("text", { spans: [marker], shrink: 0, role: "omp-tools.ask-marker" }, undefined, "marker"),
+					node("col", { gap: "xs", grow: 1, basis: 0 }, lines, "lines"),
+				],
+				row.key,
+			),
+			// The highlighted row scrolls into view when it is mounted, becomes the highlighted one, or is revealed again; not on a question's first showing.
+			...(cursor && reveal !== "none"
+				? { reveal: reveal === "mount" ? ("nearest" as const) : { at: "nearest" as const, n: this.#nativeReveal } }
+				: {}),
+		};
+	}
+
+	/** The question tab's keys as buttons: `?`, Space, `n`, `x`, Esc, Enter. */
+	#describeQuestionActions(
+		question: ExtensionAskDialogQuestion,
+		state: QuestionState,
+		row: QuestionRow | undefined,
+	): NativeNode {
+		const btw = this.#options.askBtw ? actionButton("Ask aside", "btw", "?", { title: "Picker btw: ask a side question  ?" }) : null;
+		const cancel = actionButton("Cancel", "cancel", "escape");
+		if (!row) return actionBar([btw, null, cancel]);
+		const typed = row.kind === "other" ? state.other : state.notes.get(row.optionIndex ?? -1);
+		if (row.kind === "other" && !typed) {
+			return actionBar([btw, null, actionButton("Type answer", "edit", "n", { accent: true }), cancel]);
+		}
+		const noun = row.kind === "other" ? "answer" : "note";
+		const edit = actionButton(typed ? `Edit ${noun}` : `Add ${noun}`, "edit", "n");
+		const clear = typed ? actionButton(`Clear ${noun}`, "clear", "x") : null;
+		const pick = actionButton(this.#isPickedRow(question, state, row) ? "Unpick" : "Pick", "space", "space");
+		const next = this.#hasSubmitTab() ? "next" : "submit";
+		const enterLabel = question.multi ? `${next[0]?.toUpperCase()}${next.slice(1)}` : `Pick & ${next}`;
+		const moves = this.#hasSubmitTab() ? "j/k move · h/l tabs" : "j/k move";
+		const enter = actionButton(enterLabel, "enter", "enter", { accent: true, title: `${enterLabel}  enter · ${moves}` });
+		return actionBar(clear ? [btw, null, pick, edit, clear, cancel, enter] : [btw, null, pick, edit, cancel, enter]);
+	}
+
+	/** Submit tab: unanswered warning, every answer and note, the Submit note (in the scroller), then the buttons. */
+	#describeSubmitBody(children: NativeChild[], lines: number): void {
+		children.push(this.#scroller(this.#describeAnswers(), lines, "submit"));
+		const submitNote = this.#submitNote;
+		const btw = this.#options.askBtw ? actionButton("Ask aside", "btw", "?", { title: "Picker btw: ask a side question  ?" }) : null;
+		const edit = actionButton(submitNote ? "Edit note" : "Add note", "edit", "n", { title: "A note on all answers  n" });
+		const clear = submitNote ? actionButton("Clear note", "clear", "x") : null;
+		const cancel = actionButton("Cancel", "cancel", "escape");
+		const submit = actionButton(SUBMIT_OPTION, "enter", "enter", { accent: true, title: "Submit  enter · h/l tabs" });
+		children.push(actionBar(clear ? [btw, null, edit, clear, cancel, submit] : [btw, null, edit, cancel, submit]));
+	}
+
+	/** The unanswered warning, then every answer and note and the Submit note as key/value rows. */
+	#describeAnswers(): NativeNode[] {
+		const body: NativeNode[] = [];
+		const unanswered = this.#states.filter(state => !isAnswered(state)).length;
+		if (unanswered > 0) {
+			const noun = `question${unanswered === 1 ? "" : "s"}`;
+			body.push(
+				node(
+					"text",
+					{ spans: [span(`${unanswered} unanswered ${noun}; Enter still submits.`, "warning")], role: "omp-tools.ask-answers" },
+					undefined,
+					"warning",
+				),
+			);
+		}
+		const items: { k: Span[]; v: Span[] }[] = [];
+		for (let index = 0; index < this.#questions.length; index++) {
+			const question = this.#questions[index];
+			const state = this.#states[index];
+			if (!question || !state) continue;
+			const parts = answerParts(question, state);
+			items.push({
+				k: [span(`${index + 1}. ${tabLabel(question, index)}`, "dim")],
+				v: parts.length > 0 ? [span(parts.join(", "))] : [span("unanswered", "warning")],
+			});
+			for (const { option, note, picked } of optionNotes(question, state)) {
+				items.push({
+					k: [span(`Note (${inlineText(option)}${picked ? "" : ", not picked"})`, "dim")],
+					v: [span(inlineText(note), "muted")],
+				});
+			}
+		}
+		const submitNote = this.#submitNote;
+		items.push({
+			k: [span("Submit note", "dim")],
+			v: submitNote ? [span(inlineText(submitNote.text), "muted")] : [span("none", "dim")],
+		});
+		body.push(node("kv", { items, role: "omp-tools.ask-answers" }, undefined, "answers"));
+		return body;
+	}
+
+	/**
+	 * Pointer actions run the key paths: a tab click switches to it, a card
+	 * click highlights it and is Space, a double-click is Enter, and each
+	 * button is its key. Ignored while an editor or the Picker btw owns input.
+	 */
+	handleNativeEvent(event: NativeUiEvent): void {
+		if (this.#closed || this.#prompt || this.#btwOpen) return;
+		this.#countdownPaused = false;
+		this.#countdown?.reset();
+		if (event.type === "select" && leafKey(event.key) === "tabs") {
+			const target = event.item === "submit" ? this.#questions.length : Number(event.item);
+			if (!this.#hasSubmitTab() || !Number.isInteger(target) || target < 0 || target > this.#questions.length) return;
+			this.#activeTab = target;
+			this.#submitScroll = 0;
+			this.#requestRender();
+			return;
+		}
+		if (event.type !== "action") return;
+		if (event.act === "cancel") {
+			this.#finish(undefined);
+			return;
+		}
+		if (event.act === "btw") {
+			if (this.#options.askBtw) this.#openBtw(this.#options.askBtw);
+			return;
+		}
+		const command = event.act === "pick" ? "space" : event.act;
+		if (command !== "enter" && command !== "space" && command !== "edit" && command !== "clear") return;
+		if (this.#isSubmitTab()) {
+			if (command !== "space") this.#runSubmitCommand(command);
+			return;
+		}
+		const index = this.#questionIndex();
+		const question = this.#questions[index];
+		const state = this.#states[index];
+		if (!question || !state) return;
+		// A card names its row; a button acts on the highlighted row.
+		const rowIndex = questionRows(question).findIndex(row => row.key === leafKey(event.key));
+		if (rowIndex >= 0) {
+			if (!event.key.split("/").includes(`q${index}`)) return;
+			state.cursorIndex = rowIndex;
+			state.followCursor = true;
+			this.#nativePagedAway = false;
+		} else if (!this.#cursorVisible(index)) {
+			// A button acts on the highlighted row: never on one the user scrolled away from.
+			this.#revealCursor(state);
+			return;
+		}
+		this.#runRowCommand(question, state, command);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -796,13 +1346,23 @@ class MarkdownAskDialog implements Component, Focusable {
 
 	/** Enter submits; `n`/`x` edit or clear the Submit note; j/k scroll. */
 	#handleSubmitTabInput(data: string): void {
-		if (isUpKey(data)) this.#submitScroll = Math.max(0, this.#submitScroll - 1);
-		else if (isDownKey(data)) this.#submitScroll += 1;
-		else if (isClearKey(data)) this.#submitNote = undefined;
-		else if (isEnter(data)) {
+		if (isUpKey(data) || isDownKey(data)) {
+			const up = isUpKey(data);
+			this.#submitScroll = up ? Math.max(0, this.#submitScroll - 1) : this.#submitScroll + 1;
+			this.#scrollNative(up ? "line-up" : "line-down");
+			this.#requestRender();
+			return;
+		}
+		const command = isEnter(data) ? "enter" : isEditKey(data) ? "edit" : isClearKey(data) ? "clear" : undefined;
+		if (command) this.#runSubmitCommand(command);
+	}
+
+	#runSubmitCommand(command: Exclude<RowCommand, "space">): void {
+		if (command === "enter") {
 			this.#submit();
 			return;
-		} else if (isEditKey(data)) {
+		}
+		if (command === "edit") {
 			this.#openPrompt({
 				title: "Submit note",
 				current: this.#submitNote,
@@ -812,14 +1372,15 @@ class MarkdownAskDialog implements Component, Focusable {
 			});
 			return;
 		}
+		this.#submitNote = undefined;
 		this.#requestRender();
 	}
 
-	/**
-	 * One meaning per key: Space toggles the row, Enter finishes the question
-	 * (single-select picks the row first), `n` edits the row's text, `x` clears
-	 * it. An `Other` without text opens its editor on Space or Enter.
-	 */
+	#scrollNative(by: NativeScroll["by"]): void {
+		this.#nativeScroll = { by, n: (this.#nativeScroll?.n ?? 0) + 1 };
+	}
+
+	/** Keys of a question tab: PgUp/PgDn scroll, j/k move, then one row command per key. */
 	#handleQuestionInput(data: string): void {
 		const index = this.#questionIndex();
 		const question = this.#questions[index];
@@ -831,43 +1392,62 @@ class MarkdownAskDialog implements Component, Focusable {
 		if (keybindings.matches(data, "tui.select.pageUp")) {
 			state.scrollOffset = Math.max(0, state.scrollOffset - page);
 			state.followCursor = false;
+			this.#nativePagedAway = true;
+			this.#scrollNative("page-up");
 			this.#requestRender();
 			return;
 		}
 		if (keybindings.matches(data, "tui.select.pageDown")) {
 			state.scrollOffset += page;
 			state.followCursor = false;
+			this.#nativePagedAway = true;
+			this.#scrollNative("page-down");
 			this.#requestRender();
 			return;
 		}
 		if (isUpKey(data) || isDownKey(data)) {
 			// The first move after reading reveals the cursor instead of skipping past it.
-			if (state.followCursor || this.#cursorVisible(index)) {
-				const delta = isUpKey(data) ? -1 : 1;
-				state.cursorIndex = clamp(state.cursorIndex + delta, 0, Math.max(0, rows.length - 1));
+			if (!state.followCursor && !this.#cursorVisible(index)) {
+				this.#revealCursor(state);
+				return;
 			}
+			const delta = isUpKey(data) ? -1 : 1;
+			state.cursorIndex = clamp(state.cursorIndex + delta, 0, Math.max(0, rows.length - 1));
 			state.followCursor = true;
 			this.#requestRender();
 			return;
 		}
-		const row = rows[state.cursorIndex];
-		if (!row) return;
-		const enter = isEnter(data);
-		const space = isSpace(data);
-		const edit = isEditKey(data);
-		const clear = isClearKey(data);
-		if (!enter && !space && !edit && !clear) return;
+		const command = isEnter(data)
+			? "enter"
+			: isSpace(data)
+				? "space"
+				: isEditKey(data)
+					? "edit"
+					: isClearKey(data)
+						? "clear"
+						: undefined;
+		if (!command) return;
 		// Never act on a row the user cannot see; reveal it first.
 		if (!this.#cursorVisible(index)) {
-			state.followCursor = true;
-			this.#requestRender();
+			this.#revealCursor(state);
 			return;
 		}
-		if (edit || (row.kind === "other" && !state.other && !clear)) {
+		this.#runRowCommand(question, state, command);
+	}
+
+	/**
+	 * One meaning per command: Space toggles the row, Enter finishes the
+	 * question (single-select picks the row first), `n` edits the row's text,
+	 * `x` clears it. An `Other` without text opens its editor on Space or Enter.
+	 */
+	#runRowCommand(question: ExtensionAskDialogQuestion, state: QuestionState, command: RowCommand): void {
+		const row = questionRows(question)[state.cursorIndex];
+		if (!row) return;
+		if (command === "edit" || (row.kind === "other" && !state.other && command !== "clear")) {
 			this.#editRow(question, state, row);
 			return;
 		}
-		if (clear) {
+		if (command === "clear") {
 			if (row.kind === "other") {
 				state.other = undefined;
 				state.otherPicked = false;
@@ -877,7 +1457,7 @@ class MarkdownAskDialog implements Component, Focusable {
 			this.#requestRender();
 			return;
 		}
-		if (space) {
+		if (command === "space") {
 			if (this.#isPickedRow(question, state, row)) this.#unpickRow(question, state, row);
 			else this.#pickRow(question, state, row);
 			this.#requestRender();
@@ -930,14 +1510,24 @@ class MarkdownAskDialog implements Component, Focusable {
 	}
 
 	/** Whether the cursor row was on screen in the last render. Unrendered
-	 *  state (a tab switch or cursor move not yet drawn) counts as visible. */
+	 *  state (a tab switch or cursor move not yet drawn) counts as visible.
+	 *  In Tern, the row counts as hidden after PgUp/PgDn until it is revealed. */
 	#cursorVisible(index: number): boolean {
+		if (this.#nativeMode) return !this.#nativePagedAway;
 		const rendered = this.#renderedCursor;
 		const state = this.#states[index];
 		if (!rendered || !state || rendered.questionIndex !== index || rendered.cursorIndex !== state.cursorIndex) {
 			return true;
 		}
 		return rendered.visible;
+	}
+
+	/** Scroll the highlighted row back into view (classic: follow it; Tern: bump its reveal). */
+	#revealCursor(state: QuestionState): void {
+		state.followCursor = true;
+		this.#nativePagedAway = false;
+		this.#nativeReveal += 1;
+		this.#requestRender();
 	}
 
 	#switchTab(direction: 1 | -1): void {
@@ -975,14 +1565,17 @@ class MarkdownAskDialog implements Component, Focusable {
 			this.#requestRender();
 		};
 		this.#promptImages = [...(request.current?.images ?? [])];
-		const external = editorKey("app.editor.external") || "ctrl+g";
 		const prompt = new AnswerEditor(this.#tui, {
 			title: request.title,
 			prefill: request.current?.text,
 			maxHeight: PROMPT_EDITOR_ROWS,
 			autocomplete: this.#options.autocomplete(),
 			fileCommands: this.#options.fileCommands,
-			hint: `enter or ctrl+q save  esc discard  ${external} external editor`,
+			hints: [
+				{ keys: ["enter", "ctrl+q"], label: "save" },
+				{ keys: ["escape"], label: "discard" },
+				{ keys: [externalEditorKey()], label: "external editor" },
+			],
 			onSubmit: value => {
 				if (!this.#closed) {
 					// Deleting an image chip (or its `[Image #N]` text) drops that image.
@@ -1117,6 +1710,7 @@ class MarkdownAskDialog implements Component, Focusable {
 		if (this.#closed) return;
 		this.#closed = true;
 		this.#countdown?.dispose();
+		this.#stopRingTick();
 		if (result) this.#callbacks.onSubmit(result);
 		else this.#callbacks.onCancel();
 	}
