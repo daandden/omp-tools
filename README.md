@@ -9,10 +9,6 @@ Removes the model-facing option count: the description asks for distinct
 options without a number (native says 2–5). The rest of the description,
 including when to ask, matches native `ask`.
 
-The plugin ships an always-apply rule, `rules/use-ask-for-user-input.md`: all
-user input goes through `ask`, overriding question formats that skills
-prescribe (for example grilling's `❓ Q1 … ➡️` rounds).
-
 In the interactive TUI the wrapper shows its own picker so questions keep their
 Markdown: headings, lists, paragraph breaks, and code blocks. Option
 descriptions and previews are Markdown too. Tall questions scroll with

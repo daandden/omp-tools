@@ -5,8 +5,7 @@
 `omp-tools` is an Oh My Pi (OMP) plugin. It shadows the native `ask` tool to
 drop the model-facing option count and show questions
 as full Markdown in the interactive picker; outside the TUI it delegates to
-native `ask`. It ships an always-apply rule that routes all user input through
-`ask`. It replaces native `generate_image` with a tool that calls the Codex
+native `ask`. It replaces native `generate_image` with a tool that calls the Codex
 Images endpoint directly with Codex OAuth. It also wakes the agent for advisor
 concerns that arrive after its final answer.
 
@@ -14,9 +13,8 @@ concerns that arrive after its final answer.
 
 - `package.json` registers `extensions/flexible-ask.ts`,
   `extensions/generate-image.ts`, and `extensions/advisor-concern-wake.ts` as
-  entry points. OMP also loads `rules/*.md` and `skills/*/SKILL.md` from the
-  plugin root (the `omp-plugins` discovery provider, priority 90); a same-named
-  rule in `~/.omp/agent/rules/` shadows it.
+  entry points. OMP also loads `skills/*/SKILL.md` from the plugin root (the
+  `omp-plugins` discovery provider, priority 90).
 - The extension registers a shadow `ask` description/schema. In `ctx.mode ===
   "tui"` with `ctx.hasUI`, it shows its own picker (`extensions/ask-dialog.ts`)
   through `ctx.ui.custom` and formats results with native wording and details.
@@ -148,8 +146,6 @@ concerns that arrive after its final answer.
 - `extensions/flexible-ask.md`: static model-facing description; keep aligned
   with upstream `packages/coding-agent/src/prompts/tools/ask.md` except the
   option count (the plugin states no number instead of 2–5).
-- `rules/use-ask-for-user-input.md`: always-apply rule; all user input goes
-  through `ask`, overriding question formats skills prescribe.
 - `extensions/assets.d.ts`: ambient typing for the static Markdown import.
 - `extensions/generate-image.ts`: `generate_image` registration, argument
   checks, result text, and saving to `$TMPDIR/omp-image-<id>.webp`.

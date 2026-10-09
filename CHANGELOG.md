@@ -48,8 +48,6 @@
   word completion, autocorrect, vim mode, and multi-line keys; the external
   editor opens with the current text. Skills insert as `/<name>`. Nothing typed
   runs; built-in commands and `#` actions are not offered.
-- Shipped an always-apply rule (`rules/use-ask-for-user-input.md`) that sends
-  all user input through `ask`, overriding question formats prescribed by skills.
 
 ### Changed
 
@@ -70,8 +68,7 @@
 - Dropped the option count from the ask description: it now asks for distinct
   options with no number (native says 2–5), and otherwise matches native ask's
   wording, including when to ask. The exception for decisions a skill,
-  workflow, or instruction leaves to the user is gone; the always-apply rule
-  still routes all user input through ask.
+  workflow, or instruction leaves to the user is gone.
 - Resynced the ask description with OMP's current native wording, restoring
   "Clarifying custom input? Answer first; re-ask unresolved questions."
 - Checked the `generate-image` skill against GPT Image 2.5 (Flare, Sunburst),
