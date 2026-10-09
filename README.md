@@ -16,10 +16,12 @@ prescribe (for example grilling's `❓ Q1 … ➡️` rounds).
 In the interactive TUI the wrapper shows its own picker so questions keep their
 Markdown: headings, lists, paragraph breaks, and code blocks. Option
 descriptions and previews are Markdown too. Tall questions scroll with
-PgUp/PgDn; the first move or action key after scrolling brings the cursor back
-into view instead of acting on a hidden row. The picker keeps the native
+PgUp/PgDn. After you scroll, the first move or action key brings the cursor
+back into view instead of acting on a hidden row. The picker keeps the native
 structure: tabs and a Submit review for several or multi-select questions,
 `Other (type your own)`, `ask.timeout` auto-selection, and `ask.notify`.
+
+### Keys
 
 Each key means the same thing in every picker:
 
@@ -27,14 +29,16 @@ Each key means the same thing in every picker:
 |---|---|
 | j/k or ↑/↓ | Move between rows (on the Submit tab, scroll) |
 | h/l, ←/→, or Tab | Switch tabs (when there is a Submit tab) |
-| Space | Toggle the row and stay; single-select un-picks the others |
-| Enter | Finish the question: single-select picks the row first, then the next question; the last goes to the Submit tab, or submits when there is none. On the Submit tab, submit |
+| Space | Toggle the row and stay. Single-select un-picks the others |
+| Enter | Finish the question. Single-select picks the row first, then goes to the next question. The last question goes to the Submit tab, or submits when there is none. On the Submit tab, submit |
 | n | Edit the row's text: the option's note, the `Other` answer, or, on the Submit tab, the Submit note |
 | x | Clear that text (on `Other`, also un-pick it) |
 
 Space or Enter on an empty `Other` opens its editor. In an editor, Enter (or
 Ctrl+Q) saves and stays on the row, and Esc discards the edit. Saving `Other`
 text picks it.
+
+### Differences from native `ask`
 
 Answering differs from native `ask`:
 
@@ -51,51 +55,57 @@ Answering differs from native `ask`:
   Checkbox questions send ticked options and `Other` text together (native ask
   drops the ticks).
 
-The `Other` answer, option-note, and Submit note editors are the main prompt's own editor, so they
-behave like it: the same suggestions (`@` files, `^` models, `/` file commands
-and skills, internal URLs such as `skill://`, `rule://`, `local://`, `agent://`,
-`artifact://`, and `omp://`, emoji, GitHub refs, and other extensions'
-providers), ghost-text word completion, typo detection and autocorrect, vim
-mode, and multi-line input (Shift+Enter, Ctrl+J, or Alt+Enter inserts a
-newline; Enter or Ctrl+Q saves). Ctrl+C clears the text (it never exits omp
-from here).
+### Editors
 
-Answers only reference things; nothing in them runs. `/` suggests commands you
-keep as files (`~/.agents/commands`, `~/.omp/commands`, project command folders)
-and skills, each with its own icon; skills insert as `/<name>` without the
-`skill:` prefix, and only names that start with (or have a hyphenated part
-starting with) what you typed are offered. Built-in and extension commands are
-not suggested. `skill://` and `rule://` also work. `#` prompt actions are
-hidden, accepting a suggestion only inserts its text, and Enter saves exactly
-what you typed, so a `/command` is never run or auto-completed. There is no
-history, push-to-talk, or draft saving. The external editor key
-(`app.editor.external`, Ctrl+G by default) opens the current text in
-`$VISUAL`/`$EDITOR` and writes the result back.
+The `Other` answer, option-note, and Submit note editors are the main prompt's
+own editor, so they behave like it. They have the same suggestions (`@` files,
+`^` models, `/` file commands and skills, internal URLs such as `skill://`,
+`rule://`, `local://`, `agent://`, `artifact://`, and `omp://`, emoji, GitHub
+refs, and other extensions' providers), ghost-text word completion, typo
+detection and autocorrect, vim mode, and multi-line input. Shift+Enter, Ctrl+J,
+or Alt+Enter inserts a newline, and Enter or Ctrl+Q saves. Ctrl+C clears the
+text and never exits omp from here.
 
-Images paste as in the main prompt: the image-paste key (Ctrl+V by default)
+Answers only reference things, and nothing in them runs. `/` suggests commands
+you keep as files (`~/.agents/commands`, `~/.omp/commands`, project command
+folders) and skills, each with its own icon. Skills insert as `/<name>` without
+the `skill:` prefix. Only names that start with what you typed, or have a
+hyphenated part that does, are offered. Built-in and extension commands are not
+suggested. `skill://` and `rule://` also work. `#` prompt actions are hidden,
+accepting a suggestion only inserts its text, and Enter saves exactly what you
+typed, so a `/command` is never run or auto-completed. There is no history,
+push-to-talk, or draft saving. The external editor key (`app.editor.external`,
+Ctrl+G by default) opens the current text in `$VISUAL`/`$EDITOR` and writes the
+result back.
+
+Images paste as in the main prompt. The image-paste key (Ctrl+V by default)
 reads a copied image, a copied Finder file, or an image path on the clipboard,
 and pasting an image file path also attaches it. Each image shows as the main
-prompt's image chip; deleting the chip drops the image. Images are sent to the
+prompt's image chip, and deleting the chip drops the image. Images go to the
 model after the answer text, labeled `[Image #N]` to match.
 
-`?` asks a **Picker btw**: a side question about the ask or the conversation,
+### Picker btw
+
+`?` asks a Picker btw: a side question about the ask or the conversation,
 answered inside the picker. The options give way to a thread with a question
-box below it (the same editor as `Other`, without image paste). Enter asks; the
+box below it (the same editor as `Other`, without image paste). Enter asks. The
 answer streams into the thread, and later questions in the same ask see the
 earlier ones. The side question also sees your answers so far (ticked options,
 `Other` text, notes), so "is my pick a good idea?" works. Esc while an answer
-streams cancels it and keeps the partial text; the next Esc returns to the
+streams cancels it and keeps the partial text. The next Esc returns to the
 options with your answers untouched, and `?` reopens the thread. PgUp/PgDn
 scroll a long thread. The thread is discarded when the ask ends, and the agent
-never sees it; to tell the agent something, put it in `Other` or a note.
+never sees it. To tell the agent something, put it in `Other` or a note.
 
 A Picker btw runs through the same side-request pipeline as OMP's `/btw`
 (the conversation so far, no tools run, nothing added to the session), but it
 is not OMP's `/btw`: it is not saved to BTW history and cannot be branched or
-copied from a panel. Your main prompt is never touched. `ask.timeout` stops
+copied from a panel. It does not change your main prompt. `ask.timeout` stops
 when you press `?` and stays stopped (the title reads `Ask (timer paused)`)
 until your next key in the options, which restarts it in full. On an OMP
 without side requests, `? btw` is not offered.
+
+### Outside the TUI
 
 Outside the TUI (RPC/ACP/print, subagents), and for inputs native `ask` rejects,
 execution delegates to native `ask`. Differences from the native picker:
@@ -165,10 +175,10 @@ Arguments match Codex's:
 - `referenced_image_paths`: absolute paths of images to edit or draw from.
 - `num_last_images_to_include` (1–5): use the last N images in the
   conversation, such as pasted images, tool results, and earlier generated
-  images. It can't be combined with `referenced_image_paths`.
+  images. It cannot be combined with `referenced_image_paths`.
 
 Unknown arguments are rejected with an error. The backend ignores size and
-quality, so the prompt should state the aspect ratio. Output is about 1.57
+quality, so state the aspect ratio in the prompt. Output is about 1.57
 megapixels, and the server chooses the quality.
 
 The bundled `generate-image` skill is a checklist the model runs on every
@@ -197,7 +207,7 @@ unchanged. The result is saved as lossless WebP to
 `$TMPDIR/omp-image-<id>.webp`. The model gets the image, the saved path, and the
 size and quality the backend reported. The tool result's details also keep the
 request id, generation id, and output token count for tracing a result with
-OpenAI; HTTP errors name the request id.
+OpenAI. HTTP errors name the request id.
 
 Guards:
 
@@ -217,8 +227,8 @@ and the size and quality. Below it are the saved path (click to open the file),
 the near-limit warning, a folded copy of a long prompt, and the image. An error
 shows its message in red.
 
-Disable native image generation. The plugin's tool takes precedence either
-way, because native is added after extensions and skips taken names:
+Turn off native image generation. The plugin's tool wins either way, because
+OMP adds native tools after extensions and skips names that are taken:
 
 ```yaml
 generate_image:
@@ -234,7 +244,7 @@ verify each one and fix any that hold. The card is already in the agent's
 context, so the wake message only points at it instead of repeating the notes.
 Nits stay passive, and blockers already wake the agent in OMP.
 
-It sends the wake the same way OMP sends a note that should start a turn
+It sends the wake the same way OMP sends a note that starts a turn
 when idle, so OMP's own rules still apply. After you interrupt a run (Esc), or
 in plan mode, the wake is added to the conversation without starting a turn.
 ACP clients that refuse agent-started turns get it on their next turn. The
@@ -244,19 +254,19 @@ The woken turn is reviewed too, so the advisor can raise another concern. To
 stop an endless advisor/agent loop without stopping real work, every wake in a
 prompt cycle (one prompt you send until the next) must pass three checks:
 
-1. **The concern is new.** OMP's judge (TypeSafe Jev through the `judge` model
+1. The concern is new. OMP's judge (TypeSafe Jev through the `judge` model
    role) compares it with the concerns the agent was already woken for. A
    concern that raises the same issue stays a card: the agent already answered
    it. When the `judge` role does not resolve to Jev, or the judge call fails,
    the extension compares words instead (half or more shared words is the same
    issue).
-2. **The last wake changed something.** The woken turn ran `edit`, `write`,
+2. The last wake changed something. The woken turn ran `edit`, `write`,
    `ast_edit`, `bash`, `eval`, or `task` without an error. If the agent only
    read and replied, it did not agree with the advisor, and you decide.
-3. **Fewer than 6 wakes** in this prompt cycle, as a safety limit.
+3. Fewer than 6 wakes ran in this prompt cycle, as a safety limit.
 
 When check 2 or 3 holds back a new concern, you get a notification that says
-why; the card stays, and you can send a prompt if you want the agent to act.
+why. The card stays, and you can send a prompt if you want the agent to act.
 Every prompt you send starts a new cycle, in the TUI, RPC, and ACP alike.
 Switching sessions (`/new`, resume, fork) or jumping in `/tree` drops any
 concern still waiting, so it never lands in the other conversation, and starts
@@ -275,51 +285,54 @@ Limits:
 
 ## Install
 
+From the repository root:
+
 ```bash
-omp plugin link /Users/vanguyen/work/tries/omp-tools
+omp plugin link "$PWD"
 ```
 
-The link uses the working tree directly; edits do not require reinstalling.
-Start a **new OMP session** after installation or code changes. Existing sessions
-retain their loaded tool definitions.
+The link uses the working tree, so edits need no reinstall. Start a new OMP
+session after you link the plugin or change its code. Running sessions keep the
+tool definitions they loaded.
 
-The renamed plugin replaces the previous `omp-ask` installation. Do not load both
-packages or install a second loose copy of the ask extension.
+This plugin replaces the earlier `omp-ask` plugin. Do not load both, and do not
+install a second loose copy of the ask extension.
 
-## Development and verification
+## Development
 
 ```bash
 bun install --ignore-scripts
 bun run check    # warns if SDK types differ from `omp --version`, then typechecks
-bun test         # generate_image behavior tests (stubbed fetch)
-bun run update   # omp update + newest SDK types, then check
+bun test         # generate_image and advisor-concern-wake behavior tests
+bun run update   # runs omp update, installs the newest SDK types, then checks
 ```
 
 Runtime value imports of `@oh-my-pi/*` resolve to the running OMP's own modules.
-Development types track the `latest` SDK release; run `bun run update` so omp
-and the types move together. `bun test` covers `generate_image` against a
-stubbed endpoint. Registration changes require a fresh-session OMP smoke check.
+Development types track the `latest` SDK release. Run `bun run update` so omp
+and the types move together. `bun test` runs `generate_image` against a stubbed
+endpoint and `advisor-concern-wake` through its event handlers. Typechecking
+and tests do not load the plugin into OMP, so a change to registration or the
+picker needs a check in a fresh OMP session.
 
-A fresh OMP 18.3.1 session verified the Markdown picker (single question,
-`Other` custom answer, two questions with multi-select, Esc cancel). A fresh
-OMP 18.6.1 session verified the Picker btw: an answer that named the ticked
-option, a follow-up that quoted the earlier question, Esc cancelling a streaming
-answer and then returning to the options, the timer staying paused for over the
-timeout and restarting in full on the next key, the thread kept on reopening,
-and the agent not seeing the thread after the ask.
+Fresh OMP sessions verified this behavior:
 
-A fresh OMP 18.8.0 session verified the picker keys: Enter picking a
-single-choice option and moving on, Space ticking a checkbox, a note saved with
-Enter staying on its row, a Submit note, and the answer text the agent got.
-
-A fresh OMP 18.8.6 session in a headless Tern 0.6.3 window (`tern serve`,
-driven with `tern ctl`) verified the Tern views: the option rows, keys, row,
-tab, and button clicks, the note and `Other` editors, the Picker btw thread,
-the countdown ring, Cancel, the `ask` result card with its Submit note, and a
-live `generate_image` card with its image and an error card. It also verified
-one picker height across tabs, editors, and the Picker btw, and scrolling by
-wheel, PgDn, and j/k. The same session with `PI_TUI_NATIVE=0` verified the text
-picker.
-
-A fresh OMP 18.4.4 session verified `generate_image` live: a generation, an edit
-with a PNG reference path, and an edit with `num_last_images_to_include`.
+- OMP 18.3.1: the Markdown picker (one question, an `Other` custom answer, two
+  questions with multi-select, Esc cancel).
+- OMP 18.4.4: `generate_image` live (a generation, an edit with a PNG reference
+  path, and an edit with `num_last_images_to_include`).
+- OMP 18.4.8: the host judge call behind the advisor concern checks.
+- OMP 18.6.1: the Picker btw (an answer that named the ticked option, a
+  follow-up that quoted the earlier question, Esc cancelling a streaming answer
+  and then returning to the options, the timer paused past the timeout and
+  restarted in full on the next key, the thread kept on reopening, and the
+  agent not seeing the thread after the ask).
+- OMP 18.8.0: the picker keys (Enter picking a single-choice option and moving
+  on, Space ticking a checkbox, a note saved with Enter staying on its row, a
+  Submit note, and the answer text the agent got).
+- OMP 18.8.6 in a headless Tern 0.6.3 window (`tern serve`, driven with
+  `tern ctl`): the Tern views (option rows, keys, row, tab, and button clicks,
+  the note and `Other` editors, the Picker btw thread, the countdown ring,
+  Cancel, the `ask` result card with its Submit note, and a live
+  `generate_image` card with its image and an error card), one picker height
+  across tabs, editors, and the Picker btw, and scrolling by wheel, PgDn, and
+  j/k. The same session with `PI_TUI_NATIVE=0` verified the text picker.
