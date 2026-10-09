@@ -139,8 +139,9 @@ prompt before sending it. The criteria come from vendor prompting guides,
 text-to-image research and benchmarks, and creative-brief practice
 (`docs/research/image-prompting-*.md`, `docs/research/image-prompt-criteria-*.md`,
 `docs/research/image-prompt-format.md`, `docs/research/gpt-image-2.5-*.md`).
-OpenAI kept its gpt-image-2 prompts for GPT Image 2.5, and the endpoint ignores
-`model`, so the rules work whichever model serves:
+OpenAI kept its gpt-image-2 prompts for GPT Image 2.5, and the endpoint accepts
+any `model` value with no visible effect, so the rules work whichever model
+serves:
 
 - every prompt: purpose first, one concrete main subject, every requested
   element with nothing invented, visible terms instead of praise, attributes
@@ -157,7 +158,9 @@ PNG, GIF, BMP, and other non-JPEG references are sent as lossless WebP (about
 25% smaller than PNG, same image-token cost). JPEG and WebP references are sent
 unchanged. The result is saved as lossless WebP to
 `$TMPDIR/omp-image-<id>.webp`. The model gets the image, the saved path, and the
-size and quality the backend reported.
+size and quality the backend reported. The tool result's details also keep the
+request id, generation id, and output token count for tracing a result with
+OpenAI; HTTP errors name the request id.
 
 Guards:
 
@@ -169,6 +172,8 @@ Guards:
 - Requests time out after 5 minutes. Cancelling the tool cancels the request.
 - A usage limit error names the limit, the plan, and the reset time, and tells
   the model not to retry before then.
+- A successful result notes when the image limit window is at least 80% used,
+  with its reset time.
 
 Disable native image generation. The plugin's tool takes precedence either
 way, because native is added after extensions and skips taken names:

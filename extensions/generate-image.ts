@@ -22,6 +22,10 @@ interface GenerateImageDetails {
 	path: string;
 	size?: string;
 	quality?: string;
+	/** For tracing a result with OpenAI; not shown to the model. */
+	requestId?: string;
+	generationId?: string;
+	outputTokens?: number;
 }
 
 function savedImageHint(dir: string, file: string): string {
@@ -93,13 +97,22 @@ export default function generateImage(pi: ExtensionAPI) {
 			const file = path.join(dir, `omp-image-${Snowflake.next()}.webp`);
 			await Bun.write(file, webp);
 			const reported = [generated.size, generated.quality && `quality ${generated.quality}`].filter(Boolean);
-			const text = [savedImageHint(dir, file), ...(reported.length > 0 ? [reported.join(", ")] : [])].join("\n");
+			const lines = [savedImageHint(dir, file)];
+			if (reported.length > 0) lines.push(reported.join(", "));
+			if (generated.quotaWarning) lines.push(generated.quotaWarning);
 			return {
 				content: [
 					{ type: "image", data: Buffer.from(webp).toString("base64"), mimeType: "image/webp" },
-					{ type: "text", text },
+					{ type: "text", text: lines.join("\n") },
 				],
-				details: { path: file, size: generated.size, quality: generated.quality },
+				details: {
+					path: file,
+					size: generated.size,
+					quality: generated.quality,
+					requestId: generated.requestId,
+					generationId: generated.generationId,
+					outputTokens: generated.outputTokens,
+				},
 			};
 		},
 	};

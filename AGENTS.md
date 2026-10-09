@@ -54,7 +54,18 @@ concerns that arrive after its final answer.
   `moderation_blocked` or silently dropped references), the 0-image-token
   dropped-references check on edits, and the 5-minute timeout combined with the
   tool signal. The result is lossless WebP in `content` only, never
-  `details.images` (the TUI would show it twice).
+  `details.images` (the TUI would show it twice). The Images endpoint returns
+  PNG with a signed C2PA manifest whatever `output_format` is sent (checked
+  2026-10-08), so the local re-encode drops that manifest. Only the hosted
+  `/codex/responses` image tool returns WebP (lossless, manifest kept), but it
+  puts a chat model in the loop and drew on the weekly `premium` limit rather
+  than the daily `imagegen_premium` one.
+- `details` keeps `x-codex-imagegen-request-id`, `generation_id`, and
+  `usage.output_tokens` for tracing; errors append the request id. Success text
+  warns at 80% of a limit window. The Images endpoint reports its image window
+  as `x-codex-primary-*` under `x-codex-active-limit: imagegen_premium`, so
+  limit-named headers are tried first and `x-codex-*` is the fallback;
+  zero-minute windows are skipped.
 
 ## Important Files
 
@@ -107,9 +118,10 @@ concerns that arrive after its final answer.
   plus reference, transparency, and retry rules. It is generic and has no
   examples; the cited research behind it is in
   `docs/research/image-prompting-*.md`, `image-prompt-criteria-*.md`,
-  `image-prompt-format.md` (prose vs labeled lines vs JSON), and
-  `gpt-image-2.5-*.md` (rules checked against Images 2.5; the endpoint ignores
-  `model`, so rules stay model-agnostic).
+  `image-prompt-format.md` (prose vs labeled lines vs JSON),
+  `gpt-image-2.5-*.md` (rules checked against Images 2.5; the endpoint accepts
+  any `model` with no visible effect, so rules stay model-agnostic), and
+  `codex-image-backend-model.md` (live check of which model serves; inconclusive).
 - `test/`: `bun test` behavior tests for `generate_image` through `execute`
   with a stubbed `fetch`, and for `advisor-concern-wake` through its event
   handlers with a mocked `@oh-my-pi/pi-coding-agent/judgment`.

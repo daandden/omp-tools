@@ -21,7 +21,9 @@
   purpose and one concrete subject first, nothing invented, attributes bound to
   their nouns, explicit counts and placement, exact text, edits as one explicit
   operation plus a keep list, transparency stated in the prompt, and review
-  against every requirement.
+  against every requirement. Results keep the backend's request id, generation
+  id, and output token count in the tool details, HTTP errors name the request
+  id, and a result notes when the image usage limit is at least 80% used.
 - Showed ask questions, option descriptions, and previews as full Markdown in the
   interactive picker instead of one condensed line.
 - Allowed pasting images into ask `Other` answers and notes; they reach the model

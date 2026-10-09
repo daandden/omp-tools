@@ -19,17 +19,24 @@ let savedFiles: string[];
 
 const OPAQUE_PNG = encodePng(8, 6, (x, y) => [x * 30, y * 40, 200, 255]);
 
-function imageResponse(overrides: Record<string, unknown> = {}, png: Uint8Array = OPAQUE_PNG): Response {
-	return Response.json({
-		created: 1,
-		background: "opaque",
-		data: [{ b64_json: Buffer.from(png).toString("base64") }],
-		output_format: "png",
-		quality: "low",
-		size: "1370x1148",
-		usage: { input_tokens: 20, input_tokens_details: { image_tokens: 0, text_tokens: 20 } },
-		...overrides,
-	});
+function imageResponse(
+	overrides: Record<string, unknown> = {},
+	png: Uint8Array = OPAQUE_PNG,
+	headers: Record<string, string> = {},
+): Response {
+	return Response.json(
+		{
+			created: 1,
+			background: "opaque",
+			data: [{ b64_json: Buffer.from(png).toString("base64") }],
+			output_format: "png",
+			quality: "low",
+			size: "1370x1148",
+			usage: { input_tokens: 20, input_tokens_details: { image_tokens: 0, text_tokens: 20 } },
+			...overrides,
+		},
+		{ headers },
+	);
 }
 
 function textOf(result: { content: { type: string; text?: string }[] }): string {
@@ -419,5 +426,66 @@ describe("transparency", () => {
 		const alpha = await alphaValues(await Bun.file(savedPathOf(result)).bytes());
 		expect(Math.min(...alpha)).toBe(0);
 		expect(alpha).toContain(128);
+	});
+});
+
+describe("tracing and quota", () => {
+	const IMAGE_LIMIT = {
+		"x-codex-active-limit": "imagegen_premium",
+		"x-codex-primary-window-minutes": "1440",
+		"x-codex-primary-reset-after-seconds": "3600",
+		"x-codex-secondary-window-minutes": "0",
+		"x-codex-secondary-used-percent": "100",
+	};
+
+	test("keeps the request id, generation id and output tokens in details", async () => {
+		respond = () =>
+			imageResponse(
+				{
+					data: [{ b64_json: Buffer.from(OPAQUE_PNG).toString("base64"), generation_id: "gen-1" }],
+					usage: { input_tokens: 23, input_tokens_details: { image_tokens: 0 }, output_tokens: 515 },
+				},
+				OPAQUE_PNG,
+				{ "x-codex-imagegen-request-id": "req-1" },
+			);
+
+		const result = await loadTool().execute("c", { prompt: "x" }, undefined, undefined, fakeContext());
+		savedPathOf(result);
+
+		expect(result.details).toMatchObject({ requestId: "req-1", generationId: "gen-1", outputTokens: 515 });
+		expect(textOf(result)).not.toContain("req-1");
+	});
+
+	test("names the request id in HTTP errors", async () => {
+		respond = () =>
+			Response.json(
+				{ error: { message: "upstream exploded" } },
+				{ status: 502, headers: { "x-codex-imagegen-request-id": "req-2" } },
+			);
+
+		const call = loadTool().execute("c", { prompt: "x" }, undefined, undefined, fakeContext());
+
+		await expect(call).rejects.toThrow("Codex Images endpoint returned HTTP 502: upstream exploded (request id: req-2)");
+	});
+
+	test("warns once the image window is 80% used, ignoring zero-length windows", async () => {
+		respond = () => imageResponse({}, OPAQUE_PNG, { ...IMAGE_LIMIT, "x-codex-primary-used-percent": "80" });
+
+		const result = await loadTool().execute("c", { prompt: "x" }, undefined, undefined, fakeContext());
+		savedPathOf(result);
+
+		const lines = textOf(result).split("\n");
+		expect(lines[1]).toBe("1370x1148, quality low");
+		expect(lines[2]).toStartWith("Codex usage limit imagegen_premium is 80% used. It resets at ");
+		expect(lines[2]).toEndWith(" local time (in 1h).");
+	});
+
+	test("adds no warning below 80%", async () => {
+		respond = () => imageResponse({}, OPAQUE_PNG, { ...IMAGE_LIMIT, "x-codex-primary-used-percent": "79" });
+
+		const result = await loadTool().execute("c", { prompt: "x" }, undefined, undefined, fakeContext());
+		savedPathOf(result);
+
+		expect(textOf(result)).not.toContain("usage limit");
 	});
 });
