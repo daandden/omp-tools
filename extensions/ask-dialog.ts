@@ -70,17 +70,15 @@ const SUBMIT_OPTION = "Submit";
 const RECOMMENDED_SUFFIX = " (Recommended)";
 /** Native reserved action rows; option labels must disambiguate against them. */
 const RESERVED_LABELS = [OTHER_OPTION, "Chat about this", "Next →"];
-/** Fraction of the terminal the dialog may occupy (matches native). */
+/** Fraction of the terminal the dialog occupies (the native dialog's cap). */
 const DIALOG_HEIGHT_RATIO = 0.7;
 const MIN_DIALOG_ROWS = 12;
 const MIN_BODY_ROWS = 5;
 const MAX_TAB_LABEL_WIDTH = 16;
 /** Rows reserved for the custom-answer/note editor while it is open. */
 const PROMPT_EDITOR_ROWS = 6;
-/** Lines Tern spends outside the scroller: the tab row, the button row, gaps, and insets. */
-const NATIVE_CHROME_LINES = 4;
-/** Share of the pane's rows the scroller may take. Tern's text line is taller than a terminal row, so this is under the classic ratio. */
-const NATIVE_HEIGHT_RATIO = 0.5;
+/** Lines the docked picker spends outside the scroller: the status line above it, the tab row, the button row, gaps, and insets. */
+const NATIVE_CHROME_LINES = 11;
 /** Columns the picker's insets take from the pane's width. */
 const NATIVE_INSET_COLS = 6;
 /** Lines of a Tern editor card (title, one text line, key hints, insets), less the gap it shares. */
@@ -89,8 +87,8 @@ const NATIVE_EDITOR_LINES = 5;
 const NATIVE_ACTION_LINES = 2;
 /** Text lines one Tern option row adds beyond its text: the gap between rows. */
 const NATIVE_ROW_GAP_LINES = 0.5;
-/** The same with the picker's sheet, whose rows also have 7px padding above and below. */
-const NATIVE_STYLED_ROW_LINES = 1.25;
+/** The same with the picker's sheet: 2px of padding above and below each row, on a 16px line. */
+const NATIVE_STYLED_ROW_LINES = 0.25;
 
 /** An image attached to a custom answer or note, referenced by `label` in its text. */
 export interface AskImage extends PastedImage {
@@ -388,30 +386,42 @@ const NATIVE_SHEET_NAME = "omp-tools-ask";
  * highlighted row and a hover fill. Colors are Tern's theme variables, so the
  * rows follow its theme (and the program palette where Tern applies it).
  *
+ * The rows sit on the terminal grid to stay compact: their text takes the
+ * terminal's font size and row height (`--sf-fs`, `--sf-lh`, read on the
+ * surface before the composer sets its own), one row per line, 2px of padding
+ * above and below for the highlight fill, and no gap between rows.
+ *
  * Tern's Markdown gives a list 2 cells of indent and hangs its markers left of
  * that (`1. ` in the terminal font is wider), into the page margin in the
  * transcript. A scroll box clips at its edge, so it takes that room inside:
  * padding on the scroller, cancelled by a negative margin so nothing moves.
  */
 const NATIVE_SHEET = `
+.sf-region {
+	--omp-tools-fs: var(--sf-fs, 13px);
+	--omp-tools-lh: var(--sf-lh, 17px);
+}
 .sf-list[data-role='omp-tools.ask-body'] > .sf-list-scroll {
 	margin-left: calc(-2 * var(--sf-cw));
 	padding-left: calc(2 * var(--sf-cw));
 }
+.sf-list[data-role='omp-tools.ask-body'] > .sf-list-scroll > .sf-list-slot > .sf-col { gap: 0; }
+.sf-list[data-role='omp-tools.ask-body'] [data-role='omp.ask.question'] { margin-bottom: 6px; }
 [data-role^='omp-tools.ask-row'] {
-	padding: 7px 10px;
-	border-radius: 10px;
+	padding: 2px 10px;
+	border-radius: 8px;
 	font-family: var(--sans);
 	transition: background-color 120ms ease;
 }
+[data-role^='omp-tools.ask-row'] .sf-col { gap: 0; }
 [data-role^='omp-tools.ask-row']:hover { background: var(--l1); }
 [data-role='omp-tools.ask-row.on'], [data-role='omp-tools.ask-row.on']:hover { background: var(--l2); }
-[data-role='omp-tools.ask-label'] { font: 500 14px/1.4 var(--sans); color: var(--t1); }
-[data-role='omp-tools.ask-label'] .sf-t-code { font-family: var(--tv-font, var(--mono)); font-size: 13px; }
-[data-role^='omp-tools.ask-row'] .sf-md, [data-role^='omp-tools.ask-row'] .sf-md .md { font-family: var(--sans); font-size: 13px; color: var(--t3); }
+[data-role='omp-tools.ask-label'] { font: 500 var(--omp-tools-fs)/var(--omp-tools-lh) var(--sans); color: var(--t1); }
+[data-role='omp-tools.ask-label'] .sf-t-code { font-family: var(--tv-font, var(--mono)); }
+[data-role^='omp-tools.ask-row'] .sf-md, [data-role^='omp-tools.ask-row'] .sf-md .md { font-family: var(--sans); font-size: var(--omp-tools-fs); line-height: var(--omp-tools-lh); color: var(--t3); }
 [data-role^='omp-tools.ask-row'] .sf-md code { font-family: var(--tv-font, var(--mono)); }
-[data-role='omp-tools.ask-typed'] { font: 13px/1.4 var(--sans); }
-[data-role='omp-tools.ask-marker'] { line-height: calc(14px * 1.4); }
+[data-role='omp-tools.ask-typed'] { font: var(--omp-tools-fs)/var(--omp-tools-lh) var(--sans); }
+[data-role='omp-tools.ask-marker'] { font-size: 0.75em; line-height: var(--omp-tools-lh); }
 [data-role='omp-tools.ask-answers'] { font-family: var(--sans); font-size: 13px; }
 [data-role='omp-tools.ask-title'] { font: 600 13px/1.4 var(--sans); color: var(--t3); }
 `;
@@ -481,9 +491,6 @@ class MarkdownAskDialog implements Component, Focusable {
 	#promptImages: AskImage[] = [];
 	/** Dialog-wide counter so `[Image #N]` labels stay unique across fields. */
 	#imageCount = 0;
-	#stableHeight: { key: string; total: number } | undefined;
-	/** Heights of the Tern scrollers, fixed per pane size. */
-	#nativeHeight: { key: string; lines: number; width: number } | undefined;
 	/** Latest layout per `question:width`; rebuilt when answer/cursor state changes. */
 	#layoutCache = new Map<string, { stateKey: string; layout: QuestionLayout }>();
 	/** Markdown blocks keyed by color and source; reused across cursor moves. */
@@ -557,8 +564,6 @@ class MarkdownAskDialog implements Component, Focusable {
 	}
 
 	invalidate(): void {
-		this.#stableHeight = undefined;
-		this.#nativeHeight = undefined;
 		this.#layoutCache.clear();
 		this.#markdownCache.clear();
 		this.#previewCache.clear();
@@ -673,8 +678,8 @@ class MarkdownAskDialog implements Component, Focusable {
 	 * A column with the prompt editor's root role (`omp.editor`), as pi-tui's
 	 * AskDialogComponent: the tabs and countdown, then the open editor, the
 	 * Picker btw thread, the Submit summary, or the question and its options,
-	 * then buttons for the keys. The middle part has one fixed height for the
-	 * whole ask and scrolls inside it, so the picker never jumps between tabs.
+	 * then buttons for the keys. The middle part is as tall as its content up
+	 * to a cap from the pane's height, and scrolls inside it.
 	 */
 	describe(cx: DescribeContext): NativeNode {
 		// Classic-only scroll state: Tern owns the scroller; `#nativePagedAway` stands in for it.
@@ -692,10 +697,10 @@ class MarkdownAskDialog implements Component, Focusable {
 		if (this.#btwOpen && this.#btw) {
 			children.push(...this.#btw.describe(Math.max(3, lines - NATIVE_EDITOR_LINES + NATIVE_ACTION_LINES)));
 		} else if (this.#prompt) {
-			// Above the editor: what it annotates, in a fixed box.
+			// Above the editor: what it annotates, as tall as it needs up to the cap.
 			const room = Math.max(3, lines - NATIVE_EDITOR_LINES + NATIVE_ACTION_LINES);
 			const content = node("col", { gap: "sm" }, this.#describePromptContext());
-			children.push(scrollBox(content, { lines: room, fixed: true, key: "context", scroll: undefined }));
+			children.push(scrollBox(content, { lines: room, fixed: false, key: "context", scroll: undefined }));
 			children.push(this.#prompt);
 		} else if (this.#isSubmitTab()) {
 			this.#describeSubmitBody(children, lines);
@@ -731,33 +736,17 @@ class MarkdownAskDialog implements Component, Focusable {
 	}
 
 	/**
-	 * Height of the one scrolling box (the question and its options, the
-	 * Submit tab, an editor's context, or the Picker btw thread), in text
-	 * lines, fixed per pane size so switching tabs or answering never resizes
-	 * the picker. It is the tallest question as the classic layout measures
-	 * it at the pane's width, capped like the classic panel; anything taller
-	 * scrolls.
+	 * Most text lines of the one scrolling box (the question and its options,
+	 * the Submit tab, an editor's context, or the Picker btw thread): the
+	 * classic dialog's share of the pane's rows less the picker's other parts.
+	 * The box is as tall as its content up to this cap; anything taller
+	 * scrolls. The Picker btw thread keeps the full cap so it does not grow
+	 * with each turn.
 	 */
 	#nativeHeights(cx: DescribeContext): { lines: number; width: number } {
 		const termRows = this.#tui.terminal?.rows ?? process.stdout.rows ?? 40;
-		const width = Math.max(1, cx.cols - NATIVE_INSET_COLS);
-		const key = `${width}:${termRows}`;
-		if (this.#nativeHeight?.key === key) return this.#nativeHeight;
-		let tallest = 0;
-		for (let index = 0; index < this.#questions.length; index++) {
-			const question = this.#questions[index];
-			if (!question) continue;
-			// Tern sets a heading in a larger face than a text line, and puts a gap between rows.
-			const headings = displayText(question.question)
-				.split("\n")
-				.filter(line => /^\s*#{1,6}\s/.test(line)).length;
-			const gaps = this.#nativeRowExtra(questionRows(question).length);
-			tallest = Math.max(tallest, this.#questionLayout(index, width).lines.length + headings + gaps);
-		}
-		const submitLines = this.#hasSubmitTab() ? this.#questions.length * 2 + 3 : 0;
-		const cap = Math.max(MIN_BODY_ROWS, Math.floor(termRows * NATIVE_HEIGHT_RATIO) - NATIVE_CHROME_LINES);
-		this.#nativeHeight = { key, lines: clamp(Math.max(submitLines, tallest), MIN_BODY_ROWS, cap), width };
-		return this.#nativeHeight;
+		const lines = Math.max(MIN_BODY_ROWS, Math.floor(termRows * DIALOG_HEIGHT_RATIO) - NATIVE_CHROME_LINES);
+		return { lines, width: Math.max(1, cx.cols - NATIVE_INSET_COLS) };
 	}
 
 	/** Question tabs (plus Submit) and the countdown; only the countdown while an editor is open. */
@@ -877,9 +866,9 @@ class MarkdownAskDialog implements Component, Focusable {
 		return Math.ceil(count * (this.#nativeSheet ? NATIVE_STYLED_ROW_LINES : NATIVE_ROW_GAP_LINES));
 	}
 
-	/** A fixed-height scroller; PgUp/PgDn and Submit-tab j/k move it. */
+	/** A scroller as tall as its content up to `lines`; PgUp/PgDn and Submit-tab j/k move it. */
 	#scroller(children: readonly NativeChild[], lines: number, key: string): NativeNode {
-		return scrollBox(node("col", { gap: "sm" }, children), { lines, fixed: true, key, scroll: this.#nativeScroll });
+		return scrollBox(node("col", { gap: "sm" }, children), { lines, fixed: false, key, scroll: this.#nativeScroll });
 	}
 
 	/**
@@ -1110,20 +1099,14 @@ class MarkdownAskDialog implements Component, Focusable {
 		this.#tui.requestRender();
 	}
 
+	/** The current tab's content plus the panel's chrome, up to the classic dialog's share of the terminal; overflow scrolls. */
 	#dialogHeight(width: number, termRows: number): number {
-		const key = `${width}:${termRows}`;
-		if (this.#stableHeight?.key === key) return this.#stableHeight.total;
-		// Sized once per viewport from the tallest tab so switching tabs or
-		// answering never resizes the panel; overflow scrolls.
 		const maxHeight = Math.max(MIN_DIALOG_ROWS, Math.floor(termRows * DIALOG_HEIGHT_RATIO));
 		const chrome = 4 + (this.#hasSubmitTab() ? 2 : 0);
-		let tallestBody = this.#hasSubmitTab() ? this.#questions.length * 2 + 4 : 0;
-		for (let index = 0; index < this.#questions.length; index++) {
-			tallestBody = Math.max(tallestBody, this.#questionLayout(index, width).lines.length);
-		}
-		const total = clamp(chrome + tallestBody, MIN_DIALOG_ROWS, maxHeight);
-		this.#stableHeight = { key, total };
-		return total;
+		const body = this.#isSubmitTab()
+			? this.#questions.length * 2 + 4
+			: this.#questionLayout(this.#questionIndex(), width).lines.length;
+		return clamp(chrome + body, MIN_DIALOG_ROWS, maxHeight);
 	}
 
 	/** Question Markdown, a blank separator, then every option row with its

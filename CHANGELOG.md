@@ -2,13 +2,21 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Sized each ask question's picker to its content, up to 70% of the
+  terminal's height (in Tern, the pane's), instead of to the tallest question
+  at up to half the pane. Option rows in Tern use the terminal's font size and
+  row height, with 2px of padding and no gap, and a smaller radio or checkbox
+  marker, so they are more compact.
+
 ### Added
 
 - Drew the ask picker and the `ask` and `generate_image` tool cards natively in
   Tern (terminals that speak the Tern Surface Protocol). Each option is a row
   with its full Markdown in Tern's theme (UI font, theme colors, a gray fill on
   the highlighted row), the picker spans the pane's width, the
-  question and options sit in one box of fixed height that scrolls (wheel,
+  question and options sit in one box that scrolls (wheel,
   PgUp/PgDn, j/k), the countdown is a
   ring, buttons show each key, and clicks run the key paths: a click on an
   option is Space, a double-click is Enter, and tabs and buttons work. The

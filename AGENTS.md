@@ -43,9 +43,12 @@ concerns that arrive after its final answer.
   compact `row` per option, and `omp.btn` buttons. Inline `min`/`max` widths
   of 100% override the composer's measure, so the picker spans the pane. The
   question and options sit in one `scrollBox` (`ask-editor.ts`): a capped
-  `list`, because a `col` with `max.h` only clips. Its `min.h` fixes the
-  height, sized once per pane from the classic layout's tallest tab at the
-  pane's width, and its row cap is scaled because a list
+  `list`, because a `col` with `max.h` only clips. It is as tall as its
+  content up to `DIALOG_HEIGHT_RATIO` of the pane's rows less
+  `NATIVE_CHROME_LINES` (the status line, tabs, buttons, and insets, measured
+  in Tern 0.7.2); the Picker btw thread alone keeps that height fixed
+  (`min.h`). The classic panel is its tab's content up to the same ratio of
+  the terminal. Its row cap is scaled because a list
   row is a text line plus 6px. The `scroll` request goes on the content, since
   Tern scrolls the scroller at or above the asking node and the list's scroller
   is inside the list node. Pointer `action` events run the same commands as
@@ -56,8 +59,12 @@ concerns that arrive after its final answer.
   `describe` when `cx.feature("styles")`; a sheet belongs to one surface, and
   pi-tui opens a new inline surface on `gone` with the same describe context,
   so a once-only send is lost): theme variables only (`--sans`, `--t1`,
-  `--t3`, `--l1`, `--l2`), so rows follow Tern's theme and appearance. The
-  sheet's row padding is in `NATIVE_STYLED_ROW_LINES`, the height estimate.
+  `--t3`, `--l1`, `--l2`), so rows follow Tern's theme and appearance. Row
+  text takes the terminal's `--sf-fs` and `--sf-lh`, copied on `.sf-region`
+  because the composer sets its own `--sf-lh` below it, so each line is one
+  terminal row (the `reader-terminal-text` Tern plugin does the same for
+  omp's text). The sheet's row padding and gap are in
+  `NATIVE_STYLED_ROW_LINES`, the height estimate.
   Tern's Markdown hangs list numbers left of a 2-cell indent, into the page
   margin; a scroll box clips them, so the sheet pads each `scrollBox` scroller
   by 2 cells on the left and cancels it with a negative margin.

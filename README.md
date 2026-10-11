@@ -131,10 +131,11 @@ A row of buttons below the options shows each key with its keycap. The editors
 for `Other`, notes, the Submit note, and the Picker btw are Tern's own text
 fields, without the main prompt's model chip and send button.
 
-The question and its options sit in one box of fixed height for the whole
-ask. Switching tabs, opening an editor, or opening the Picker btw does not
-resize the picker. The box is as tall as the tallest tab needs, up to half the
-pane. Taller content scrolls inside it: use the wheel, PgUp/PgDn, or j/k (the
+The question and its options sit in one box that is as tall as the current
+question needs, up to 70% of the pane's height (70% of the terminal in the
+classic text picker). A short question gives a short picker, so the picker can
+change height when you switch tabs. Taller content scrolls inside the box: use
+the wheel, PgUp/PgDn, or j/k (the
 highlighted row stays in view). A question first shows from its top. When the
 highlighted row is below the box, the first key only brings it into view, so
 no key acts on a row you have not seen. In an editor or the Picker btw, the box
@@ -334,3 +335,6 @@ Fresh OMP sessions verified this behavior:
   `generate_image` card with its image and an error card), one picker height
   across tabs, editors, and the Picker btw, and scrolling by wheel, PgDn, and
   j/k. The same session with `PI_TUI_NATIVE=0` verified the text picker.
+- OMP 18.8.9 in a headless Tern 0.7.2 window: each question's box as tall as
+  its content up to the cap, a long question scrolling at the cap, and the
+  same in the text picker.
