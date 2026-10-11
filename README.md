@@ -32,7 +32,8 @@ Each key means the same thing in every picker:
 
 Space or Enter on an empty `Other` opens its editor. In an editor, Enter (or
 Ctrl+Q) saves and stays on the row, and Esc discards the edit. Saving `Other`
-text picks it.
+text picks it. Above a note or `Other` editor, the picker shows the question's
+title (its `header`), the question, and the row you edit with its description.
 
 ### Differences from native `ask`
 
@@ -137,7 +138,8 @@ pane. Taller content scrolls inside it: use the wheel, PgUp/PgDn, or j/k (the
 highlighted row stays in view). A question first shows from its top. When the
 highlighted row is below the box, the first key only brings it into view, so
 no key acts on a row you have not seen. In an editor or the Picker btw, the box
-above it shows the question, every answer (for the Submit note), or the thread.
+above it shows the question with its title and the row you edit, every answer
+(for the Submit note), or the thread.
 
 The keys stay the same. The pointer runs the same paths:
 

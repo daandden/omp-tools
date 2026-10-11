@@ -51,6 +51,9 @@
 
 ### Changed
 
+- Showed the question's title (its `header`), the question, and the edited row
+  with its description above the note and `Other` editors, instead of the
+  question alone over empty space.
 - Renamed the plugin from `omp-ask` to `omp-tools`; flexible native ask remains included.
 - Sent ask answers to the agent as a labeled summary per question (picked
   options with descriptions, the user's own `Other` text, notes, unanswered).

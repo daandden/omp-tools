@@ -210,6 +210,12 @@ function tabLabel(question: ExtensionAskDialogQuestion, index: number): string {
 	return truncateToWidth(replaceTabs(base), MAX_TAB_LABEL_WIDTH, Ellipsis.Unicode);
 }
 
+/** `lines` cut to `room` rows (at least 1), the last row saying how many were left out. */
+function fitLines(lines: readonly string[], room: number): string[] {
+	if (lines.length <= room) return [...lines];
+	return [...lines.slice(0, room - 1), theme.fg("dim", `… ${lines.length - room + 1} more lines`)];
+}
+
 /** Sanitized, recommendation-badged, collision-free option labels (native parity). */
 function displayOptionLabels(question: ExtensionAskDialogQuestion): string[] {
 	const badged = question.options.map((option, index) => {
@@ -407,6 +413,7 @@ const NATIVE_SHEET = `
 [data-role='omp-tools.ask-typed'] { font: 13px/1.4 var(--sans); }
 [data-role='omp-tools.ask-marker'] { line-height: calc(14px * 1.4); }
 [data-role='omp-tools.ask-answers'] { font-family: var(--sans); font-size: 13px; }
+[data-role='omp-tools.ask-title'] { font: 600 13px/1.4 var(--sans); color: var(--t3); }
 `;
 
 /**
@@ -685,12 +692,9 @@ class MarkdownAskDialog implements Component, Focusable {
 		if (this.#btwOpen && this.#btw) {
 			children.push(...this.#btw.describe(Math.max(3, lines - NATIVE_EDITOR_LINES + NATIVE_ACTION_LINES)));
 		} else if (this.#prompt) {
-			// Above the editor: what it annotates (the question, or every answer for the Submit note), in a fixed box.
-			const question = this.#isSubmitTab() ? undefined : this.#questions[this.#questionIndex()];
-			const content = question
-				? node("md", { text: displayText(question.question).trim(), role: "omp.ask.question" })
-				: node("col", { gap: "sm" }, this.#describeAnswers());
+			// Above the editor: what it annotates, in a fixed box.
 			const room = Math.max(3, lines - NATIVE_EDITOR_LINES + NATIVE_ACTION_LINES);
+			const content = node("col", { gap: "sm" }, this.#describePromptContext());
 			children.push(scrollBox(content, { lines: room, fixed: true, key: "context", scroll: undefined }));
 			children.push(this.#prompt);
 		} else if (this.#isSubmitTab()) {
@@ -700,6 +704,30 @@ class MarkdownAskDialog implements Component, Focusable {
 		}
 		// Inline `min`/`max` widths beat the composer's measure: the picker spans the pane.
 		return col(children, { role: "omp.editor", gap: "sm", min: { w: 1 }, max: { w: 1 } });
+	}
+
+	/**
+	 * What the open editor annotates: for a note or `Other` text, the
+	 * question's title and Markdown over the row being edited (without its
+	 * saved text, which the editor holds); for the Submit note, every answer.
+	 */
+	#describePromptContext(): NativeChild[] {
+		if (this.#isSubmitTab()) return this.#describeAnswers();
+		const index = this.#questionIndex();
+		const question = this.#questions[index];
+		const state = this.#states[index];
+		if (!question || !state) return [];
+		const children: NativeChild[] = [];
+		const title = question.header?.trim();
+		if (title) {
+			const spans = [span(displayText(title), "muted strong")];
+			children.push(node("text", { spans, wrap: "word", role: "omp-tools.ask-title" }, undefined, "title"));
+		}
+		const questionText = displayText(question.question).trim();
+		if (questionText) children.push(node("md", { text: questionText, role: "omp.ask.question" }, undefined, "question"));
+		const row = questionRows(question)[state.cursorIndex];
+		if (row) children.push(this.#describeRow(question, state, row, state.cursorIndex, "none", false));
+		return children;
 	}
 
 	/**
@@ -859,7 +887,8 @@ class MarkdownAskDialog implements Component, Focusable {
 	 * Markdown description, preview, and note or `Other` text, all hanging
 	 * from the label. The highlighted row's marker and label are accent (as in
 	 * the classic picker), and it is kept in view. A click is Space on it, a
-	 * double-click Enter.
+	 * double-click Enter. `showText` false leaves out the note or `Other`
+	 * text, for the row above its own editor.
 	 */
 	#describeRow(
 		question: ExtensionAskDialogQuestion,
@@ -867,6 +896,7 @@ class MarkdownAskDialog implements Component, Focusable {
 		row: QuestionRow,
 		rowIndex: number,
 		reveal: "none" | "mount" | "token",
+		showText = true,
 	): NativeNode {
 		const option = row.kind === "option" ? question.options[row.optionIndex ?? -1] : undefined;
 		const checked = this.#isPickedRow(question, state, row);
@@ -898,7 +928,7 @@ class MarkdownAskDialog implements Component, Focusable {
 		const preview = option?.preview ? displayText(option.preview) : "";
 		if (preview.trim()) lines.push(node("md", { text: preview, role: "omp.ask.preview" }, undefined, "preview"));
 		const typed = row.kind === "other" ? state.other?.text : state.notes.get(row.optionIndex ?? -1)?.text;
-		if (typed !== undefined) {
+		if (showText && typed !== undefined) {
 			const spans =
 				row.kind === "other"
 					? [span(inlineText(typed), checked ? "muted" : "dim")]
@@ -1140,6 +1170,7 @@ class MarkdownAskDialog implements Component, Focusable {
 		row: QuestionRow,
 		selected: boolean,
 		width: number,
+		showText = true,
 	): string[] {
 		const option = row.kind === "option" ? question.options[row.optionIndex ?? -1] : undefined;
 		const checked = option ? state.selectedOptions.has(option.label) : state.otherPicked;
@@ -1173,7 +1204,7 @@ class MarkdownAskDialog implements Component, Focusable {
 		}
 		// Unpicked text stays visible (dim) so nothing typed looks lost.
 		const text = row.kind === "other" ? state.other?.text : state.notes.get(row.optionIndex ?? -1)?.text;
-		if (text !== undefined) {
+		if (showText && text !== undefined) {
 			const prefix = row.kind === "other" ? "" : "✎ ";
 			const shown = truncateToWidth(`${prefix}${inlineText(text)}`, detailWidth, Ellipsis.Unicode);
 			const textColor = row.kind === "other" ? (checked ? "muted" : "dim") : "success";
@@ -1637,22 +1668,32 @@ class MarkdownAskDialog implements Component, Focusable {
 		return true;
 	}
 
-	/** Keep the question's Markdown visible above the editor, trimmed to fit. */
+	/**
+	 * Above the editor, trimmed to fit: the question's Markdown and, for a
+	 * note or `Other` text, its title above and the row being edited below
+	 * (without its saved text, which the editor holds).
+	 */
 	#renderPrompt(width: number, innerWidth: number, termRows: number): string[] {
 		const prompt = this.#prompt;
 		if (!prompt) return [];
 		const editorLines = withoutSideBorders(prompt.render(width + 2), width);
-		const question = this.#questions[this.#questionIndex()];
-		const text = question ? displayText(question.question).trim() : "";
-		let shown: string[] = [];
-		if (text) {
-			const budget = Math.max(3, Math.floor(termRows * DIALOG_HEIGHT_RATIO) - editorLines.length - 1);
-			const markdown = this.#markdown(text, "text").render(innerWidth);
-			shown =
-				markdown.length <= budget
-					? [...markdown]
-					: [...markdown.slice(0, budget - 1), theme.fg("dim", `… ${markdown.length - budget + 1} more lines`)];
+		const budget = Math.max(3, Math.floor(termRows * DIALOG_HEIGHT_RATIO) - editorLines.length - 1);
+		const index = this.#questionIndex();
+		const question = this.#questions[index];
+		const state = this.#isSubmitTab() ? undefined : this.#states[index];
+		const head: string[] = [];
+		const tail: string[] = [];
+		if (question && state) {
+			const title = question.header?.trim();
+			if (title) head.push(...wrapTextWithAnsi(theme.bold(theme.fg("muted", displayText(title))), innerWidth), "");
+			const row = questionRows(question)[state.cursorIndex];
+			if (row) tail.push("", ...this.#renderRow(question, state, row, true, innerWidth, false));
 		}
+		const text = question ? displayText(question.question).trim() : "";
+		const markdown = text ? this.#markdown(text, "text").render(innerWidth) : [];
+		// The row keeps at least two lines' room for the question; the question takes what is left.
+		const rowShown = fitLines(tail, Math.max(1, budget - head.length - 2));
+		const shown = [...head, ...fitLines(markdown, Math.max(1, budget - head.length - rowShown.length)), ...rowShown];
 		return [...shown.map(line => ` ${line}`), ...editorLines];
 	}
 
