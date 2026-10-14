@@ -97,6 +97,18 @@ export function externalEditorKey(): string {
 const LIST_ROWS_PER_LINE = 0.72;
 
 /**
+ * Tern's Markdown hangs list markers left of the list's 2-cell indent, and a
+ * scroll box clips them; this pads the scroller and cancels it with a negative
+ * margin. Part of each stylesheet that draws a `scrollBox`.
+ */
+export const SCROLL_BOX_CSS = `
+.sf-list[data-role='omp-tools.ask-body'] > .sf-list-scroll {
+	margin-left: calc(-2 * var(--sf-cw));
+	padding-left: calc(2 * var(--sf-cw));
+}
+`;
+
+/**
  * A box about `lines` text lines tall whose content scrolls with the wheel,
  * a thin scrollbar, Tern's `scroll` requests, and `reveal`. `fixed` keeps
  * the box that tall when the content is shorter. A `col` with `max.h` only

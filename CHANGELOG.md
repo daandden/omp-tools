@@ -9,9 +9,20 @@
   at up to half the pane. Option rows in Tern use the terminal's font size and
   row height, with 2px of padding and no gap, and a smaller radio or checkbox
   marker, so they are more compact.
+- Let the Picker btw look things up with read-only tools, as `/btw` does (see
+  Added). Each answer shows an "N tool calls" line, and later questions in the
+  same ask follow up in one thread.
 
 ### Added
 
+- Took over `/btw <question>` in the interactive TUI: a side question that can
+  read, grep, glob, find, and web_search (only calls OMP rates as reads; any
+  other call is refused). It runs with the main agent's model and context and
+  reuses its prompt cache. The answer shows in a panel above the editor, which
+  keeps focus; tool calls fold into one line that `t` (or a click in Tern)
+  opens, and Esc cancels or closes. A later `/btw` follows up in the same
+  thread until the next main prompt. Bare `/btw`, subagent views, and RPC keep
+  OMP's `/btw`.
 - Drew the ask picker and the `ask` and `generate_image` tool cards natively in
   Tern (terminals that speak the Tern Surface Protocol). Each option is a row
   with its full Markdown in Tern's theme (UI font, theme colors, a gray fill on
