@@ -162,6 +162,7 @@ async function askWithMarkdownDialog(
 	}
 
 	let dialogResult: MarkdownAskResult | undefined;
+	const pickerBtw = pickerBtwRunner(ctx);
 	try {
 		dialogResult = await showMarkdownAskDialog(ctx.ui, questions, {
 			timeout: timeoutSeconds > 0 ? timeoutSeconds * 1000 : undefined,
@@ -170,11 +171,13 @@ async function askWithMarkdownDialog(
 			notify: message => ctx.ui.notify(message, "warning"),
 			autocomplete,
 			fileCommands: await loadFileCommandNames(ctx.cwd),
-			askBtw: pickerBtwRunner(ctx),
+			askBtw: pickerBtw?.ask,
 		});
 	} catch (error) {
 		if (error instanceof Error && error.name === "AbortError") throw new ToolAbortError("Ask input was cancelled");
 		throw error;
+	} finally {
+		pickerBtw?.dispose();
 	}
 	if (!dialogResult) {
 		ctx.abort();

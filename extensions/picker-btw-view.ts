@@ -5,33 +5,22 @@
 import {
 	type AutocompleteProvider,
 	getKeybindings,
-	Markdown,
-	matchesKey,
-	md,
 	type NativeChild,
 	type NativeNode,
 	type NativeScroll,
 	node,
-	replaceTabs,
 	span,
 	type TUI,
 	text,
-	wrapTextWithAnsi,
 } from "@oh-my-pi/pi-tui";
-import { getMarkdownTheme, theme } from "@oh-my-pi/pi-tui/theme";
+import { theme } from "@oh-my-pi/pi-tui/theme";
 import { AnswerEditor, externalEditorKey, scrollBox, withoutSideBorders } from "./ask-editor";
-import { type AskPickerBtw, type PickerBtwTurn, renderPickerBtwPrompt } from "./picker-btw";
+import { type AskPickerBtw, renderPickerBtwPrompt } from "./picker-btw";
+import { answerInto, isInterruptKey, newTurn, type SideQuestionTurn, SideQuestionTurnView } from "./side-question-view";
 
 /** Rows reserved for the question box. */
 const QUESTION_EDITOR_ROWS = 4;
 const EMPTY_THREAD = "Ask about this question or the conversation. The agent never sees the answer.";
-
-/** The interrupt key, as the question box's editor reads it (raw Escape when unbound). */
-function isInterrupt(data: string): boolean {
-	const keybindings = getKeybindings();
-	if (keybindings.getKeys("app.interrupt").length > 0) return keybindings.matches(data, "app.interrupt");
-	return matchesKey(data, "escape") || matchesKey(data, "esc");
-}
 
 export interface PickerBtwViewOptions {
 	tui: TUI;
@@ -50,17 +39,14 @@ export interface PickerBtwViewOptions {
 
 export class PickerBtwView {
 	readonly #options: PickerBtwViewOptions;
-	readonly #turns: PickerBtwTurn[] = [];
-	/** Thread id for the provider lineage; the epoch rotates after a cancelled or failed turn. */
-	readonly #threadId = crypto.randomUUID();
-	#epoch = 0;
+	readonly #turns: SideQuestionTurn[] = [];
+	readonly #turnView = new SideQuestionTurnView("Answering… esc cancels");
 	#abort: AbortController | undefined;
 	#editor: AnswerEditor | undefined;
 	#scroll = 0;
 	#follow = true;
 	#maxScroll = 0;
 	#threadRows = 1;
-	#markdown = new WeakMap<PickerBtwTurn, { source: string; markdown: Markdown }>();
 	/** PgUp/PgDn forwarded to Tern, which owns the scroller there. */
 	#nativeScroll: NativeScroll | undefined;
 	#disposed = false;
@@ -101,7 +87,7 @@ export class PickerBtwView {
 				// typed keeps its paste chips. The editor's own Esc jobs come first.
 				if (
 					this.#running() &&
-					isInterrupt(data) &&
+					isInterruptKey(data) &&
 					!editor.editor.isShowingAutocomplete() &&
 					!editor.editor.vimConsumesEscape()
 				) {
@@ -133,7 +119,7 @@ export class PickerBtwView {
 	}
 
 	invalidate(): void {
-		this.#markdown = new WeakMap();
+		this.#turnView.invalidate();
 		this.#editor?.invalidate?.();
 	}
 
@@ -177,27 +163,11 @@ export class PickerBtwView {
 		const thread =
 			this.#turns.length === 0
 				? [text([span(EMPTY_THREAD, "dim")], { wrap: "word" })]
-				: this.#turns.map((turn, index) => this.#describeTurn(turn, index));
+				: this.#turns.map((turn, index) => this.#turnView.describe(turn, index, false));
 		// Each new question brings the thread's end into view; Tern keeps the scroll position otherwise.
 		const content: NativeNode = { ...node("col", { gap: "sm" }, thread), reveal: { at: "end", n: this.#turns.length } };
 		const threadNode = scrollBox(content, { lines, fixed: true, key: "thread", scroll: this.#nativeScroll });
 		return this.#editor ? [threadNode, this.#editor] : [threadNode];
-	}
-
-	#describeTurn(turn: PickerBtwTurn, index: number): NativeNode {
-		const children: NativeChild[] = [
-			text([span("› ", "accent"), span(replaceTabs(turn.question).trim(), "muted")], { wrap: "word" }),
-		];
-		if (turn.answer.trim()) children.push(md(turn.answer, { stream: turn.status === "running" }));
-		if (turn.status === "running") {
-			children.push(node("spinner", { style: "dots", label: [span("Answering… esc cancels", "dim")] }));
-		} else if (turn.status === "cancelled") {
-			children.push(text([span("Cancelled", "warning")]));
-		} else if (turn.status === "error") {
-			const message = replaceTabs(turn.error ?? "Failed").replace(/\s+/g, " ").trim();
-			children.push(text([span(`Error: ${message}`, "error")], { wrap: "word" }));
-		}
-		return node("col", { gap: "xs" }, children, `turn${index}`);
 	}
 
 	#threadLines(width: number): string[] {
@@ -207,27 +177,9 @@ export class PickerBtwView {
 		const lines: string[] = [];
 		for (const turn of this.#turns) {
 			if (lines.length > 0) lines.push("");
-			const question = wrapTextWithAnsi(replaceTabs(turn.question).trim(), Math.max(1, width - 2));
-			question.forEach((line, index) => {
-				lines.push(`${theme.fg("accent", index === 0 ? "› " : "  ")}${theme.fg("muted", line)}`);
-			});
-			if (turn.answer.trim()) lines.push(...this.#answerMarkdown(turn).render(width));
-			if (turn.status === "running") lines.push(theme.fg("dim", "Answering… esc cancels"));
-			else if (turn.status === "cancelled") lines.push(theme.fg("warning", "Cancelled"));
-			else if (turn.status === "error") {
-				const message = replaceTabs(turn.error ?? "Failed").replace(/\s+/g, " ").trim();
-				lines.push(...wrapTextWithAnsi(theme.fg("error", `Error: ${message}`), width));
-			}
+			lines.push(...this.#turnView.lines(turn, width, false));
 		}
 		return lines;
-	}
-
-	#answerMarkdown(turn: PickerBtwTurn): Markdown {
-		const cached = this.#markdown.get(turn);
-		if (cached?.source === turn.answer) return cached.markdown;
-		const markdown = new Markdown(turn.answer, 0, 0, getMarkdownTheme(), { color: text => theme.fg("text", text) });
-		this.#markdown.set(turn, { source: turn.answer, markdown });
-		return markdown;
 	}
 
 	#page(direction: 1 | -1): void {
@@ -239,7 +191,7 @@ export class PickerBtwView {
 		this.#options.tui.requestRender();
 	}
 
-	#running(): PickerBtwTurn | undefined {
+	#running(): SideQuestionTurn | undefined {
 		const last = this.#turns.at(-1);
 		return last?.status === "running" ? last : undefined;
 	}
@@ -255,62 +207,25 @@ export class PickerBtwView {
 			this.open(text);
 			return;
 		}
-		const now = Date.now();
-		const turn: PickerBtwTurn = {
-			question,
-			promptText: renderPickerBtwPrompt(question, this.#options.draftAnswers()),
-			answer: "",
-			status: "running",
-			createdAt: now,
-			updatedAt: now,
-		};
-		const earlier = [...this.#turns];
+		const turn = newTurn(question);
 		this.#turns.push(turn);
 		const abort = new AbortController();
 		this.#abort = abort;
 		this.#follow = true;
 		this.open();
-		void this.#options
-			.ask({
-				promptText: turn.promptText,
-				earlier,
-				conversationKey: `picker-btw:${this.#threadId}:${this.#epoch}`,
-				signal: abort.signal,
-				onTextDelta: delta => {
-					if (turn.status !== "running") return;
-					turn.answer += delta;
-					turn.updatedAt = Date.now();
-					this.#options.tui.requestRender();
-				},
-			})
-			.then(
-				answer => {
-					if (turn.status !== "running") return;
-					turn.answer = answer;
-					turn.status = "complete";
-					turn.updatedAt = Date.now();
-				},
-				(error: unknown) => {
-					if (turn.status !== "running") return;
-					turn.status = "error";
-					turn.error = error instanceof Error ? error.message : String(error);
-					turn.updatedAt = Date.now();
-					this.#epoch += 1;
-				},
-			)
-			.finally(() => {
-				if (this.#abort === abort) this.#abort = undefined;
-				this.#options.tui.requestRender();
-			});
+		const promptText = renderPickerBtwPrompt(question, this.#options.draftAnswers());
+		void answerInto(
+			turn,
+			callbacks => this.#options.ask({ promptText, signal: abort.signal, ...callbacks }),
+			() => this.#options.tui.requestRender(),
+		).then(() => {
+			if (this.#abort === abort) this.#abort = undefined;
+		});
 	}
 
 	#cancel(): void {
 		const running = this.#running();
-		if (running) {
-			running.status = "cancelled";
-			running.updatedAt = Date.now();
-			this.#epoch += 1;
-		}
+		if (running) running.status = "cancelled";
 		this.#abort?.abort();
 		this.#abort = undefined;
 	}

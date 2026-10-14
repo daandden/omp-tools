@@ -1,7 +1,8 @@
 # omp-tools
 
-Local OMP adapters: flexible questions, Codex Images `generate_image`, and
-advisor concern follow-up. Formerly `omp-ask`.
+Local OMP adapters: flexible questions, Codex Images `generate_image`, advisor
+concern follow-up, and read-only side questions (`/btw` and the Picker btw).
+Formerly `omp-ask`.
 
 ## `ask`
 
@@ -86,21 +87,23 @@ model after the answer text, labeled `[Image #N]` to match.
 `?` asks a Picker btw: a side question about the ask or the conversation,
 answered inside the picker. The options give way to a thread with a question
 box below it (the same editor as `Other`, without image paste). Enter asks. The
-answer streams into the thread, and later questions in the same ask see the
-earlier ones. The side question also sees your answers so far (ticked options,
-`Other` text, notes), so "is my pick a good idea?" works. Esc while an answer
-streams cancels it and keeps the partial text. The next Esc returns to the
-options with your answers untouched, and `?` reopens the thread. PgUp/PgDn
-scroll a long thread. The thread is discarded when the ask ends, and the agent
-never sees it. To tell the agent something, put it in `Other` or a note.
+answer streams into the thread, and later questions in the same ask follow up
+on the earlier ones. The side question also sees your answers so far (ticked
+options, `Other` text, notes), so "is my pick a good idea?" works. It can look
+things up with read-only tools (see [Side questions](#side-questions)); each
+answer shows an "N tool calls" line, which opens with a click in Tern. Esc
+while an answer streams cancels it and keeps the partial text. The next Esc
+returns to the options with your answers untouched, and `?` reopens the
+thread. PgUp/PgDn scroll a long thread. The thread is discarded when the ask
+ends, and the agent never sees it. To tell the agent something, put it in
+`Other` or a note.
 
-A Picker btw runs through the same side-request pipeline as OMP's `/btw`
-(the conversation so far, no tools run, nothing added to the session), but it
-is not OMP's `/btw`: it is not saved to BTW history and cannot be branched or
-copied from a panel. It does not change your main prompt. `ask.timeout` stops
-when you press `?` and stays stopped (the title reads `Ask (timer paused)`)
-until your next key in the options, which restarts it in full. On an OMP
-without side requests, `? btw` is not offered.
+A Picker btw is not OMP's `/btw`: it is not saved to BTW history and cannot be
+branched or copied from a panel. It does not change your main prompt.
+`ask.timeout` stops when you press `?` and stays stopped (the title reads
+`Ask (timer paused)`) until your next key in the options, which restarts it in
+full. When side questions cannot run (no saved session, a subagent),
+`? btw` is not offered.
 
 ### Outside the TUI
 
@@ -305,6 +308,37 @@ Limits:
 - Only the Picker releases. A delegated native `ask` (RPC, ACP, subagents)
   keeps OMP's timing.
 
+## Side questions
+
+`/btw <question>` in the main editor asks a side question that can look things
+up. It replaces OMP's `/btw` answer for that form; bare `/btw` still opens OMP's
+BTW history, and autocomplete is OMP's.
+
+- Tools: read, grep, glob, find, and web_search, each only for calls OMP rates
+  as reads. Any other call is refused, and the model sees a tool error that
+  says so. Each tool keeps its own size limits, and there is no cap on rounds.
+- Model and context: the main agent's model, thinking level, system prompt,
+  and conversation so far, copied when the thread starts. The first request
+  reuses the main agent's prompt cache (checked on Anthropic and Codex).
+- Privacy: only you see the answers. Nothing is added to the main session, and
+  the agent never sees a side question.
+- Panel: answers show in a panel above the editor, and the editor keeps focus.
+  Tool calls fold into one "N tool calls" line. With the editor empty, `t`
+  opens or folds them (a click on the line works in Tern), and Esc cancels a
+  running answer or closes the panel.
+- Threads: a later `/btw` follows up in the same thread, also after Esc closed
+  the panel. Your next main prompt ends the thread and clears the panel when
+  the agent takes it (a prompt queued while the agent works ends it then). If
+  an answer is still running at that point, it finishes and shows, but takes no
+  follow-up; the next `/btw` starts a new thread.
+- Images attached to `/btw` are not sent.
+- Where it applies: the interactive TUI with a saved session. In a focused
+  subagent view, RPC, ACP, or print mode, `/btw` stays OMP's.
+
+A side question runs as a separate agent session (a copy of the main
+transcript in the session folder, deleted when the thread ends), so it costs
+tokens like a short agent turn.
+
 ## Install
 
 From the repository root:
@@ -325,16 +359,17 @@ install a second loose copy of the ask extension.
 ```bash
 bun install --ignore-scripts
 bun run check    # warns if SDK types differ from `omp --version`, then typechecks
-bun test         # generate_image and advisor-concern-wake behavior tests
+bun test         # generate_image, advisor-concern-wake, and /btw parsing tests
 bun run update   # runs omp update, installs the newest SDK types, then checks
 ```
 
 Runtime value imports of `@oh-my-pi/*` resolve to the running OMP's own modules.
 Development types track the `latest` SDK release. Run `bun run update` so omp
 and the types move together. `bun test` runs `generate_image` against a stubbed
-endpoint and `advisor-concern-wake` through its event handlers. Typechecking
-and tests do not load the plugin into OMP, so a change to registration or the
-picker needs a check in a fresh OMP session.
+endpoint, `advisor-concern-wake` through its event handlers, and the `/btw`
+question parser. Typechecking and tests do not load the plugin into OMP, so a
+change to registration, the picker, or side questions needs a check in a fresh
+OMP session.
 
 Fresh OMP sessions verified this behavior:
 
@@ -366,3 +401,14 @@ Fresh OMP sessions verified this behavior:
   format while the Picker was open. After Submit, the advisor card showed
   below the `ask` result, the session file held it between the `ask` result
   and the agent's reply, and the agent quoted the `<advisory>` text.
+- OMP 18.10.4 in a headless Tern 0.8.3 window: side questions. `/btw` answered
+  with read, also when sent while the main agent was still running; a follow-up
+  stayed in the thread; `t` opened and folded the tool calls; Esc cancelled a
+  running answer and then closed the panel; a main prompt sent during an
+  answer let it finish and ended the thread; the next main prompt cleared the
+  panel and a new `/btw` started a fresh thread. A Picker btw used grep while
+  `ask` waited, and its thread file was deleted when the Picker closed. Called
+  directly with a prompt that asked for them, bash and write were refused and
+  created no files while read ran. The mirror's first request read 25126
+  cached tokens, the full main prefix. The same with `PI_TUI_NATIVE=0`
+  verified the text panel.

@@ -8,14 +8,16 @@ as full Markdown in the interactive picker; outside the TUI it delegates to
 native `ask`. It replaces native `generate_image` with a tool that calls the Codex
 Images endpoint directly with Codex OAuth. It also wakes the agent for advisor
 concerns that arrive after its final answer, and sends the concerns that OMP
-deferred during a run to the agent when the user answers the picker.
+deferred during a run to the agent when the user answers the picker. It takes
+over `/btw <question>` with a Side question that may use read-only tools, and
+the Picker btw asks the same kind of Side question.
 
 ## Architecture & Data Flow
 
 - `package.json` registers `extensions/flexible-ask.ts`,
-  `extensions/generate-image.ts`, and `extensions/advisor-concern-wake.ts` as
-  entry points. OMP also loads `skills/*/SKILL.md` from the plugin root (the
-  `omp-plugins` discovery provider, priority 90).
+  `extensions/generate-image.ts`, `extensions/advisor-concern-wake.ts`, and
+  `extensions/btw.ts` as entry points. OMP also loads `skills/*/SKILL.md` from
+  the plugin root (the `omp-plugins` discovery provider, priority 90).
 - The extension registers a shadow `ask` description/schema. In `ctx.mode ===
   "tui"` with `ctx.hasUI`, it shows its own picker (`extensions/ask-dialog.ts`)
   through `ctx.ui.custom` and formats results with native wording and details.
@@ -25,17 +27,60 @@ deferred during a run to the agent when the user answers the picker.
   (reserved or duplicate labels, duplicate ids), it delegates to
   `ctx.invokeTool(params, { signal, onUpdate })` so native errors and fallbacks
   apply unchanged.
+- A Side question (`extensions/side-question.ts`) is a full agent run in a
+  mirror session built the way OMP's `/tan` builds one
+  (`tan-command-controller.ts`): `SessionManager.forkFrom` the main transcript
+  (with `repairInterruptedTail`, since the main agent may be mid-turn) into
+  `<session dir>/SideQuestion-<uuid>.jsonl`, then `createAgentSession` with the
+  main session's `systemPrompt`, model, thinking level, `getActiveToolNames()`,
+  and `providerPromptCacheKey`, so the first request reuses the main prompt
+  cache. Use `getActiveToolNames`, not `getEnabledToolNames`: the latter makes
+  xd://-mounted tools top-level and changed the prefix (cache read fell from
+  the full ~22k prefix to 7k in the spike). On Codex, `streamFn` is wrapped to
+  add `parentSessionId` (OMP 18.10 stream option, missing from the 18.8 types)
+  and `preferWebsockets: false`; over a new websocket the first request missed
+  the cache 4 of 4 times. The mirror gets its own `AgentRegistry` (out of the
+  Agent Hub), subagent settings, the parent's prepared extensions, and an
+  inline gate extension: a `tool_call` handler that blocks every tool outside
+  read/grep/glob/find/web_search and every call `resolveToolTier`
+  (`/tools/approval`) does not rate `"read"`. The gate runs at call time
+  because a smaller tool list breaks the cached prefix. Under OMP's Code Mode,
+  tools reachable only through `eval`'s `tool.*` bridge cannot run, since
+  `eval` is blocked. The mirror runs with `enableLsp` and `enableMCP` off, so
+  it starts no servers; a main session with top-level LSP or MCP tools then
+  gets a shorter tool list, and its first request likely misses the cache (not
+  measured). The answer is the last
+  assistant message's text; the fork file is deleted on dispose. A Side
+  question needs a live main session (`AgentRegistry.global()`) and a session
+  file; without them `/btw` falls through to native and Picker btw is off.
+- `/btw <question>` (`extensions/btw.ts`): OMP skips extension commands named
+  like built-ins, so the plugin catches the text in the `input` event, which
+  runs before built-in dispatch (docs/adr/0001), and returns `{ handled: true }`
+  only for `source: "interactive"` in the TUI. Bare `/btw` (the history),
+  autocomplete, the focused-subagent path (it skips `input` handlers), and RPC
+  `btw` stay native. One `BtwCycle` per session holds the thread: a later
+  `/btw` follows up on the same mirror; `before_agent_start` (a main prompt)
+  ends it, or, while an answer runs, marks it closed so the answer finishes,
+  shows, and the thread is disposed afterwards. Session switch, branch, tree,
+  and shutdown dispose it. The panel (`extensions/btw-panel.ts`) is a widget
+  above the editor (`setWidget`, `placement: "aboveEditor"`); the editor keeps
+  focus. Keys come through `ctx.ui.onTerminalInput` and act only while the
+  panel shows and the editor is empty: `app.interrupt` cancels a running
+  answer or hides the panel, `t` opens or folds the tool calls. In Tern the
+  panel describes a `col` with native `/btw`'s role `omp.overlay.btw` (Tern
+  styles it as that sheet; a plain `col` let the composer's meter row overlap
+  the hints), a `scrollBox` capped at 40% of the rows with `reveal` at the
+  end, and the tool calls as a collapsible `section` (a click opens it). The
+  panel sends its own stylesheet (`omp-tools-btw`, `SCROLL_BOX_CSS` from
+  `ask-editor.ts`) so list numbers are not clipped.
 - `?` in the picker opens a Picker btw (`extensions/picker-btw-view.ts`): a
-  side question answered inside the picker through `ctx.runEphemeralTurn`
-  (`extensions/picker-btw.ts`, prompt `picker-btw.md` with the unsubmitted
-  answers from `formatAskAnswers`). It is not native `/btw`: extensions cannot
-  start that (InteractiveMode's BtwController) or register a `btw` command
-  (built-in names are reserved and skipped). The thread replays earlier turns as
-  `history` under one `conversationKey` per ask, rotated after a cancelled or
-  failed turn; the answer is the streamed text, because `replyText` is
-  deduplicated and capped at 4 KiB. `?` disposes the countdown and the next key
-  in the options restarts it; the view and any running turn are disposed with
-  the dialog. `?` is off when `runEphemeralTurn` is missing.
+  Side question answered inside the picker (`extensions/picker-btw.ts`, prompt
+  `picker-btw.md` with the unsubmitted answers from `formatAskAnswers`). It is
+  not native `/btw`. Each ask gets one thread (`pickerBtwRunner` in
+  `flexible-ask.ts`), opened on the first question, followed up by later ones,
+  and disposed when the dialog closes; a cancelled turn keeps the thread.
+  `?` disposes the countdown and the next key in the options restarts it.
+  `?` is off when Side questions cannot run.
 - In Tern (terminals that speak the Tern Surface Protocol), OMP calls a
   component's `describe(cx)` instead of `render()`. The picker describes a
   `col` with role `omp.editor` (in the composer's place, as pi-tui's
@@ -150,7 +195,18 @@ deferred during a run to the agent when the user answers the picker.
 - `extensions/ask-images.ts`: clipboard and path image loading for the picker's
   editors, using the host's clipboard/image-loading helpers.
 - `extensions/picker-btw.ts`, `picker-btw.md`, `picker-btw-view.ts`: the
-  Picker btw side-turn runner, its prompt, and its thread view.
+  Picker btw runner (one Side question thread per ask), its prompt, and its
+  thread view.
+- `extensions/side-question.ts`: `SideQuestionThread` (the mirror session, the
+  read-only gate, streamed text and tool-call callbacks; an already-aborted
+  signal is rejected before any request), `LazySideQuestionThread` (opened on
+  first use, shared by both callers), and `sideQuestionsAvailable`.
+- `extensions/side-question-view.ts`: what both views share: the turn
+  (`SideQuestionTurn`, `answerInto`), the interrupt key, and
+  `SideQuestionTurnView`, which draws a turn with its folded "N tool calls"
+  line (classic lines, or a Tern collapsible `section`).
+- `extensions/btw.ts`, `btw.md`, `btw-panel.ts`: the `/btw` takeover
+  (`parseBtwQuestion`, `BtwCycle`, keys), its prompt, and its panel.
 - `extensions/flexible-ask.md`: static model-facing description; keep aligned
   with upstream `packages/coding-agent/src/prompts/tools/ask.md` except the
   option count (the plugin states no number instead of 2–5).
@@ -173,8 +229,10 @@ deferred during a run to the agent when the user answers the picker.
   any `model` with no visible effect, so rules stay model-agnostic), and
   `codex-image-backend-model.md` (live check of which model serves; inconclusive).
 - `test/`: `bun test` behavior tests for `generate_image` through `execute`
-  with a stubbed `fetch`, and for `advisor-concern-wake` through its event
-  handlers with a mocked `@oh-my-pi/pi-coding-agent/judgment`.
+  with a stubbed `fetch`, for `advisor-concern-wake` through its event
+  handlers with a mocked `@oh-my-pi/pi-coding-agent/judgment`, and for
+  `parseBtwQuestion`. The gate, the thread cycle, the mirror session, and the
+  panel have live smoke only.
 - `extensions/advisor-concern-wake.ts`: listens for preserved `advisor` cards
   (`message_end`, `customType: "advisor"`) with `concern` notes and, once the
   session is idle, sends a short wake prompt with `deliverAs: "aside"`. The
@@ -278,7 +336,8 @@ imports of `@oh-my-pi/*` resolve to the host's in-process modules through OMP's
 extension specifier shim; in compiled binaries only exported subpaths are served
 (`@oh-my-pi/pi-tui`, `/chrome`, `/render`, `/theme`,
 `@oh-my-pi/pi-coding-agent`, `/judgment`, `/modes/*`, `/tools/*`, `/utils/*`,
-and the `@oh-my-pi/pi-utils` root; `/judgment` was checked in OMP 18.4.8). The root `./*`
+and the `@oh-my-pi/pi-utils` root; `/judgment` was checked in OMP 18.4.8,
+`/tools/approval` in OMP 18.10.4). The root `./*`
 wildcard is not served, so never import files such as
 `@oh-my-pi/pi-tui/overlays/*`, `/keybinding-matchers`, `/chrome/form-theme`, or
 `/prompt/*`; they load a second copy from node_modules and fail. The
@@ -291,8 +350,8 @@ the `"latest"` specifier; `bun.lock` records the resolved version, so update
 through `bun run update` to keep types and the installed omp in step.
 
 Run typechecking and `bun test` after code changes; tests cover
-`generate_image` and `advisor-concern-wake`, and there is no repository CI.
-Registration/ask changes
+`generate_image`, `advisor-concern-wake`, and `parseBtwQuestion`, and there is
+no repository CI. Registration, ask, and Side question changes
 require a fresh-session OMP smoke; typechecking alone does not exercise host
 integration or UI. OMP 18.3.1 was used for the latest fresh-session picker and
 rendering smoke; OMP 18.4.4 for the live `generate_image` generate and edit
@@ -300,7 +359,11 @@ smoke; OMP 18.4.8 for the host judge call behind the concern-wake checks; OMP
 18.6.1 for the Picker btw; OMP 18.8.0 for the picker key flow and Submit note;
 OMP 18.8.6 with Tern 0.6.3 for the Tern views; OMP 18.10.4 with Tern 0.8.3 for
 the Picker release (a deferred concern written by hand to the session's
-`__advisor.jsonl` while the Picker was open). A headless Tern window drives
+`__advisor.jsonl` while the Picker was open) and for Side questions (`/btw`,
+Picker btw, and the gate checked by a throwaway extension in `extensions/`
+calling `SideQuestionThread.ask` directly, because the `/btw` prompt makes the
+model refuse before it calls a blocked tool; a file outside the plugin cannot
+resolve `@oh-my-pi/*`). A headless Tern window drives
 that smoke: `tern serve --control <sock>`, then `tern ctl --control <sock>`
 `run`, `type`, `key`, `click '<css selector>'`, and `shot <name>` (PNG plus a
 layout JSON of every element). `PI_TUI_NATIVE=0` in the same window checks the

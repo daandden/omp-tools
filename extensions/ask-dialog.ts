@@ -59,7 +59,7 @@ import {
 } from "@oh-my-pi/pi-tui/chrome";
 import { disambiguateDisplayLabels, sanitizeCarriageReturns } from "@oh-my-pi/pi-tui/render";
 import { getMarkdownTheme, highlightCode, theme } from "@oh-my-pi/pi-tui/theme";
-import { AnswerEditor, externalEditorKey, scrollBox, withoutSideBorders } from "./ask-editor";
+import { AnswerEditor, externalEditorKey, SCROLL_BOX_CSS, scrollBox, withoutSideBorders } from "./ask-editor";
 import { loadImagePaths, type PasteOutcome, type PastedImage, readClipboardPaste } from "./ask-images";
 import { formatAskAnswers } from "./ask-result";
 import type { AskPickerBtw } from "./picker-btw";
@@ -390,21 +390,13 @@ const NATIVE_SHEET_NAME = "omp-tools-ask";
  * terminal's font size and row height (`--sf-fs`, `--sf-lh`, read on the
  * surface before the composer sets its own), one row per line, 2px of padding
  * above and below for the highlight fill, and no gap between rows.
- *
- * Tern's Markdown gives a list 2 cells of indent and hangs its markers left of
- * that (`1. ` in the terminal font is wider), into the page margin in the
- * transcript. A scroll box clips at its edge, so it takes that room inside:
- * padding on the scroller, cancelled by a negative margin so nothing moves.
  */
 const NATIVE_SHEET = `
 .sf-region {
 	--omp-tools-fs: var(--sf-fs, 13px);
 	--omp-tools-lh: var(--sf-lh, 17px);
 }
-.sf-list[data-role='omp-tools.ask-body'] > .sf-list-scroll {
-	margin-left: calc(-2 * var(--sf-cw));
-	padding-left: calc(2 * var(--sf-cw));
-}
+${SCROLL_BOX_CSS}
 .sf-list[data-role='omp-tools.ask-body'] > .sf-list-scroll > .sf-list-slot > .sf-col { gap: 0; }
 .sf-list[data-role='omp-tools.ask-body'] [data-role='omp.ask.question'] { margin-bottom: 6px; }
 [data-role^='omp-tools.ask-row'] {
