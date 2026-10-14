@@ -32,6 +32,18 @@ _Avoid_: btw (unqualified)
 A side question asked from inside the Picker while an `ask` waits; answered like **/btw** but shown and kept only in the Picker.
 _Avoid_: btw (unqualified), our /btw, custom /btw
 
+**Advisor note**:
+One item of advice from OMP's advisor, with a severity: nit, concern, or blocker. A concern is an advisor note of severity concern.
+_Avoid_: advice (as a countable item), advisory
+
+**Advisor card**:
+The message in the chat that shows one or more **Advisor notes** to the user and the main agent.
+_Avoid_: advisor message, advice card
+
+**Deferred note**:
+An **Advisor note** that OMP holds back while the agent's run continues and sends only at the agent's final answer. Blocker notes are never deferred. Sending a deferred note earlier is a release.
+_Avoid_: held note, withheld note, queued note
+
 **generate_image**:
 This plugin's image tool. It replaces native `generate_image`, which the user disables.
 _Avoid_: custom image tool, image wrapper

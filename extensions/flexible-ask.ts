@@ -29,6 +29,7 @@ import type { NativeToolView } from "@oh-my-pi/pi-tui/tools/renderer";
 import { sanitizeCarriageReturns } from "@oh-my-pi/pi-tui/render";
 import { type MarkdownAskResult, showMarkdownAskDialog } from "./ask-dialog";
 import { formatAskAnswers } from "./ask-result";
+import { PICKER_ANSWERED, type PickerAnswered } from "./deferred-notes";
 import { pickerBtwRunner } from "./picker-btw";
 import flexibleAskDescription from "./flexible-ask.md" with { type: "text" };
 
@@ -280,7 +281,10 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 			if (ctx.mode !== "tui" || !ctx.hasUI || nativeRejects(questions)) {
 				return ctx.invokeTool<AskToolDetails>(params, { signal, onUpdate });
 			}
-			return askWithMarkdownDialog(ctx, questions, signal, () => hostAutocomplete);
+			const result = await askWithMarkdownDialog(ctx, questions, signal, () => hostAutocomplete);
+			// advisor-concern-wake releases deferred concerns on this, before the result returns.
+			pi.events.emit(PICKER_ANSWERED, { sessionFile: ctx.sessionManager.getSessionFile() } satisfies PickerAnswered);
+			return result;
 		},
 	};
 	// `concurrency` and `mergeCallAndResult` are not part of the extension

@@ -29,6 +29,10 @@
   cycle stop when a concern repeats an earlier one (checked by OMP's judge,
   TypeSafe Jev, or by shared words without it), when the last woken turn
   changed no files, or after 6 wakes; the last two cases notify you.
+- Sent the advisor concerns that OMP defers during a run to the agent when you
+  answer the Picker, as an advisor card, instead of at the agent's final
+  answer. The extension reads them from OMP's advisor transcript. The repeat
+  card at the final answer does not wake the agent.
 - Added `generate_image`, replacing native `generate_image`. It calls the Codex
   Images endpoint directly with a ChatGPT/Codex login, the way the Codex CLI
   does: the prompt goes unchanged and without system instructions, the model

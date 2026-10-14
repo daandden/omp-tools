@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 
 /** Index of the earlier concern the fake judge matches, or "none". */
@@ -29,28 +32,55 @@ mock.module("@oh-my-pi/pi-coding-agent/judgment", () => ({
 }));
 
 const { default: advisorConcernWake } = await import("../extensions/advisor-concern-wake");
+const { PICKER_ANSWERED } = await import("../extensions/deferred-notes");
 
 const STALLED = /changed no files after the last concern/;
 const CEILING = /6 wakes in this prompt cycle/;
 
+interface Sent {
+	customType: string;
+	content: string;
+	details?: { notes: { note: string; severity?: string }[] };
+	deliverAs?: string;
+}
+
 interface Harness {
-	wakes: { content: string }[];
+	wakes: Sent[];
+	releases: Sent[];
 	notices: string[];
 	concern(note: string): Promise<void>;
 	/** The agent turn the wake started, with the tools it ran. */
 	wokenTurn(tools: { name: string; isError?: boolean }[]): void;
 	userPrompt(): void;
+	/** A user prompt whose run is still going: core defers concerns until it ends. */
+	startRun(): void;
+	/** A prompt typed while the run goes on: core emits `before_agent_start` but no `agent_start`. */
+	queuedPrompt(): void;
+	/** The advisor answers one `advise` call; core logs it to the advisor transcript. */
+	advise(note: string, severity: "nit" | "concern" | "blocker", ack: "deferred" | "delivered"): void;
+	pickerAnswered(): void;
 }
+
+let sessionDir: string;
 
 function harness(): Harness {
 	const handlers = new Map<string, ((event: unknown, ctx: ExtensionContext) => unknown)[]>();
-	const wakes: { content: string }[] = [];
+	const bus = new Map<string, ((data: unknown) => void)[]>();
+	const wakes: Sent[] = [];
+	const releases: Sent[] = [];
 	const notices: string[] = [];
+	const sessionFile = `${sessionDir}.jsonl`;
 	const pi = {
 		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => {
 			handlers.set(name, [...(handlers.get(name) ?? []), handler]);
 		},
-		sendMessage: (message: { content: string }) => wakes.push(message),
+		events: {
+			on: (channel: string, handler: (data: unknown) => void) => {
+				bus.set(channel, [...(bus.get(channel) ?? []), handler]);
+			},
+		},
+		sendMessage: (message: Sent, options: { deliverAs?: string }) =>
+			(message.customType === "advisor" ? releases : wakes).push({ ...message, deliverAs: options.deliverAs }),
 	};
 	const ctx = {
 		mode: "tui",
@@ -62,19 +92,20 @@ function harness(): Harness {
 		clearTimer: (timer: Timer) => clearInterval(timer),
 		modelRegistry: {},
 		model: undefined,
-		sessionManager: { getSessionId: () => "session" },
+		sessionManager: { getSessionId: () => "session", getSessionFile: () => sessionFile },
 	} as unknown as ExtensionContext;
 	const emit = (name: string, event: unknown = {}) => {
 		for (const handler of handlers.get(name) ?? []) handler(event, ctx);
 	};
+	const card = (notes: { note: string; severity: string }[]) =>
+		emit("message_end", { message: { role: "custom", customType: "advisor", details: { notes } } });
 	advisorConcernWake(pi as unknown as ExtensionAPI);
 	return {
 		wakes,
+		releases,
 		notices,
 		async concern(note) {
-			emit("message_end", {
-				message: { role: "custom", customType: "advisor", details: { notes: [{ note, severity: "concern" }] } },
-			});
+			card([{ note, severity: "concern" }]);
 			await Bun.sleep(30);
 		},
 		wokenTurn(tools) {
@@ -91,8 +122,39 @@ function harness(): Harness {
 			emit("message_start", { message: { role: "assistant" } });
 			emit("agent_end");
 		},
+		startRun() {
+			emit("before_agent_start");
+			emit("agent_start");
+			emit("message_start", { message: { role: "assistant" } });
+		},
+		queuedPrompt() {
+			emit("before_agent_start");
+		},
+		advise(note, severity, ack) {
+			const text = ack === "deferred" ? "Queued for the end of the turn. Do not re-raise." : "Delivered.";
+			const message = {
+				role: "toolResult",
+				toolCallId: `call-${note.length}`,
+				toolName: "advise",
+				content: [{ type: "text", text }],
+				details: { note, severity },
+				isError: false,
+			};
+			fs.appendFileSync(path.join(sessionDir, "__advisor.jsonl"), `${JSON.stringify({ type: "message", message })}\n`);
+		},
+		pickerAnswered() {
+			for (const handler of bus.get(PICKER_ANSWERED) ?? []) handler({ sessionFile });
+		},
 	};
 }
+
+beforeEach(() => {
+	sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-tools-wake-"));
+});
+
+afterEach(() => {
+	fs.rmSync(sessionDir, { recursive: true, force: true });
+});
 
 beforeEach(() => {
 	nativeJudge = true;
@@ -204,5 +266,61 @@ describe("advisor concern wake", () => {
 		await arriving;
 		expect(h.wakes).toHaveLength(1);
 		expect(h.notices).toEqual([]);
+	});
+});
+
+describe("release of deferred concerns at a Picker answer", () => {
+	test("steers the run's deferred concerns as one advisor card, without nits, delivered notes, or earlier runs", () => {
+		const h = harness();
+		h.advise("An earlier run's concern.", "concern", "deferred");
+		h.startRun();
+		h.advise("The parser drops the last line.", "concern", "deferred");
+		h.advise("Rename this variable.", "nit", "deferred");
+		h.advise("The cache key ignores the locale.", "concern", "delivered");
+		h.advise("The test for the parser is missing.", "concern", "deferred");
+		h.pickerAnswered();
+		expect(h.releases).toHaveLength(1);
+		expect(h.releases[0].deliverAs).toBe("steer");
+		expect(h.releases[0].details?.notes.map(n => n.note)).toEqual([
+			"The parser drops the last line.",
+			"The test for the parser is missing.",
+		]);
+		expect(h.releases[0].content).toContain('<advisory severity="concern"');
+		expect(h.releases[0].content).toContain("The parser drops the last line.");
+		expect(h.wakes).toEqual([]);
+	});
+
+	test("releases each concern once and never one that a card already carried", async () => {
+		const h = harness();
+		h.startRun();
+		h.advise("The parser drops the last line.", "concern", "deferred");
+		await h.concern("The cache key ignores the locale.");
+		h.advise("The cache key ignores the locale.", "concern", "deferred");
+		h.pickerAnswered();
+		h.pickerAnswered();
+		expect(h.releases.map(r => r.details?.notes.map(n => n.note))).toEqual([["The parser drops the last line."]]);
+	});
+
+	test("the final-answer card with a released concern does not wake, but a new concern on it does", async () => {
+		const h = harness();
+		h.startRun();
+		h.advise("The parser drops the last line.", "concern", "deferred");
+		h.pickerAnswered();
+		// The judge calls every concern new, so only the release record keeps the repeat from waking.
+		await h.concern("The parser drops the last line.");
+		expect(h.wakes).toEqual([]);
+		await h.concern("The README does not describe the timeout option.");
+		expect(h.wakes).toHaveLength(1);
+		expect(h.notices).toEqual([]);
+	});
+
+	test("a prompt queued during the run keeps the release, so the final-answer card does not wake", async () => {
+		const h = harness();
+		h.startRun();
+		h.advise("The parser drops the last line.", "concern", "deferred");
+		h.pickerAnswered();
+		h.queuedPrompt();
+		await h.concern("The parser drops the last line.");
+		expect(h.wakes).toEqual([]);
 	});
 });

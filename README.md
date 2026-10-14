@@ -236,12 +236,13 @@ generate_image:
 
 ## Advisor concern follow-up
 
-OMP steers an advisor `concern` into the agent while it works, but a concern
-that arrives after the final answer only shows as a card until your next
-prompt. This extension starts a new turn for such concerns and asks the agent to
-verify each one and fix any that hold. The card is already in the agent's
-context, so the wake message only points at it instead of repeating the notes.
-Nits stay passive, and blockers already wake the agent in OMP.
+While the agent works, OMP defers advisor nits and concerns: it sends them only
+at the final answer. After the final answer, a concern only shows as a card
+until your next prompt. This extension starts a new turn for such concerns and
+asks the agent to verify each one and fix any that hold. The card is already in
+the agent's context, so the wake message only points at it instead of
+repeating the notes. Nits stay passive, and blockers already wake the agent in
+OMP.
 
 It sends the wake the same way OMP sends a note that starts a turn
 when idle, so OMP's own rules still apply. After you interrupt a run (Esc), or
@@ -281,6 +282,28 @@ Limits:
   print mode prints the final answer and only records late advisor notes before
   exiting, so a new turn's answer would never be shown. Late concerns there stay
   as recorded advisor notes.
+
+### Release at a Picker answer
+
+When you answer the Picker (Submit, or the timeout's pick), the extension sends
+the concerns that OMP deferred in the current run to the agent at once, as an
+advisor card. OMP sends a blocker the same way. The agent reads the concerns in
+its next model call, not at its final answer. Nits stay deferred. Concerns
+that the advisor writes after your answer keep OMP's timing.
+
+At the final answer, OMP still sends the released concerns, so their card shows
+a second time. That card does not wake the agent. A release is not a wake: it
+does not count toward the 6-wake limit or check 2.
+
+Limits:
+
+- OMP keeps deferred notes in a private list in memory. The extension reads
+  them from OMP's advisor transcript (`__advisor*.jsonl` in the session
+  folder). That format is private to OMP (checked in 18.10.4). If an OMP update
+  changes it, nothing is released and concerns keep OMP's timing.
+- Extensions cannot see plan mode, so a release steers in plan mode too.
+- Only the Picker releases. A delegated native `ask` (RPC, ACP, subagents)
+  keeps OMP's timing.
 
 ## Install
 
@@ -338,3 +361,8 @@ Fresh OMP sessions verified this behavior:
 - OMP 18.8.9 in a headless Tern 0.7.2 window: each question's box as tall as
   its content up to the cap, a long question scrolling at the cap, and the
   same in the text picker.
+- OMP 18.10.4 in a headless Tern 0.8.3 window: the release at a Picker answer.
+  A deferred concern was written to the session's `__advisor.jsonl` in OMP's
+  format while the Picker was open. After Submit, the advisor card showed
+  below the `ask` result, the session file held it between the `ask` result
+  and the agent's reply, and the agent quoted the `<advisory>` text.

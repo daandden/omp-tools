@@ -7,7 +7,8 @@ drop the model-facing option count and show questions
 as full Markdown in the interactive picker; outside the TUI it delegates to
 native `ask`. It replaces native `generate_image` with a tool that calls the Codex
 Images endpoint directly with Codex OAuth. It also wakes the agent for advisor
-concerns that arrive after its final answer.
+concerns that arrive after its final answer, and sends the concerns that OMP
+deferred during a run to the agent when the user answers the picker.
 
 ## Architecture & Data Flow
 
@@ -205,6 +206,29 @@ concerns that arrive after its final answer.
   headless advisor drain after the last prompt (`prepareForHeadlessAdvisorDrain`),
   prints the final text, then disposes, so a woken turn would never be emitted.
   `advisor-concern-wake.md` holds the wake prompt.
+  Release: on `PICKER_ANSWERED` (emitted on `pi.events` by the Picker path of
+  `flexible-ask.ts` after Submit or a timeout pick, before `execute` returns)
+  it steers the run's deferred concerns as a `customType: "advisor"` card
+  (`deliverAs: "steer"`, `triggerTurn`, `details.releasedBy: "omp-tools"`),
+  the way core steers a blocker; the loop reads it at the boundary after
+  `ask`. Core's deferred list (`AdviseTool#deferredNotes`, OMP 18.10.4) is
+  private and in memory; core flushes it only at the run's terminal boundary.
+  Keep the `advisor` custom type: core keeps such cards on interrupt and leaves
+  them out of the advisor's review input. The handler is synchronous so the
+  steer is queued before `ask` returns. A release is not a wake (checks 2 and
+  3 skip it); released notes join `woken`, and a later card's concern with the
+  same text does not wake. `agent_start` snapshots the transcript sizes and
+  clears the notes that cards carried in the run (never released) and the
+  release receipts. Receipts live per run, not per prompt cycle: a prompt
+  queued during a run fires `before_agent_start` (agent-core dequeue, then
+  `#prepareAgentStart`) with no `agent_start`, and the run's final card follows.
+- `extensions/deferred-notes.ts`: reads deferred concerns from
+  `<session dir>/__advisor*.jsonl` after a run's start: `advise` tool results
+  whose text is core's `ADVISOR_ACK_DEFERRED` and whose `details` hold the
+  note. Core's recorder appends each advisor message as it finalizes. The
+  format and the acknowledgment text are private to OMP; check them when OMP
+  changes the advisor. Also `formatAdvisories`, a copy of core's
+  `formatAdvisorBatchContent` (not served).
 - `extensions/concern-match.ts`: check 1 for the concern wake. `judgeRepeats`
   builds one judge request (state: `earlier_concerns` and `new_concerns`; one
   Choice per new concern over the earlier ids plus `none`), and
@@ -274,7 +298,9 @@ integration or UI. OMP 18.3.1 was used for the latest fresh-session picker and
 rendering smoke; OMP 18.4.4 for the live `generate_image` generate and edit
 smoke; OMP 18.4.8 for the host judge call behind the concern-wake checks; OMP
 18.6.1 for the Picker btw; OMP 18.8.0 for the picker key flow and Submit note;
-OMP 18.8.6 with Tern 0.6.3 for the Tern views. A headless Tern window drives
+OMP 18.8.6 with Tern 0.6.3 for the Tern views; OMP 18.10.4 with Tern 0.8.3 for
+the Picker release (a deferred concern written by hand to the session's
+`__advisor.jsonl` while the Picker was open). A headless Tern window drives
 that smoke: `tern serve --control <sock>`, then `tern ctl --control <sock>`
 `run`, `type`, `key`, `click '<css selector>'`, and `shot <name>` (PNG plus a
 layout JSON of every element). `PI_TUI_NATIVE=0` in the same window checks the

@@ -1,11 +1,22 @@
 // Wakes the primary agent for advisor concerns that arrive after its final
-// answer. Core steers a mid-turn concern into the live turn, but after a
-// terminal answer it only preserves the concern as a passive card; `blocker`
-// is the only severity that starts a new turn. This extension starts that
-// turn for `concern` too, so the agent checks it instead of waiting for the
-// next user prompt. The preserved card is already in the agent's context (a
-// developer `<advisory>` message), so the wake only points at it and never
-// repeats the notes.
+// answer. While a run continues, core defers nits and concerns and sends them
+// only at the final answer; there, and after it, core only preserves a
+// concern as a passive card. `blocker` is the only severity that is never
+// deferred and that starts a new turn. This extension starts that turn for
+// `concern` too, so the agent checks it instead of waiting for the next user
+// prompt. The preserved card is already in the agent's context (a developer
+// `<advisory>` message), so the wake only points at it and never repeats the
+// notes.
+//
+// It also releases deferred concerns when the user answers the Picker (Submit
+// or timeout), so the agent reads them in its next model call instead of at
+// its final answer. Core's deferred list is private and in memory, so the
+// release reads the concerns from the advisor transcript (`deferred-notes.ts`)
+// and steers them as an advisor card, as core steers a blocker. Core still
+// sends them at the final answer; that card does not wake for released notes.
+// A release is not a wake: it needs the user's answer, so checks 2 and 3 skip
+// it. Released notes join check 1's earlier list. The extension API does not
+// expose plan mode, so a release steers there too.
 //
 // The woken turn is itself reviewed and can raise another concern, so wakes
 // are gated per prompt cycle (one user prompt until the next) by three checks:
@@ -32,6 +43,7 @@
 import type { Judge } from "@oh-my-pi/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { logger, settings } from "@oh-my-pi/pi-coding-agent";
+import type { AdvisorMessageDetails } from "@oh-my-pi/pi-tui/chat/messages";
 import {
 	hasNativeJudge,
 	journalJudgmentUsage,
@@ -40,6 +52,14 @@ import {
 } from "@oh-my-pi/pi-coding-agent/judgment";
 import wakePrompt from "./advisor-concern-wake.md" with { type: "text" };
 import { judgeRepeats, wordOverlapRepeats } from "./concern-match";
+import {
+	formatAdvisories,
+	PICKER_ANSWERED,
+	type PickerAnswered,
+	readDeferredConcerns,
+	type TranscriptSizes,
+	transcriptSizes,
+} from "./deferred-notes";
 
 /** Backstop on wakes per prompt cycle; checks 1 and 2 normally stop a loop first. */
 const MAX_WAKES_PER_PROMPT = 6;
@@ -55,9 +75,9 @@ const STALLED_NOTICE =
 	"Advisor concern not sent to the agent: the agent changed no files after the last concern. Send a prompt if you want the agent to act.";
 const CEILING_NOTICE = `Advisor concern not sent to the agent: ${MAX_WAKES_PER_PROMPT} wakes in this prompt cycle. Send a prompt if you want the agent to act.`;
 
-interface AdvisorNote {
-	note: string;
-	severity?: "nit" | "concern" | "blocker";
+/** An advisor card's details; `releasedBy` marks this extension's release card. */
+interface CardDetails extends AdvisorMessageDetails {
+	releasedBy?: "omp-tools";
 }
 
 /** The `judge` role when it resolves to a native System One model (Jev); otherwise none. */
@@ -110,6 +130,17 @@ export default function advisorConcernWake(pi: ExtensionAPI): void {
 	let generation = 0;
 	let checking = false;
 	let poll: Timer | undefined;
+	/**
+	 * Concern notes released at a Picker answer in the current run; core's card
+	 * at the run's end repeats them and does not wake. Kept per run, not per
+	 * prompt cycle: a prompt queued during the run fires `before_agent_start`
+	 * with no new `agent_start`, and the run's final card still follows it.
+	 */
+	let released = new Set<string>();
+	/** The current run's session and advisor transcript sizes at its start; deferred notes come after. */
+	let run: { sessionFile: string | undefined; sizes: TranscriptSizes } | undefined;
+	/** Notes that advisor cards carried in the current run, so a release never repeats them. */
+	let carried = new Set<string>();
 
 	const stopPoll = (ctx: ExtensionContext) => {
 		if (poll) ctx.clearTimer(poll);
@@ -198,9 +229,15 @@ export default function advisorConcernWake(pi: ExtensionAPI): void {
 	pi.on("session_branch", resetCycle);
 	pi.on("session_tree", resetCycle);
 
-	// Check 2 watches only the turn this extension started.
-	pi.on("agent_start", () => {
+	// Check 2 watches only the turn this extension started. Core flushes
+	// deferred notes at the end of each run, so a run's deferred notes are the
+	// ones logged after it starts.
+	pi.on("agent_start", (_event, ctx) => {
 		if (wakeTurn === "sent") wakeTurn = "running";
+		const sessionFile = ctx.sessionManager.getSessionFile();
+		run = { sessionFile, sizes: transcriptSizes(sessionFile) };
+		carried = new Set();
+		released = new Set();
 	});
 	pi.on("tool_execution_end", event => {
 		if (wakeTurn === "running" && !event.isError && CHANGING_TOOLS.has(event.toolName)) {
@@ -225,12 +262,41 @@ export default function advisorConcernWake(pi: ExtensionAPI): void {
 	pi.on("message_end", (event, ctx) => {
 		const message = event.message;
 		if (message.role !== "custom" || message.customType !== "advisor") return;
+		const details = message.details as CardDetails | undefined;
+		if (details?.releasedBy) return;
+		const notes = details?.notes ?? [];
+		for (const note of notes) carried.add(note.note);
 		if (ctx.mode === "print" || ctx.mode === "json") return;
-		const notes = (message.details as { notes?: AdvisorNote[] } | undefined)?.notes ?? [];
-		// Blockers already wake the agent in core.
-		const concerns = notes.filter(n => n.severity === "concern").map(n => n.note);
+		// Blockers already wake the agent in core; released concerns reached it at the Picker answer.
+		const concerns = notes.filter(n => n.severity === "concern" && !released.has(n.note)).map(n => n.note);
 		if (concerns.length === 0) return;
 		pending.push(...concerns);
 		scheduleWake(ctx);
+	});
+
+	// Runs synchronously inside the Picker's `execute`, so the steer is queued
+	// before the `ask` result returns and the loop reads it at that boundary.
+	pi.events.on(PICKER_ANSWERED, data => {
+		const { sessionFile } = data as PickerAnswered;
+		if (!run || sessionFile === undefined || sessionFile !== run.sessionFile) return;
+		const notes = readDeferredConcerns(sessionFile, run.sizes).filter(
+			n => !carried.has(n.note) && !released.has(n.note),
+		);
+		if (notes.length === 0) return;
+		for (const note of notes) {
+			released.add(note.note);
+			carried.add(note.note);
+			woken.push(note.note);
+		}
+		pi.sendMessage<CardDetails>(
+			{
+				customType: "advisor",
+				content: formatAdvisories(notes),
+				display: true,
+				attribution: "agent",
+				details: { notes, releasedBy: "omp-tools" },
+			},
+			{ deliverAs: "steer", triggerTurn: true },
+		);
 	});
 }
