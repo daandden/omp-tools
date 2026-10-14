@@ -11,6 +11,44 @@ const BLOCKED_REASON =
 
 const CANCELLED_NOTE = "The user cancelled the previous side question. Do not answer it.";
 
+type AgentTool = AgentSession["agent"]["state"]["tools"][number];
+
+/**
+ * The provider-visible fields of a main-session tool the mirror cannot build
+ * (LSP and MCP stay off there), with an executor that refuses. The gate blocks
+ * the call first; this keeps the request's tool list equal to the main one.
+ */
+function rejectingCopy(tool: AgentTool): AgentTool {
+	return {
+		name: tool.name,
+		label: tool.label,
+		description: tool.description,
+		parameters: tool.parameters,
+		strict: tool.strict,
+		deferLoading: tool.deferLoading,
+		customFormat: tool.customFormat,
+		customWireName: tool.customWireName,
+		native: tool.native,
+		examples: tool.examples,
+		// A function intent means the schema gets no intent field; "omit" says the same.
+		intent: typeof tool.intent === "function" ? "omit" : tool.intent,
+		loadMode: tool.loadMode,
+		async execute() {
+			throw new Error(BLOCKED_REASON);
+		},
+	};
+}
+
+/** Give the mirror the main session's tool list in the same order, so the request prefix matches. */
+function matchToolCatalog(mirror: AgentSession, main: AgentSession): void {
+	const own = new Map(mirror.agent.state.tools.map(tool => [tool.name, tool]));
+	const mainTools = main.agent.state.tools;
+	const sameOrder =
+		mainTools.length === own.size && mainTools.every((tool, i) => mirror.agent.state.tools[i]?.name === tool.name);
+	if (sameOrder) return;
+	mirror.agent.setTools(mainTools.map(tool => own.get(tool.name) ?? rejectingCopy(tool)));
+}
+
 export interface SideQuestionToolCall {
 	id: string;
 	name: string;
@@ -130,6 +168,7 @@ export class SideQuestionThread {
 				extensions: [gate],
 			});
 			mirror = created.session;
+			matchToolCatalog(mirror, main);
 		} catch (error) {
 			await removeFork(file);
 			throw error;

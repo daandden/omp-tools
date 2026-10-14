@@ -319,7 +319,8 @@ BTW history, and autocomplete is OMP's.
   says so. Each tool keeps its own size limits, and there is no cap on rounds.
 - Model and context: the main agent's model, thinking level, system prompt,
   and conversation so far, copied when the thread starts. The first request
-  reuses the main agent's prompt cache (checked on Anthropic and Codex).
+  reuses the main agent's prompt cache (checked on Anthropic and Codex), also
+  when LSP or MCP tools sit at the top level (`tools.xdev: false`).
 - Privacy: only you see the answers. Nothing is added to the main session, and
   the agent never sees a side question.
 - Panel: answers show in a panel above the editor, and the editor keeps focus.

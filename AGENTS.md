@@ -47,9 +47,13 @@ the Picker btw asks the same kind of Side question.
   because a smaller tool list breaks the cached prefix. Under OMP's Code Mode,
   tools reachable only through `eval`'s `tool.*` bridge cannot run, since
   `eval` is blocked. The mirror runs with `enableLsp` and `enableMCP` off, so
-  it starts no servers; a main session with top-level LSP or MCP tools then
-  gets a shorter tool list, and its first request likely misses the cache (not
-  measured). The answer is the last
+  it starts no servers. `matchToolCatalog` then sets the mirror's tool list to
+  the main session's, in order: the mirror's own tool where it has one, else a
+  `rejectingCopy` of the main definition (provider-visible fields only, with a
+  mirror-local executor that throws). Without it, a session with top-level LSP
+  or MCP tools (`tools.xdev: false`) sent 15 of 18 tools and its first request
+  read 0 cached tokens; with it the tools JSON is equal and the first request
+  reads the whole main prefix. The answer is the last
   assistant message's text; the fork file is deleted on dispose. A Side
   question needs a live main session (`AgentRegistry.global()`) and a session
   file; without them `/btw` falls through to native and Picker btw is off.
