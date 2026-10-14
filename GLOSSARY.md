@@ -24,12 +24,20 @@ _Avoid_: custom input, custom answer
 Free text for the whole `ask`, written on the Submit tab and not tied to any question.
 _Avoid_: general note, global note
 
+**Side question**:
+A question about the session that is answered aside from the main conversation, with read-only tools, and that the main agent never sees. The user asks one through **/btw** or **Picker btw**.
+_Avoid_: btw (unqualified), side turn, btw agent
+
 **/btw**:
-OMP's native side-question command: a one-off question about the session whose answer the agent never sees.
+The editor command that asks a **Side question**. Typing it runs this plugin's version, not **Native /btw**. Later `/btw` questions follow up in the same thread until the user's next main prompt ends it.
 _Avoid_: btw (unqualified)
 
+**Native /btw**:
+OMP's own side-question command, which answers without tools. It still answers where this plugin cannot take over `/btw`.
+_Avoid_: stock /btw, OMP btw
+
 **Picker btw**:
-A side question asked from inside the Picker while an `ask` waits; answered like **/btw** but shown and kept only in the Picker.
+A **Side question** asked from inside the **Picker** while an `ask` waits; shown and kept only in the **Picker**.
 _Avoid_: btw (unqualified), our /btw, custom /btw
 
 **Advisor note**:
