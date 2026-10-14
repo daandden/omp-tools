@@ -318,9 +318,15 @@ BTW history, and autocomplete is OMP's.
   as reads. Any other call is refused, and the model sees a tool error that
   says so. Each tool keeps its own size limits, and there is no cap on rounds.
 - Model and context: the main agent's model, thinking level, system prompt,
-  and conversation so far, copied when the thread starts. The first request
-  reuses the main agent's prompt cache (checked on Anthropic and Codex), also
-  when LSP or MCP tools sit at the top level (`tools.xdev: false`).
+  and conversation so far, copied from the live session when the thread
+  starts. The first request reuses the main agent's prompt cache, also after a
+  compaction and when LSP or MCP tools sit at the top level
+  (`tools.xdev: false`).
+- Cache misses: with OMP's Cache Miss Marker setting on
+  (`display.cacheMissMarker`), an answer whose requests had to write the
+  cached prompt again shows `⊘ cache miss · N tokens` under it, in the panel
+  and in the Picker btw. Like OMP's marker, it shows only for providers that
+  report cache writes (Anthropic), not for Codex.
 - Privacy: only you see the answers. Nothing is added to the main session, and
   the agent never sees a side question.
 - Panel: answers show in a panel above the editor, and the editor keeps focus.

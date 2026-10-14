@@ -3,6 +3,7 @@ import * as path from "node:path";
 import type { AgentSession, ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { AgentRegistry, createAgentSession, createSubagentSettings, SessionManager } from "@oh-my-pi/pi-coding-agent";
 import { resolveToolTier } from "@oh-my-pi/pi-coding-agent/tools/approval";
+import { cfgDisplayCacheMissMarker } from "@oh-my-pi/pi-coding-agent/modes/settings";
 
 const SIDE_QUESTION_TOOLS = new Set(["read", "grep", "glob", "find", "web_search"]);
 
@@ -49,6 +50,79 @@ function matchToolCatalog(mirror: AgentSession, main: AgentSession): void {
 	mirror.agent.setTools(mainTools.map(tool => own.get(tool.name) ?? rejectingCopy(tool)));
 }
 
+/** The shortfall OMP's cache-miss marker ignores, as noise or below the cacheable floor. */
+const MIN_CACHE_FOOTPRINT = 2048;
+
+interface PromptUsage {
+	input: number;
+	cacheRead: number;
+	cacheWrite: number;
+}
+
+/**
+ * Tokens a request wrote to the cache again instead of reading them, when
+ * that is more than OMP's 2048-token floor. `expectedPrompt` is the prompt the
+ * request should have found cached: the main session's last request for a
+ * thread's first one, the thread's previous request after that. Providers that
+ * write no cache (implicit caching, Codex) never count, as in OMP's marker.
+ */
+export function cacheMissTokens(expectedPrompt: number | undefined, usage: PromptUsage): number | undefined {
+	if (expectedPrompt === undefined || expectedPrompt < MIN_CACHE_FOOTPRINT || usage.cacheWrite <= 0) return undefined;
+	const missing = expectedPrompt - usage.cacheRead;
+	return missing > MIN_CACHE_FOOTPRINT ? missing : undefined;
+}
+
+function promptTokens(usage: PromptUsage): number {
+	return usage.input + usage.cacheRead + usage.cacheWrite;
+}
+
+/** The prompt size of a finished request, from an assistant message's usage; undefined for none or a cut-off one. */
+function requestPrompt(message: unknown): number | undefined {
+	const { role, usage, stopReason } = message as { role?: string; usage?: PromptUsage; stopReason?: string };
+	if (role !== "assistant" || !usage || stopReason === "aborted" || stopReason === "error") return undefined;
+	const tokens = promptTokens(usage);
+	return tokens > 0 ? tokens : undefined;
+}
+
+interface ToolCallBlock {
+	type: "toolCall";
+	id: string;
+	name: string;
+}
+
+/**
+ * A copy of the main agent's messages for the mirror, so its requests start
+ * with exactly what the main agent sends (the transcript lacks messages the
+ * live session adds, such as the eval state after a compaction). Calls the main
+ * agent still waits on get an aborted result, as OMP's fork repair writes, so
+ * the copy is a valid conversation and the pending call stays visible.
+ */
+export function seedMessages<T>(messages: readonly T[]): T[] {
+	const copy = structuredClone(messages) as T[];
+	const answered = new Set<string>();
+	let last: { content?: unknown } | undefined;
+	for (const message of copy as { role?: string; toolCallId?: string; content?: unknown }[]) {
+		if (message.role === "toolResult" && message.toolCallId) answered.add(message.toolCallId);
+		if (message.role === "assistant") last = message;
+	}
+	const calls = Array.isArray(last?.content) ? (last.content as { type?: string }[]) : [];
+	for (const block of calls) {
+		if (block.type !== "toolCall") continue;
+		const call = block as ToolCallBlock;
+		if (answered.has(call.id)) continue;
+		copy.push({
+			role: "toolResult",
+			toolCallId: call.id,
+			toolName: call.name,
+			content: [{ type: "text", text: "Tool execution was aborted." }],
+			details: { __synthetic: true, source: "assistant_stop_aborted", executed: false },
+			isError: true,
+			timestamp: Date.now(),
+		} as T);
+	}
+	return copy;
+}
+
 export interface SideQuestionToolCall {
 	id: string;
 	name: string;
@@ -61,6 +135,8 @@ export interface SideQuestionCallbacks {
 	/** Text of the assistant message being streamed; a new message starts from empty. */
 	onText(text: string): void;
 	onToolCall(call: SideQuestionToolCall): void;
+	/** A request missed the cache by this many tokens; only while OMP's Cache Miss Marker setting is on. */
+	onCacheMiss(tokens: number): void;
 }
 
 function toolCallTarget(args: unknown): string {
@@ -96,14 +172,24 @@ export function sideQuestionsAvailable(ctx: ExtensionContext): boolean {
 export class SideQuestionThread {
 	readonly #session: AgentSession;
 	readonly #file: string;
+	readonly #mainSettings: AgentSession["settings"];
+	/** The prompt the next request should find cached: the main session's last request, then this thread's last. */
+	#expectedPrompt: number | undefined;
 	#running = false;
 	#disposed = false;
 	/** The last question was cancelled; its prompt stays in the history, so the next one says so. */
 	#lastCancelled = false;
 
-	private constructor(session: AgentSession, file: string) {
+	private constructor(
+		session: AgentSession,
+		file: string,
+		mainSettings: AgentSession["settings"],
+		expectedPrompt: number | undefined,
+	) {
 		this.#session = session;
 		this.#file = file;
+		this.#mainSettings = mainSettings;
+		this.#expectedPrompt = expectedPrompt;
 	}
 
 	static async open(ctx: ExtensionContext): Promise<SideQuestionThread> {
@@ -137,6 +223,7 @@ export class SideQuestionThread {
 		const parentPreparedExtensions = main.preparedExtensions;
 		const parentExtensionPaths = main.extensionPaths;
 		const parentExtensionRoots = main.effectiveExtensionRoots;
+		let expectedPrompt: number | undefined;
 		try {
 			const created = await createAgentSession({
 				cwd: ctx.cwd,
@@ -169,8 +256,18 @@ export class SideQuestionThread {
 			});
 			mirror = created.session;
 			matchToolCatalog(mirror, main);
+			// The transcript lacks messages the live main session adds (the eval
+			// state after a compaction), so a mirror rebuilt from it diverged from
+			// the main request and missed the cache in long sessions.
+			const seeded = seedMessages(main.agent.state.messages);
+			mirror.agent.replaceMessages(seeded);
+			expectedPrompt = seeded.map(requestPrompt).findLast(tokens => tokens !== undefined);
 		} catch (error) {
-			await removeFork(file);
+			try {
+				await mirror?.dispose();
+			} finally {
+				await removeFork(file);
+			}
 			throw error;
 		}
 		// Codex missed the main prompt cache on a new websocket (0 of 4 in the
@@ -183,7 +280,7 @@ export class SideQuestionThread {
 				preferWebsockets: false,
 				...({ parentSessionId: main.sessionId } as object),
 			});
-		return new SideQuestionThread(mirror, file);
+		return new SideQuestionThread(mirror, file, main.settings, expectedPrompt);
 	}
 
 	/** Run one question to its answer; follow-ups see the earlier questions, answers, and tool results. */
@@ -202,6 +299,15 @@ export class SideQuestionThread {
 						callbacks.onText(text);
 					}
 					break;
+				case "message_end": {
+					const prompt = requestPrompt(event.message);
+					if (prompt === undefined) break;
+					const usage = (event.message as { usage: PromptUsage }).usage;
+					const missed = cacheMissTokens(this.#expectedPrompt, usage);
+					this.#expectedPrompt = prompt;
+					if (missed !== undefined && cfgDisplayCacheMissMarker.get(this.#mainSettings)) callbacks.onCacheMiss(missed);
+					break;
+				}
 				case "message_update":
 					if (event.assistantMessageEvent.type === "text_delta") {
 						text += event.assistantMessageEvent.delta;

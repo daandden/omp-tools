@@ -13,6 +13,7 @@ import {
 	wrapTextWithAnsi,
 } from "@oh-my-pi/pi-tui";
 import { getMarkdownTheme, theme } from "@oh-my-pi/pi-tui/theme";
+import { formatNumber } from "@oh-my-pi/pi-utils";
 import type { SideQuestionCallbacks, SideQuestionToolCall } from "./side-question";
 
 /** One question and its answer, as the /btw panel and the Picker btw view show it. */
@@ -22,6 +23,8 @@ export interface SideQuestionTurn {
 	status: "running" | "complete" | "cancelled" | "error";
 	error?: string;
 	tools: SideQuestionToolCall[];
+	/** Tokens this answer's requests wrote to the cache again instead of reading them. */
+	cacheMissTokens?: number;
 }
 
 export function newTurn(question: string): SideQuestionTurn {
@@ -49,6 +52,10 @@ export async function answerInto(
 				const index = turn.tools.findIndex(known => known.id === call.id);
 				if (index < 0) turn.tools.push({ ...call });
 				else turn.tools[index] = { ...call };
+				changed();
+			},
+			onCacheMiss: tokens => {
+				turn.cacheMissTokens = (turn.cacheMissTokens ?? 0) + tokens;
 				changed();
 			},
 		});
@@ -97,6 +104,12 @@ function errorText(turn: SideQuestionTurn): string {
 	return `Error: ${replaceTabs(turn.error ?? "Failed").replace(/\s+/g, " ").trim()}`;
 }
 
+/** OMP's cache-miss marker label, `⊘ cache miss · 214.4k tokens`. */
+function cacheMissLabel(tokens: number): string {
+	const icon = theme.icon.cacheMiss;
+	return `${icon ? `${icon} ` : ""}cache miss ${theme.sep.dot.trim()} ${formatNumber(tokens)} tokens`;
+}
+
 /** Draws turns in both renderers; `runningLabel` is the line under an answer still running. */
 export class SideQuestionTurnView {
 	readonly #runningLabel: string;
@@ -122,6 +135,10 @@ export class SideQuestionTurnView {
 			}
 		}
 		if (turn.answer.trim()) lines.push(...this.#answerMarkdown(turn).render(width));
+		if (turn.cacheMissTokens) {
+			const label = cacheMissLabel(turn.cacheMissTokens);
+			lines.push(truncateToWidth(`${theme.fg("dim", "─".repeat(10))} ${theme.fg("muted", label)}`, width));
+		}
 		if (turn.status === "running") lines.push(theme.fg("dim", this.#runningLabel));
 		else if (turn.status === "cancelled") lines.push(theme.fg("warning", "Cancelled"));
 		else if (turn.status === "error") lines.push(...wrapTextWithAnsi(theme.fg("error", errorText(turn)), width));
@@ -153,6 +170,7 @@ export class SideQuestionTurnView {
 			);
 		}
 		if (turn.answer.trim()) children.push(md(turn.answer, { stream: turn.status === "running" }));
+		if (turn.cacheMissTokens) children.push(text([span(cacheMissLabel(turn.cacheMissTokens), "muted")]));
 		if (turn.status === "running") {
 			children.push(node("spinner", { style: "dots", label: [span(this.#runningLabel, "dim")] }));
 		} else if (turn.status === "cancelled") {

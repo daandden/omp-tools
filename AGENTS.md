@@ -53,7 +53,20 @@ the Picker btw asks the same kind of Side question.
   mirror-local executor that throws). Without it, a session with top-level LSP
   or MCP tools (`tools.xdev: false`) sent 15 of 18 tools and its first request
   read 0 cached tokens; with it the tools JSON is equal and the first request
-  reads the whole main prefix. The answer is the last
+  reads the whole main prefix. After that, `seedMessages` replaces the
+  mirror's messages with a copy of `main.agent.state.messages`
+  (`structuredClone`, plus an aborted result for each call the last reply
+  still waits on, as `repairInterruptedTail` writes). The transcript lacks
+  messages the live session adds: after a compaction with eval history OMP
+  inserts an `eval-state-context` message it never persists, so a mirror built
+  from the file differed from the main request after it and read only the
+  system and tool head (15.8k of ~230k tokens in a long session). The fork
+  file still holds the mirror's own turns. `cacheMissTokens` flags a request
+  that reads more than 2048 tokens less than expected (the main session's last
+  request for the first, then the thread's previous one), only when it wrote
+  cache (`cacheWrite > 0`, so never on Codex) and only while
+  `display.cacheMissMarker` is on (`/modes/settings`); the answer then shows
+  OMP's `⊘ cache miss · N tokens` label. The answer is the last
   assistant message's text; the fork file is deleted on dispose. A Side
   question needs a live main session (`AgentRegistry.global()`) and a session
   file; without them `/btw` falls through to native and Picker btw is off.
