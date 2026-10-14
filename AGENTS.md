@@ -7,15 +7,16 @@ drop the model-facing option count and show questions
 as full Markdown in the interactive picker; outside the TUI it delegates to
 native `ask`. It replaces native `generate_image` with a tool that calls the Codex
 Images endpoint directly with Codex OAuth. It also wakes the agent for advisor
-concerns that arrive after its final answer, and sends the concerns that OMP
-deferred during a run to the agent when the user answers the picker. It takes
+concerns and blockers that arrive after its final answer and that OMP leaves
+without a turn, and sends the concerns that OMP deferred during a run to the
+agent when the user answers the picker. It takes
 over `/btw <question>` with a Side question that may use read-only tools, and
 the Picker btw asks the same kind of Side question.
 
 ## Architecture & Data Flow
 
 - `package.json` registers `extensions/flexible-ask.ts`,
-  `extensions/generate-image.ts`, `extensions/advisor-concern-wake.ts`, and
+  `extensions/generate-image.ts`, `extensions/advisor-wake.ts`, and
   `extensions/btw.ts` as entry points. OMP also loads `skills/*/SKILL.md` from
   the plugin root (the `omp-plugins` discovery provider, priority 90).
 - The extension registers a shadow `ask` description/schema. In `ctx.mode ===
@@ -246,27 +247,40 @@ the Picker btw asks the same kind of Side question.
   any `model` with no visible effect, so rules stay model-agnostic), and
   `codex-image-backend-model.md` (live check of which model serves; inconclusive).
 - `test/`: `bun test` behavior tests for `generate_image` through `execute`
-  with a stubbed `fetch`, for `advisor-concern-wake` through its event
+  with a stubbed `fetch`, for `advisor-wake` through its event
   handlers with a mocked `@oh-my-pi/pi-coding-agent/judgment`, and for
   `parseBtwQuestion`. The gate, the thread cycle, the mirror session, and the
   panel have live smoke only.
-- `extensions/advisor-concern-wake.ts`: listens for preserved `advisor` cards
-  (`message_end`, `customType: "advisor"`) with `concern` notes and, once the
-  session is idle, sends a short wake prompt with `deliverAs: "aside"`. The
-  card is already in LLM context (a `developer` `<advisory>` message), so the
-  wake must not repeat the notes. Keep `aside`: its idle
-  branch in core `sendCustomMessage` folds into context under plan mode or an
-  active user interrupt (`autoResumeSuppressed`) and defers for ACP clients; a
-  steer with `triggerTurn` only checks ACP. Local guards: queued messages and
-  three per-prompt-cycle checks before each wake. (1) New concern: one host
+- `extensions/advisor-wake.ts`: listens for preserved `advisor` cards
+  (`message_end`, `customType: "advisor"`) with `concern` or `blocker` notes
+  that follow a final answer (the last assistant `message_end` had
+  `stopReason: "stop"`; a stopped, failed, or mid-run reply never wakes) and,
+  once the session is idle with no turn started for the card, sends a short
+  wake prompt with `deliverAs: "steer"` and `triggerTurn`. The card is
+  already in LLM context (a `developer` `<advisory>` message), so the wake
+  must not repeat the notes. Core leaves a late blocker without a turn while
+  `autoResumeSuppressed` is set (OMP 18.10.4). Every user-reason abort sets
+  it: Esc (also while idle, with no `aborted` reply), `ctx.abort()` from a
+  Picker cancel, RPC and ACP abort. Only a user prompt, a typed steer, or a
+  tree jump clears it, so a run that resumes without a prompt still ends with
+  passive cards. Extensions cannot read the flag, hence the outcome rule. Do
+  not go back to `aside`: its idle branch in core `sendCustomMessage` folds
+  into context while the flag is set. A steer with `triggerTurn` only checks
+  ACP deferral, so the wake reads plan mode itself (the branch's latest
+  `mode_change` entry is `plan`) and skips it there, as core does for
+  advisor cards. Local guards: queued messages and three per-prompt-cycle
+  checks before each wake. (1) New note: one host
   judge call (`resolveJudge` from `@oh-my-pi/pi-coding-agent/judgment` with the
   root `settings` and `ctx.modelRegistry`, used only when `hasNativeJudge`)
-  asks one Choice per new concern against the woken ones
-  (`extensions/concern-match.ts`); no native judge, an error, or a 15 s timeout
-  falls back to word-overlap Jaccard ≥ 0.5. (2) The last woken turn
-  (`agent_start` after the send to `agent_end`) ran a `CHANGING_TOOLS` tool
-  without `isError`; the flag drops to false at send, so a folded aside with no
-  turn counts as no change. (3) `MAX_WAKES_PER_PROMPT = 6`. Checks 2 and 3
+  asks one Choice per new note against the woken ones
+  (`extensions/concern-match.ts`); a concern is compared with every woken note,
+  a blocker only with woken blockers (an escalation wakes, as in core's
+  emission guard). No native judge, an error, or a 15 s timeout
+  falls back to word-overlap Jaccard ≥ 0.5. (2) Concerns only: the last woken
+  turn (`agent_start` after the send to `agent_end`) ran a `CHANGING_TOOLS`
+  tool without `isError`; the flag drops to false at send, so a wake with no
+  turn counts as no change. A blocker skips it. (3)
+  `MAX_WAKES_PER_PROMPT = 10`. Checks 2 and 3
   notify through `ctx.ui.notify` (when `ctx.hasUI`); a repeat stays silent. The
   cycle resets on `before_agent_start`, which fires for user prompts in every
   mode but not for the extension's agent-initiated turn (`input` is TUI-only),
@@ -274,13 +288,12 @@ the Picker btw asks the same kind of Side question.
   assistant `message_start` (a blocker or extension turn that ran during the
   judge call already saw the cards). Held notes are
   dropped on `session_before_switch` / `_branch` / `_tree` (the runner and its
-  timers outlive `/new`, and core's aside generation check runs at send time);
-  the after-events reset the cycle.
+  timers outlive `/new`); the after-events reset the cycle.
   `advisor.immuneTurns` is core-private and not applied. Disabled when
   `ctx.mode` is `"print"` or `"json"`: print mode enters a preserve-only
   headless advisor drain after the last prompt (`prepareForHeadlessAdvisorDrain`),
   prints the final text, then disposes, so a woken turn would never be emitted.
-  `advisor-concern-wake.md` holds the wake prompt.
+  `advisor-wake.md` holds the wake prompt; the custom type is `advisor-wake`.
   Release: on `PICKER_ANSWERED` (emitted on `pi.events` by the Picker path of
   `flexible-ask.ts` after Submit or a timeout pick, before `execute` returns)
   it steers the run's deferred concerns as a `customType: "advisor"` card
@@ -304,7 +317,7 @@ the Picker btw asks the same kind of Side question.
   format and the acknowledgment text are private to OMP; check them when OMP
   changes the advisor. Also `formatAdvisories`, a copy of core's
   `formatAdvisorBatchContent` (not served).
-- `extensions/concern-match.ts`: check 1 for the concern wake. `judgeRepeats`
+- `extensions/concern-match.ts`: check 1 for the Advisor wake. `judgeRepeats`
   builds one judge request (state: `earlier_concerns` and `new_concerns`; one
   Choice per new concern over the earlier ids plus `none`), and
   `wordOverlapRepeats` is the fallback.
@@ -367,12 +380,12 @@ the `"latest"` specifier; `bun.lock` records the resolved version, so update
 through `bun run update` to keep types and the installed omp in step.
 
 Run typechecking and `bun test` after code changes; tests cover
-`generate_image`, `advisor-concern-wake`, and `parseBtwQuestion`, and there is
+`generate_image`, `advisor-wake`, and `parseBtwQuestion`, and there is
 no repository CI. Registration, ask, and Side question changes
 require a fresh-session OMP smoke; typechecking alone does not exercise host
 integration or UI. OMP 18.3.1 was used for the latest fresh-session picker and
 rendering smoke; OMP 18.4.4 for the live `generate_image` generate and edit
-smoke; OMP 18.4.8 for the host judge call behind the concern-wake checks; OMP
+smoke; OMP 18.4.8 for the host judge call behind the advisor wake checks; OMP
 18.6.1 for the Picker btw; OMP 18.8.0 for the picker key flow and Submit note;
 OMP 18.8.6 with Tern 0.6.3 for the Tern views; OMP 18.10.4 with Tern 0.8.3 for
 the Picker release (a deferred concern written by hand to the session's

@@ -12,6 +12,16 @@
 - Let the Picker btw look things up with read-only tools, as `/btw` does (see
   Added). Each answer shows an "N tool calls" line, and later questions in the
   same ask follow up in one thread.
+- Renamed the advisor concern wake to Advisor wake (`advisor-wake.ts`, custom
+  message type `advisor-wake`). It now also wakes the agent for a blocker that
+  arrives after the final answer when OMP starts no turn for it: after an
+  interrupt earlier in the prompt cycle (Esc, or a cancelled Picker), OMP left
+  such a blocker as a passive card even when the run went on and finished.
+  Wakes start a turn (`steer` with `triggerTurn` instead of `aside`), so
+  concern wakes now also work after an interrupt. A card wakes only when it
+  follows a final answer, never in plan mode. Blockers skip the "last wake
+  changed files" check and are compared only with earlier blockers, the
+  per-cycle limit rose from 6 to 10 wakes, and the wake prompt is shorter.
 
 ### Added
 

@@ -52,6 +52,10 @@ _Avoid_: advisor message, advice card
 An **Advisor note** that OMP holds back while the agent's run continues and sends only at the agent's final answer. Blocker notes are never deferred. Sending a deferred note earlier is a release.
 _Avoid_: held note, withheld note, queued note
 
+**Advisor wake**:
+A turn this plugin starts so the agent acts on an **Advisor card** with a concern or blocker that arrived after the agent's final answer and that OMP left without a turn.
+_Avoid_: concern wake, wake (unqualified), nudge
+
 **generate_image**:
 This plugin's image tool. It replaces native `generate_image`, which the user disables.
 _Avoid_: custom image tool, image wrapper

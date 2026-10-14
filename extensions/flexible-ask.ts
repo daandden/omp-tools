@@ -285,7 +285,7 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 				return ctx.invokeTool<AskToolDetails>(params, { signal, onUpdate });
 			}
 			const result = await askWithMarkdownDialog(ctx, questions, signal, () => hostAutocomplete);
-			// advisor-concern-wake releases deferred concerns on this, before the result returns.
+			// advisor-wake releases deferred concerns on this, before the result returns.
 			pi.events.emit(PICKER_ANSWERED, { sessionFile: ctx.sessionManager.getSessionFile() } satisfies PickerAnswered);
 			return result;
 		},

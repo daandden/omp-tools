@@ -1,12 +1,18 @@
-// Wakes the primary agent for advisor concerns that arrive after its final
-// answer. While a run continues, core defers nits and concerns and sends them
-// only at the final answer; there, and after it, core only preserves a
-// concern as a passive card. `blocker` is the only severity that is never
-// deferred and that starts a new turn. This extension starts that turn for
-// `concern` too, so the agent checks it instead of waiting for the next user
-// prompt. The preserved card is already in the agent's context (a developer
-// `<advisory>` message), so the wake only points at it and never repeats the
-// notes.
+// Advisor wake: starts a turn for advisor concerns and blockers that arrive
+// after the agent's final answer and that core leaves without a turn. While a
+// run continues, core defers nits and concerns and sends them only at the
+// final answer; there, and after it, core only preserves a concern as a
+// passive card. Core starts a turn for a late blocker, but not while its user
+// interrupt flag (`autoResumeSuppressed`) is set. Esc, the Picker's cancel
+// (`ctx.abort()`), and other user aborts set that flag, even while idle and
+// without writing an `aborted` reply. Only a user prompt or a tree jump clears
+// it, so a run that resumes after an interrupt without a prompt still ends with
+// passive cards. Extensions cannot read the flag, so the rule is the outcome:
+// a concern or blocker card that follows a final answer (an assistant reply
+// with `stopReason: "stop"`) and that no turn picks up wakes the agent. A run
+// the user stopped ends with an `aborted` reply, so its cards never wake. The
+// preserved card is already in the agent's context (a developer `<advisory>`
+// message), so the wake only points at it and never repeats the notes.
 //
 // It also releases deferred concerns when the user answers the Picker (Submit
 // or timeout), so the agent reads them in its next model call instead of at
@@ -15,25 +21,30 @@
 // and steers them as an advisor card, as core steers a blocker. Core still
 // sends them at the final answer; that card does not wake for released notes.
 // A release is not a wake: it needs the user's answer, so checks 2 and 3 skip
-// it. Released notes join check 1's earlier list. The extension API does not
-// expose plan mode, so a release steers there too.
+// it. Released notes join check 1's earlier list. A release steers in plan
+// mode too.
 //
-// The woken turn is itself reviewed and can raise another concern, so wakes
-// are gated per prompt cycle (one user prompt until the next) by three checks:
-// 1. The concern is new: an OMP judge call (TypeSafe Jev) or, without a native
-//    judge, word overlap finds no earlier woken concern with the same issue.
-//    A repeat stays a card; the agent already answered it.
-// 2. The last wake changed something: the woken turn ran a file-changing tool
-//    without error. A turn that only read and replied means the agent did not
-//    agree; the user decides.
+// The woken turn is itself reviewed and can raise another note, so wakes are
+// gated per prompt cycle (one user prompt until the next) by three checks:
+// 1. The note is new: an OMP judge call (TypeSafe Jev) or, without a native
+//    judge, word overlap finds no earlier woken note with the same issue. A
+//    concern is compared with every woken note, a blocker only with woken
+//    blockers, so a concern raised again as a blocker is an escalation, as in
+//    core's emission guard. A repeat stays a card; the agent already answered.
+// 2. Concerns only: the last wake changed something, that is, the woken turn
+//    ran a file-changing tool without error. A turn that only read and replied
+//    means the agent did not agree; the user decides. Core never holds back a
+//    blocker for an earlier quiet turn, so a blocker skips this check.
 // 3. Fewer than MAX_WAKES_PER_PROMPT wakes, as a backstop.
-// When check 2 or 3 holds back a new concern, the user gets a notification.
+// When check 2 or 3 holds back a new note, the user gets a notification.
 //
-// The wake goes out as an idle `aside`, the core path that honors plan mode
-// (folds into context, no turn), a user interrupt still in effect (same), and
-// ACP `deferAgentInitiatedTurns` (queues for the next turn). Without a woken
-// turn, check 2 stays false, so those modes notify instead of waking again.
-// The `advisor.immuneTurns` cooldown is core-private and not applied.
+// The wake is a `steer` with `triggerTurn`: it starts a turn while idle even
+// with the interrupt flag set, which an `aside` does not (it folds into
+// context), and core still queues it for ACP clients with
+// `deferAgentInitiatedTurns`. Core never starts a turn for an advisor card in
+// plan mode, so the wake reads plan mode from the branch's latest
+// `mode_change` entry and skips it there. The `advisor.immuneTurns` cooldown
+// is core-private and not applied.
 //
 // Print and JSON mode (`omp -p`, `--mode json`, and headless hosts that keep
 // the runner's "print" default) are skipped: after the last prompt, print mode
@@ -50,7 +61,7 @@ import {
 	resolveJudge,
 	sharedJudgmentCache,
 } from "@oh-my-pi/pi-coding-agent/judgment";
-import wakePrompt from "./advisor-concern-wake.md" with { type: "text" };
+import wakePrompt from "./advisor-wake.md" with { type: "text" };
 import { judgeRepeats, wordOverlapRepeats } from "./concern-match";
 import {
 	formatAdvisories,
@@ -62,8 +73,8 @@ import {
 } from "./deferred-notes";
 
 /** Backstop on wakes per prompt cycle; checks 1 and 2 normally stop a loop first. */
-const MAX_WAKES_PER_PROMPT = 6;
-/** Tools whose successful call in a woken turn counts as the agent acting on the concern. */
+const MAX_WAKES_PER_PROMPT = 10;
+/** Tools whose successful call in a woken turn counts as the agent acting on the notes. */
 const CHANGING_TOOLS = new Set(["edit", "write", "ast_edit", "bash", "eval", "task"]);
 /** A judge call slower than this falls back to word overlap. */
 const JUDGE_TIMEOUT_MS = 15_000;
@@ -72,8 +83,29 @@ const IDLE_POLL_MS = 250;
 const IDLE_WAIT_MAX_MS = 30_000;
 
 const STALLED_NOTICE =
-	"Advisor concern not sent to the agent: the agent changed no files after the last concern. Send a prompt if you want the agent to act.";
-const CEILING_NOTICE = `Advisor concern not sent to the agent: ${MAX_WAKES_PER_PROMPT} wakes in this prompt cycle. Send a prompt if you want the agent to act.`;
+	"Advisor concern not sent to the agent: the agent changed no files after the last wake. Send a prompt if you want the agent to act.";
+const CEILING_NOTICE = `Advisor note not sent to the agent: ${MAX_WAKES_PER_PROMPT} wakes in this prompt cycle. Send a prompt if you want the agent to act.`;
+
+/** An advisor card's details; `releasedBy` marks this extension's release card. */
+interface CardDetails extends AdvisorMessageDetails {
+	releasedBy?: "omp-tools";
+}
+
+/** A concern or blocker note that can wake the agent. */
+interface WakeNote {
+	note: string;
+	blocker: boolean;
+}
+
+/** Whether plan mode is on; core never starts a turn for an advisor card there. */
+function inPlanMode(ctx: ExtensionContext): boolean {
+	const branch = ctx.sessionManager.getBranch();
+	for (let i = branch.length - 1; i >= 0; i--) {
+		const entry = branch[i];
+		if (entry.type === "mode_change") return entry.mode === "plan";
+	}
+	return false;
+}
 
 /** An advisor card's details; `releasedBy` marks this extension's release card. */
 interface CardDetails extends AdvisorMessageDetails {
@@ -89,39 +121,60 @@ function nativeJudge(ctx: ExtensionContext): Judge | undefined {
 			registry: ctx.modelRegistry,
 			sessionModel: ctx.model,
 			sessionId: ctx.sessionManager.getSessionId(),
-			purpose: "advisor-concern-wake",
+			purpose: "advisor-wake",
 			onUsage: journalJudgmentUsage(ctx.sessionManager),
 			cache: sharedJudgmentCache(),
 		});
 	} catch (err) {
-		logger.debug("advisor-concern-wake: judge unavailable", { err: String(err) });
+		logger.debug("advisor-wake: judge unavailable", { err: String(err) });
 		return undefined;
 	}
 }
 
 /** For each of `notes`, whether it repeats one of `earlier` (check 1). */
 async function findRepeats(ctx: ExtensionContext, notes: string[], earlier: string[]): Promise<boolean[]> {
-	if (earlier.length === 0) return notes.map(() => false);
+	if (notes.length === 0 || earlier.length === 0) return notes.map(() => false);
 	const judge = nativeJudge(ctx);
 	if (judge) {
 		try {
 			return await judgeRepeats(judge, notes, earlier, { signal: AbortSignal.timeout(JUDGE_TIMEOUT_MS) });
 		} catch (err) {
-			logger.debug("advisor-concern-wake: judge failed, using word overlap", { err: String(err) });
+			logger.debug("advisor-wake: judge failed, using word overlap", { err: String(err) });
 		}
 	}
 	return wordOverlapRepeats(notes, earlier);
 }
 
-export default function advisorConcernWake(pi: ExtensionAPI): void {
-	/** Concern notes waiting for the agent to go idle. */
-	let pending: string[] = [];
-	/** Concern notes already woken for in this prompt cycle. */
-	let woken: string[] = [];
+/** Check 1: a concern repeats any woken note; a blocker repeats only a woken blocker. */
+async function freshNotes(ctx: ExtensionContext, notes: WakeNote[], woken: WakeNote[]): Promise<WakeNote[]> {
+	const blockers = notes.filter(n => n.blocker);
+	const concerns = notes.filter(n => !n.blocker);
+	const [blockerRepeats, concernRepeats] = await Promise.all([
+		findRepeats(
+			ctx,
+			blockers.map(n => n.note),
+			woken.filter(n => n.blocker).map(n => n.note),
+		),
+		findRepeats(
+			ctx,
+			concerns.map(n => n.note),
+			woken.map(n => n.note),
+		),
+	]);
+	return [...blockers.filter((_, i) => !blockerRepeats[i]), ...concerns.filter((_, i) => !concernRepeats[i])];
+}
+
+export default function advisorWake(pi: ExtensionAPI): void {
+	/** Concern and blocker notes waiting for the agent to go idle. */
+	let pending: WakeNote[] = [];
+	/** Notes already woken for, or released, in this prompt cycle. */
+	let woken: WakeNote[] = [];
 	let wakes = 0;
 	/** Check 2; true before the first wake of a cycle. */
 	let lastWakeChangedFiles = true;
 	let wakeTurn: "idle" | "sent" | "running" = "idle";
+	/** The last assistant reply was a final answer, not a tool call, an error, or an interrupted reply. */
+	let afterFinalAnswer = false;
 	/**
 	 * Bumped on every reset and on every assistant message, so a check that
 	 * finishes afterwards is dropped: its notes left `pending` when it started,
@@ -155,15 +208,14 @@ export default function advisorConcernWake(pi: ExtensionAPI): void {
 		if (checking) return;
 		const notes = pending;
 		pending = [];
-		if (notes.length === 0 || ctx.hasPendingMessages()) return;
+		if (notes.length === 0 || ctx.hasPendingMessages() || inPlanMode(ctx)) return;
 		const started = generation;
 		checking = true;
 		try {
-			const repeats = await findRepeats(ctx, notes, woken);
+			const fresh = await freshNotes(ctx, notes, woken);
 			if (started !== generation || !ctx.isIdle() || ctx.hasPendingMessages()) return;
-			const fresh = notes.filter((_, i) => !repeats[i]);
 			if (fresh.length === 0) return;
-			if (!lastWakeChangedFiles) {
+			if (!lastWakeChangedFiles && !fresh.some(n => n.blocker)) {
 				notify(ctx, STALLED_NOTICE);
 				return;
 			}
@@ -175,9 +227,11 @@ export default function advisorConcernWake(pi: ExtensionAPI): void {
 			wakes++;
 			lastWakeChangedFiles = false;
 			wakeTurn = "sent";
+			// An idle steer with `triggerTurn` starts a turn even while core's user
+			// interrupt flag is set; an `aside` folds into context there.
 			pi.sendMessage(
-				{ customType: "advisor-concern-wake", content: wakePrompt.trim(), display: true },
-				{ deliverAs: "aside" },
+				{ customType: "advisor-wake", content: wakePrompt.trim(), display: true },
+				{ deliverAs: "steer", triggerTurn: true },
 			);
 		} finally {
 			checking = false;
@@ -209,16 +263,16 @@ export default function advisorConcernWake(pi: ExtensionAPI): void {
 	};
 	// Fires for every user-authored prompt in every mode (TUI, print, RPC, ACP,
 	// SDK), including queued user messages, but not for this extension's own
-	// agent-initiated aside turn. `input` would only cover the TUI editor.
+	// agent-initiated turn. `input` would only cover the TUI editor.
 	pi.on("before_agent_start", resetCycle);
 
 	// The runner (and its managed timers) survives /new, /resume, forks, and
-	// /tree jumps, and core's aside generation check is taken at send time. Drop
-	// held notes and any running check before the transition so an old
-	// conversation's concern never lands in the new one; start the new
+	// /tree jumps. Drop held notes and any running check before the transition
+	// so an old conversation's note never lands in the new one; start the new
 	// conversation with a fresh cycle.
 	const forgetPending = (_event: unknown, ctx: ExtensionContext) => {
 		pending = [];
+		afterFinalAnswer = false;
 		generation++;
 		stopPoll(ctx);
 	};
@@ -261,16 +315,24 @@ export default function advisorConcernWake(pi: ExtensionAPI): void {
 
 	pi.on("message_end", (event, ctx) => {
 		const message = event.message;
+		if (message.role === "assistant") {
+			afterFinalAnswer = message.stopReason === "stop";
+			return;
+		}
 		if (message.role !== "custom" || message.customType !== "advisor") return;
 		const details = message.details as CardDetails | undefined;
 		if (details?.releasedBy) return;
 		const notes = details?.notes ?? [];
 		for (const note of notes) carried.add(note.note);
 		if (ctx.mode === "print" || ctx.mode === "json") return;
-		// Blockers already wake the agent in core; released concerns reached it at the Picker answer.
-		const concerns = notes.filter(n => n.severity === "concern" && !released.has(n.note)).map(n => n.note);
-		if (concerns.length === 0) return;
-		pending.push(...concerns);
+		// A card during a run reaches the live turn; a run the user stopped stays stopped.
+		if (!afterFinalAnswer) return;
+		// Released concerns reached the agent at the Picker answer; the same text as a blocker is an escalation.
+		const wakeNotes = notes
+			.filter(n => n.severity === "blocker" || (n.severity === "concern" && !released.has(n.note)))
+			.map(n => ({ note: n.note, blocker: n.severity === "blocker" }));
+		if (wakeNotes.length === 0) return;
+		pending.push(...wakeNotes);
 		scheduleWake(ctx);
 	});
 
@@ -286,7 +348,7 @@ export default function advisorConcernWake(pi: ExtensionAPI): void {
 		for (const note of notes) {
 			released.add(note.note);
 			carried.add(note.note);
-			woken.push(note.note);
+			woken.push({ note: note.note, blocker: false });
 		}
 		pi.sendMessage<CardDetails>(
 			{

@@ -20,7 +20,7 @@
 		"extensions": [
 			"./extensions/flexible-ask.ts",
 			"./extensions/generate-image.ts",
-			"./extensions/advisor-concern-wake.ts",
+			"./extensions/advisor-wake.ts",
 			"./extensions/btw.ts"
 		]
 	}

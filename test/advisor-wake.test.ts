@@ -31,24 +31,29 @@ mock.module("@oh-my-pi/pi-coding-agent/judgment", () => ({
 	}),
 }));
 
-const { default: advisorConcernWake } = await import("../extensions/advisor-concern-wake");
+const { default: advisorWake } = await import("../extensions/advisor-wake");
 const { PICKER_ANSWERED } = await import("../extensions/deferred-notes");
 
-const STALLED = /changed no files after the last concern/;
-const CEILING = /6 wakes in this prompt cycle/;
+const STALLED = /changed no files after the last wake/;
+const CEILING = /10 wakes in this prompt cycle/;
 
 interface Sent {
 	customType: string;
 	content: string;
 	details?: { notes: { note: string; severity?: string }[] };
 	deliverAs?: string;
+	triggerTurn?: boolean;
 }
 
 interface Harness {
 	wakes: Sent[];
 	releases: Sent[];
 	notices: string[];
-	concern(note: string): Promise<void>;
+	/** A concern card after the agent's last reply, a final answer unless `reply` says otherwise. */
+	concern(note: string, reply?: string): Promise<void>;
+	blocker(note: string, reply?: string): Promise<void>;
+	/** Plan mode on (`"plan"`) or off (`"none"`), as core records it on the branch. */
+	mode(mode: string): void;
 	/** The agent turn the wake started, with the tools it ran. */
 	wokenTurn(tools: { name: string; isError?: boolean }[]): void;
 	userPrompt(): void;
@@ -69,6 +74,7 @@ function harness(): Harness {
 	const wakes: Sent[] = [];
 	const releases: Sent[] = [];
 	const notices: string[] = [];
+	const branch: { type: string; mode?: string }[] = [];
 	const sessionFile = `${sessionDir}.jsonl`;
 	const pi = {
 		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => {
@@ -79,8 +85,12 @@ function harness(): Harness {
 				bus.set(channel, [...(bus.get(channel) ?? []), handler]);
 			},
 		},
-		sendMessage: (message: Sent, options: { deliverAs?: string }) =>
-			(message.customType === "advisor" ? releases : wakes).push({ ...message, deliverAs: options.deliverAs }),
+		sendMessage: (message: Sent, options: { deliverAs?: string; triggerTurn?: boolean }) =>
+			(message.customType === "advisor" ? releases : wakes).push({
+				...message,
+				deliverAs: options.deliverAs,
+				triggerTurn: options.triggerTurn,
+			}),
 	};
 	const ctx = {
 		mode: "tui",
@@ -92,21 +102,25 @@ function harness(): Harness {
 		clearTimer: (timer: Timer) => clearInterval(timer),
 		modelRegistry: {},
 		model: undefined,
-		sessionManager: { getSessionId: () => "session", getSessionFile: () => sessionFile },
+		sessionManager: { getSessionId: () => "session", getSessionFile: () => sessionFile, getBranch: () => branch },
 	} as unknown as ExtensionContext;
 	const emit = (name: string, event: unknown = {}) => {
 		for (const handler of handlers.get(name) ?? []) handler(event, ctx);
 	};
-	const card = (notes: { note: string; severity: string }[]) =>
+	const card = async (notes: { note: string; severity: string }[], reply: string) => {
+		emit("message_end", { message: { role: "assistant", stopReason: reply } });
 		emit("message_end", { message: { role: "custom", customType: "advisor", details: { notes } } });
-	advisorConcernWake(pi as unknown as ExtensionAPI);
+		await Bun.sleep(30);
+	};
+	advisorWake(pi as unknown as ExtensionAPI);
 	return {
 		wakes,
 		releases,
 		notices,
-		async concern(note) {
-			card([{ note, severity: "concern" }]);
-			await Bun.sleep(30);
+		concern: (note, reply = "stop") => card([{ note, severity: "concern" }], reply),
+		blocker: (note, reply = "stop") => card([{ note, severity: "blocker" }], reply),
+		mode(mode) {
+			branch.push({ type: "mode_change", mode });
 		},
 		wokenTurn(tools) {
 			emit("agent_start");
@@ -161,20 +175,75 @@ beforeEach(() => {
 	decide = () => "none";
 });
 
-describe("advisor concern wake", () => {
-	test("new concerns that each lead to file changes wake up to six times, then notify", async () => {
+describe("advisor wake", () => {
+	test("new concerns that each lead to file changes wake up to ten times, then notify", async () => {
 		const h = harness();
-		for (let i = 1; i <= 6; i++) {
+		for (let i = 1; i <= 10; i++) {
 			await h.concern(`Problem number ${i} in module ${i}.`);
 			expect(h.wakes).toHaveLength(i);
 			h.wokenTurn([{ name: "edit" }]);
 		}
-		await h.concern("Problem number 7 in module 7.");
-		expect(h.wakes).toHaveLength(6);
+		await h.concern("Problem number 11 in module 11.");
+		expect(h.wakes).toHaveLength(10);
 		expect(h.notices).toHaveLength(1);
 		expect(h.notices[0]).toMatch(CEILING);
 		// The card is already in the agent's context; the wake never repeats the note.
 		expect(h.wakes.every(w => !w.content.includes("Problem number"))).toBe(true);
+	});
+
+	test("a blocker after the final answer wakes with a steer that starts a turn", async () => {
+		const h = harness();
+		await h.blocker("The smoke test for the Picker was not run.");
+		expect(h.wakes).toHaveLength(1);
+		expect(h.wakes[0].deliverAs).toBe("steer");
+		expect(h.wakes[0].triggerTurn).toBe(true);
+	});
+
+	test.each([
+		["the user stopped the run", "aborted"],
+		["the run ended in an error", "error"],
+		["the run is still calling tools", "toolUse"],
+	])("a card does not wake when %s", async (_label, reply) => {
+		const h = harness();
+		await h.blocker("The smoke test for the Picker was not run.", reply);
+		await h.concern("The README does not describe the timeout option.", reply);
+		expect(h.wakes).toEqual([]);
+	});
+
+	test("a blocker wakes after a woken turn that changed nothing, but a concern does not", async () => {
+		const h = harness();
+		await h.concern("This function can return null.");
+		h.wokenTurn([{ name: "read" }]);
+		await h.blocker("The smoke test for the Picker was not run.");
+		expect(h.wakes).toHaveLength(2);
+		h.wokenTurn([{ name: "read" }]);
+		await h.concern("The README does not describe the timeout option.");
+		expect(h.wakes).toHaveLength(2);
+		expect(h.notices[0]).toMatch(STALLED);
+	});
+
+	test("a concern raised again as a blocker wakes; the same blocker again does not", async () => {
+		nativeJudge = false;
+		const h = harness();
+		await h.concern("The smoke test for the Picker was not run.");
+		h.wokenTurn([{ name: "edit" }]);
+		await h.blocker("The smoke test for the Picker was not run.");
+		expect(h.wakes).toHaveLength(2);
+		h.wokenTurn([{ name: "edit" }]);
+		await h.blocker("The smoke test for the Picker was still not run.");
+		await h.concern("The smoke test for the Picker was not run.");
+		expect(h.wakes).toHaveLength(2);
+		expect(h.notices).toEqual([]);
+	});
+
+	test("plan mode keeps the card without a wake until it ends", async () => {
+		const h = harness();
+		h.mode("plan");
+		await h.blocker("The smoke test for the Picker was not run.");
+		expect(h.wakes).toEqual([]);
+		h.mode("none");
+		await h.blocker("The cache key ignores the locale.");
+		expect(h.wakes).toHaveLength(1);
 	});
 
 	test("a concern the judge matches to an earlier one stays a card without a notice", async () => {
@@ -312,6 +381,16 @@ describe("release of deferred concerns at a Picker answer", () => {
 		await h.concern("The README does not describe the timeout option.");
 		expect(h.wakes).toHaveLength(1);
 		expect(h.notices).toEqual([]);
+	});
+
+	test("a blocker with the text of a released concern wakes as an escalation", async () => {
+		nativeJudge = false;
+		const h = harness();
+		h.startRun();
+		h.advise("The parser drops the last line.", "concern", "deferred");
+		h.pickerAnswered();
+		await h.blocker("The parser drops the last line.");
+		expect(h.wakes).toHaveLength(1);
 	});
 
 	test("a prompt queued during the run keeps the release, so the final-answer card does not wake", async () => {

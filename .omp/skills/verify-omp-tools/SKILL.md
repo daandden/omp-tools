@@ -1,6 +1,6 @@
 ---
 name: verify-omp-tools
-description: Live proof for the omp-tools OMP plugin. Drives a fresh OMP session inside a headless Tern window (Tern views) or with PI_TUI_NATIVE=0 (classic text TUI), plus OMP RPC mode for checks that need no screen. Surfaces are the ask picker, the Picker btw, /btw Side questions, generate_image, and the advisor concern wake. Use it for any change to registration, the picker, Side questions, tool cards, or extension event handling.
+description: Live proof for the omp-tools OMP plugin. Drives a fresh OMP session inside a headless Tern window (Tern views) or with PI_TUI_NATIVE=0 (classic text TUI), plus OMP RPC mode for checks that need no screen. Surfaces are the ask picker, the Picker btw, /btw Side questions, generate_image, and the Advisor wake. Use it for any change to registration, the picker, Side questions, tool cards, or extension event handling.
 ---
 
 # Verify omp-tools
