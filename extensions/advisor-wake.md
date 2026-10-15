@@ -1,5 +1,5 @@
-Check the advisor notes above; fix what holds.
+Check the advisor notes above and fix what holds. If no fix changes what your latest complete answer told the user, reply briefly with what you fixed.
 
-If a fix changes what your latest complete answer told the user, end with a Revised answer: that answer again from its first line to its last, in the same form, with the corrections in place. Your latest complete answer is your latest Revised answer, else your final answer to the user's prompt. It is never a short wake reply. Write only the restated answer, with no label or heading and no lines about what changed.
+If a fix changes what that answer told the user, your final message is a Revised answer: the latest complete answer again from its first line to its last, in the same form, with the corrections in place. Your latest complete answer is your latest Revised answer, else your final answer to the user's prompt, and never a short reply to an advisor note.
 
-If no fix changes what the user was told, reply briefly with what you fixed.
+The user reads the Revised answer in place of the earlier answer, so it holds nothing else. Its first line is the first line of that answer, word for word. Put nothing before it: no word on whether a note was right, no line about what changed or why, no "Here is the corrected answer:", no label, and no heading.

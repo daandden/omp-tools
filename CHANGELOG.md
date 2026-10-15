@@ -23,11 +23,12 @@
   changed files" check and are compared only with earlier blockers, and the
   per-cycle limit rose from 6 to 10 wakes.
 - An Advisor wake now ends with a Revised answer when a fix changes what the
-  agent's latest complete answer told you: that answer again in full and in
-  the same form, with the corrections in place and no heading or lines about
-  what changed. A later wake restates the latest Revised answer. A fix that
-  changes nothing you were told (for example, a code-only fix) still gets a
-  short reply. Only the wake message changed.
+  agent's latest complete answer told you. The final reply is then only that
+  answer, again in full and in the same form, with the corrections in place.
+  No heading and no lines about what changed come before or after it. A later
+  Advisor wake restates the latest Revised answer. A fix that changes nothing
+  you were told (for example, a code-only fix) still gets a short reply. Only
+  the `advisor-wake` message changed.
 
 ### Added
 
