@@ -438,9 +438,9 @@ Fresh OMP sessions verified this behavior:
   cached tokens, the full main prefix. The same with `PI_TUI_NATIVE=0`
   verified the text panel.
 - OMP 18.11.0 in RPC mode with Claude Haiku 5.5: the Revised answer. A
-  throwaway command posted an advisor card after a final answer. In 26 of 26
-  runs, a concern or blocker that a stated fact was wrong ended the Advisor
+  throwaway command posted an advisor card after a final answer. In 32 of 32
+  Advisor wakes, a concern or blocker that a stated fact was wrong ended the
   wake with only the whole answer, in the same form, with the fact corrected.
-  A code-only concern got a short reply. A second fact concern, after a first
-  Advisor wake that also wrote a file, got a Revised answer that kept the first
-  correction.
+  In 16 of them, the wrong fact was on the answer's first line. A code-only
+  concern got a short reply. A second fact concern, after a first Advisor wake
+  that also wrote a file, got a Revised answer that kept the first correction.

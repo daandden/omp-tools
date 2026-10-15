@@ -6,6 +6,7 @@ An advisor concern or blocker card that lands after the agent's final answer, wi
 
 - `wake-once` sends exactly one `advisor-wake` message per card, and the message does not contain the note text.
 - `wake-revised` answers a concern that a stated fact is wrong with a Revised answer. The intro line, the table, and the closing sentence all come back, with only the fact changed.
+- `wake-first-line` answers a concern about a fact on the answer's first line with a Revised answer whose first line carries the corrected fact.
 - `wake-blocker` gives the same result as `wake-revised` for a blocker card.
 - `wake-short` answers a code-only concern, sent after a new user prompt, with a short reply that names the fix.
 - `wake-second` answers a second fact concern with a new Revised answer that keeps the first fix. The first concern also asks for a file write, so check 2 lets the second concern through.
@@ -63,7 +64,7 @@ Steps for `wake-revised` in the Tern view:
 8. Run `sleep 40`.
 9. Run `$C shot wake-revised`.
 
-The chat shows the Advisor card (`CONCERN [smoke]`), an `advisor-wake` card, a `read`, and then the reply. Pass: the reply starts with the first line of the final answer, word for word. The table with Berlin and the closing sentence follow, and nothing comes before or after.
+The chat shows the Advisor card (`CONCERN [smoke]`), an `advisor-wake` card, a `read`, and then the reply. Pass: the reply is the final answer with `Paris` changed to `Berlin` and every other line the same. It starts at the final answer's first line, and nothing comes before or after it.
 
 Steps for `wake-held`, in the same session:
 
@@ -86,6 +87,14 @@ Steps for `wake-blocker`:
 6. Wait for the next `agent_end`. The Advisor wake turn ends there.
 
 Pass: the same as `wake-revised`.
+
+Steps for `wake-first-line`:
+
+1. Write `team.md` into the fresh `ws` directory.
+2. Send `Read team.md. Who is on the team? Start with one intro line that says how many members the team has and which office Bob works in, then a Markdown table with columns Name, Role, Office, then one closing sentence on which office has the tech lead.` as a prompt. A one-line answer (`Read team.md. In which office does Bob work? Answer in exactly one sentence on one line.`) covers the same rule.
+3. Run steps 3 to 6 of `wake-blocker`, with `concern` in place of `blocker`.
+
+Pass: the same as `wake-revised`. The first line names Berlin, and no line names Paris.
 
 Steps for `wake-second`:
 
@@ -116,7 +125,7 @@ Steps for `wake-once`, the second view of every run:
 
 ## Gotchas
 
-- The reply of an Advisor wake varies from run to run. Run at least 12 fact-fix Advisor wakes across `wake-revised` and `wake-blocker`, and report the pass count. Expect no failure. One pass does not prove the prompt.
+- The reply of an Advisor wake varies from run to run. Run at least 12 fact-fix Advisor wakes across `wake-revised`, `wake-blocker`, and `wake-first-line`, with at least 4 of `wake-first-line`, and report the pass count. Expect no failure. One pass does not prove the prompt.
 - Send the card only after the final answer lands. A card during a run reaches the live turn and never wakes.
 - Two `advisor-wake` messages for one card mean two copies of `advisor-wake.ts` loaded. Do not add `-e <checkout>/extensions/advisor-wake.ts` while the plugin link is in place.
 - Check 1 treats a note with the same wording pattern as a woken note (for example "X's office is Y. That is wrong: team.md now says ...") as a repeat. It stays a card with no notice. Word `wake-held` notes differently to reach check 2.

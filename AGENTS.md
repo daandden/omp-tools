@@ -302,7 +302,8 @@ the Picker btw asks the same kind of Side question.
   its wording in a test. Check a prompt change with live Advisor wakes. Post
   the `advisor` card after a final answer with a throwaway command in
   `extensions/`. The reply varies from run to run. Count the passes over at
-  least 12 fact-fix Advisor wakes.
+  least 12 fact-fix Advisor wakes, with the wrong fact on the answer's first
+  line in at least 4.
   Release: on `PICKER_ANSWERED` (emitted on `pi.events` by the Picker path of
   `flexible-ask.ts` after Submit or a timeout pick, before `execute` returns)
   it steers the run's deferred concerns as a `customType: "advisor"` card
