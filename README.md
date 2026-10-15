@@ -248,6 +248,16 @@ turn for such concerns and blockers and asks the agent to check the notes and
 fix what holds. The card is already in the agent's context, so the wake message
 only points at it instead of repeating the notes. Nits stay passive.
 
+When a fix changes what the agent's latest complete answer told you, the agent
+ends the wake with a Revised answer. A Revised answer is that answer again in
+full and in the same form, with the corrections in place. It has no heading and
+no lines about what changed, so you can read it and ignore the earlier answer,
+which stays in the chat. The latest complete answer is the latest Revised
+answer if there is one, else the agent's final answer to your prompt. If a fix
+changes nothing that you were told (for example, a code-only fix), the agent
+replies briefly with what it fixed. Concern and blocker wakes follow the same
+rule in the TUI, RPC, and ACP.
+
 A card wakes the agent only when it follows the agent's final answer and no
 turn starts for it. A run that you stopped and did not resume ends without a
 final answer, so its cards stay passive. In plan mode the card stays passive
@@ -269,7 +279,8 @@ prompt cycle (one prompt you send until the next) must pass these checks:
 2. For concerns only: the last wake changed something. The woken turn ran
    `edit`, `write`, `ast_edit`, `bash`, `eval`, or `task` without an error. If
    the agent only read and replied, it did not agree with the advisor, and you
-   decide. A blocker skips this check, as it does in OMP.
+   decide. A blocker skips this check, as it does in OMP. A wake that only
+   wrote a Revised answer ran none of these tools, so it counts as no change.
 3. Fewer than 10 wakes ran in this prompt cycle, as a safety limit.
 
 When check 2 or 3 holds back a new note, you get a notification that says why.
@@ -424,3 +435,10 @@ Fresh OMP sessions verified this behavior:
   created no files while read ran. The mirror's first request read 25126
   cached tokens, the full main prefix. The same with `PI_TUI_NATIVE=0`
   verified the text panel.
+- OMP 18.11.0 in RPC mode with Claude Haiku 5.5: the Revised answer. A
+  throwaway command posted an advisor card after a final answer. A concern
+  that a stated fact was wrong ended the wake with the whole answer in the same
+  form, the fact corrected, and no heading. A code-only concern got a short
+  reply. A second fact concern, after a first wake that also wrote a file, got
+  a Revised answer that kept the first correction. A blocker card gave the same
+  result as the concern.

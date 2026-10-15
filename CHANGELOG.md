@@ -20,8 +20,14 @@
   Wakes start a turn (`steer` with `triggerTurn` instead of `aside`), so
   concern wakes now also work after an interrupt. A card wakes only when it
   follows a final answer, never in plan mode. Blockers skip the "last wake
-  changed files" check and are compared only with earlier blockers, the
-  per-cycle limit rose from 6 to 10 wakes, and the wake prompt is shorter.
+  changed files" check and are compared only with earlier blockers, and the
+  per-cycle limit rose from 6 to 10 wakes.
+- An Advisor wake now ends with a Revised answer when a fix changes what the
+  agent's latest complete answer told you: that answer again in full and in
+  the same form, with the corrections in place and no heading or lines about
+  what changed. A later wake restates the latest Revised answer. A fix that
+  changes nothing you were told (for example, a code-only fix) still gets a
+  short reply. Only the wake message changed.
 
 ### Added
 

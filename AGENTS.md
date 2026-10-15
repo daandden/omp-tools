@@ -294,6 +294,13 @@ the Picker btw asks the same kind of Side question.
   headless advisor drain after the last prompt (`prepareForHeadlessAdvisorDrain`),
   prints the final text, then disposes, so a woken turn would never be emitted.
   `advisor-wake.md` holds the wake prompt; the custom type is `advisor-wake`.
+  The prompt also states the Revised answer rule (GLOSSARY.md): when a fix
+  changes what the latest complete answer told the user, the reply ends with
+  that answer restated in full and in the same form, with no heading or
+  what-changed lines; otherwise the reply stays short. The rule lives only in
+  the prompt, and tests must not pin its wording, so check a prompt change
+  with a live wake: a throwaway command in `extensions/` that posts an
+  `advisor` card after a final answer.
   Release: on `PICKER_ANSWERED` (emitted on `pi.events` by the Picker path of
   `flexible-ask.ts` after Submit or a timeout pick, before `execute` returns)
   it steers the run's deferred concerns as a `customType: "advisor"` card
@@ -393,8 +400,11 @@ the Picker release (a deferred concern written by hand to the session's
 Picker btw, and the gate checked by a throwaway extension in `extensions/`
 calling `SideQuestionThread.ask` directly, because the `/btw` prompt makes the
 model refuse before it calls a blocked tool; a file outside the plugin cannot
-resolve `@oh-my-pi/*`). A headless Tern window drives
-that smoke: `tern serve --control <sock>`, then `tern ctl --control <sock>`
+resolve `@oh-my-pi/*`); OMP 18.11.0 for the Revised answer (RPC mode with
+Claude Haiku 5.5, `--no-extensions -e` with the checkout's `advisor-wake.ts`
+and a throwaway extension command that posted `advisor` cards, the core
+advisor off through `--config`). A headless Tern window drives
+the Tern smokes: `tern serve --control <sock>`, then `tern ctl --control <sock>`
 `run`, `type`, `key`, `click '<css selector>'`, and `shot <name>` (PNG plus a
 layout JSON of every element). `PI_TUI_NATIVE=0` in the same window checks the
 text renderer.
