@@ -415,5 +415,6 @@ text renderer.
 ## vstack
 
 - Issue tracker: GitHub Issues. See `docs/vstack/issue-tracker.md`.
+- Code host: GitHub, through the `gh` CLI. See `docs/vstack/code-host.md`.
 - Triage labels: default vocabulary. See `docs/vstack/triage-labels.md`.
 - Domain docs: single-context. See `docs/vstack/domain.md`.
