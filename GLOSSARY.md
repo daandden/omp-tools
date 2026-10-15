@@ -56,6 +56,10 @@ _Avoid_: held note, withheld note, queued note
 A turn this plugin starts so the agent acts on an **Advisor card** with a concern or blocker that arrived after the agent's final answer and that OMP left without a turn.
 _Avoid_: concern wake, wake (unqualified), nudge
 
+**Revised answer**:
+The reply that ends an **Advisor wake** and restates, in full and in the same form, the latest complete answer to the user's prompt: the agent's final answer, or an earlier **Revised answer**. The agent writes one only when a fix changes what that answer told the user.
+_Avoid_: corrected answer, restated answer, updated reply
+
 **generate_image**:
 This plugin's image tool. It replaces native `generate_image`, which the user disables.
 _Avoid_: custom image tool, image wrapper
