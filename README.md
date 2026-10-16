@@ -444,17 +444,6 @@ Fresh OMP sessions verified this behavior:
   answer let it finish and ended the thread; the next main prompt cleared the
   panel and a new `/btw` started a fresh thread. A Picker btw used grep while
   `ask` waited, and its thread file was deleted when the Picker closed. Called
-- OMP 18.11.1 in RPC mode with Claude Haiku 5.5: the wake message by answer
-  length, over fact-fix Advisor wakes (the answer had to contain a wrong fact,
-  and the user prompt said not to question it). Final answers over 600 tokens
-  got the short message in 11 of 11 wakes (4 with the wrong fact on the first
-  line). The agent stated the correction in 9 of 11. In 2 it pointed to the
-  "do not question" instruction and offered to fix instead. In 2 of the 9 it
-  restated the whole answer anyway. Shorter answers got the Revised answer
-  message, and 13 of 13 wakes ended with only the corrected answer (6 with the
-  wrong fact on the first line). Three answers that refused to state the
-  wrong fact got a short reply. The linked plugin loaded `js-tiktoken` from
-  its `node_modules`.
   directly with a prompt that asked for them, bash and write were refused and
   created no files while read ran. The mirror's first request read 25126
   cached tokens, the full main prefix. The same with `PI_TUI_NATIVE=0`
@@ -466,3 +455,14 @@ Fresh OMP sessions verified this behavior:
   In 16 of them, the wrong fact was on the answer's first line. A code-only
   concern got a short reply. A second fact concern, after a first Advisor wake
   that also wrote a file, got a Revised answer that kept the first correction.
+- OMP 18.11.1 in RPC mode with Claude Haiku 5.5: the wake message by answer
+  length, over fact-fix Advisor wakes (the answer had to contain a wrong fact,
+  and the user prompt said not to question it). Final answers over 600 tokens
+  got the short message in 11 of 11 wakes (4 with the wrong fact on the first
+  line). The agent stated the correction in 9 of 11. In 2 it pointed to the
+  "do not question" instruction and offered to fix instead. In 2 of the 9 it
+  restated the whole answer anyway. Shorter answers got the Revised answer
+  message, and 13 of 13 wakes ended with only the corrected answer (6 with the
+  wrong fact on the first line). Three answers that refused to state the
+  wrong fact got a short reply. The linked plugin loaded `js-tiktoken` from
+  its `node_modules`.
