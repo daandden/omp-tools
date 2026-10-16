@@ -47,6 +47,12 @@
 // is core-private and not applied.
 //
 // Print and JSON mode (`omp -p`, `--mode json`, and headless hosts that keep
+// The first wake of a prompt cycle picks the prompt from the final answer's
+// length; later wakes reuse it, so a brief wake reply is never measured as the
+// answer. A final answer over REVISED_ANSWER_MAX_TOKENS (o200k_base) gets the
+// short prompt, with no Revised answer rule, so the wake does not ask for a
+// long answer again. A count that fails also gets the short prompt.
+//
 // the runner's "print" default) are skipped: after the last prompt, print mode
 // switches the advisor to preserve-only, prints the final answer, waits for
 // late notes, and disposes the session. A woken turn there would never be
@@ -63,6 +69,7 @@ import {
 } from "@oh-my-pi/pi-coding-agent/judgment";
 import wakePrompt from "./advisor-wake.md" with { type: "text" };
 import { judgeRepeats, wordOverlapRepeats } from "./concern-match";
+import shortWakePrompt from "./advisor-wake-short.md" with { type: "text" };
 import {
 	formatAdvisories,
 	PICKER_ANSWERED,
@@ -82,6 +89,8 @@ const JUDGE_TIMEOUT_MS = 15_000;
 const IDLE_POLL_MS = 250;
 const IDLE_WAIT_MAX_MS = 30_000;
 
+/** A final answer longer than this, in o200k_base tokens, gets the short wake prompt. */
+const REVISED_ANSWER_MAX_TOKENS = 600;
 const STALLED_NOTICE =
 	"Advisor concern not sent to the agent: the agent changed no files after the last wake. Send a prompt if you want the agent to act.";
 const CEILING_NOTICE = `Advisor note not sent to the agent: ${MAX_WAKES_PER_PROMPT} wakes in this prompt cycle. Send a prompt if you want the agent to act.`;
@@ -165,6 +174,28 @@ async function freshNotes(ctx: ExtensionContext, notes: WakeNote[], woken: WakeN
 }
 
 export default function advisorWake(pi: ExtensionAPI): void {
+let encoder: Promise<{ encode(text: string): number[] }> | undefined;
+
+/** The o200k_base encoder, loaded on first use: its rank table is several MB. */
+function o200kEncoder() {
+	encoder ??= Promise.all([import("js-tiktoken/lite"), import("js-tiktoken/ranks/o200k_base")]).then(
+		([{ Tiktoken }, { default: ranks }]) => new Tiktoken(ranks),
+	);
+	return encoder;
+}
+
+/** The wake prompt for a cycle whose final answer is `answer`. */
+async function promptFor(answer: string): Promise<string> {
+	try {
+		const tokens = (await o200kEncoder()).encode(answer).length;
+		return tokens > REVISED_ANSWER_MAX_TOKENS ? shortWakePrompt : wakePrompt;
+	} catch (err) {
+		encoder = undefined;
+		logger.debug("advisor-wake: token count failed, using the short prompt", { err: String(err) });
+		return shortWakePrompt;
+	}
+}
+
 	/** Concern and blocker notes waiting for the agent to go idle. */
 	let pending: WakeNote[] = [];
 	/** Notes already woken for, or released, in this prompt cycle. */
@@ -176,6 +207,10 @@ export default function advisorWake(pi: ExtensionAPI): void {
 	/** The last assistant reply was a final answer, not a tool call, an error, or an interrupted reply. */
 	let afterFinalAnswer = false;
 	/**
+	/** The text of the last final answer (assistant reply with `stopReason: "stop"`). */
+	let lastAnswer = "";
+	/** The prompt the cycle's first wake picked; later wakes reuse it. */
+	let cyclePrompt: string | undefined;
 	 * Bumped on every reset and on every assistant message, so a check that
 	 * finishes afterwards is dropped: its notes left `pending` when it started,
 	 * and a turn that ran meanwhile already had the cards in context.
@@ -212,7 +247,7 @@ export default function advisorWake(pi: ExtensionAPI): void {
 		const started = generation;
 		checking = true;
 		try {
-			const fresh = await freshNotes(ctx, notes, woken);
+			const [fresh, prompt] = await Promise.all([freshNotes(ctx, notes, woken), cyclePrompt ?? promptFor(lastAnswer)]);
 			if (started !== generation || !ctx.isIdle() || ctx.hasPendingMessages()) return;
 			if (fresh.length === 0) return;
 			if (!lastWakeChangedFiles && !fresh.some(n => n.blocker)) {
@@ -228,9 +263,10 @@ export default function advisorWake(pi: ExtensionAPI): void {
 			lastWakeChangedFiles = false;
 			wakeTurn = "sent";
 			// An idle steer with `triggerTurn` starts a turn even while core's user
+			cyclePrompt = prompt;
 			// interrupt flag is set; an `aside` folds into context there.
 			pi.sendMessage(
-				{ customType: "advisor-wake", content: wakePrompt.trim(), display: true },
+				{ customType: "advisor-wake", content: prompt.trim(), display: true },
 				{ deliverAs: "steer", triggerTurn: true },
 			);
 		} finally {
@@ -261,6 +297,7 @@ export default function advisorWake(pi: ExtensionAPI): void {
 		lastWakeChangedFiles = true;
 		wakeTurn = "idle";
 	};
+		cyclePrompt = undefined;
 	// Fires for every user-authored prompt in every mode (TUI, print, RPC, ACP,
 	// SDK), including queued user messages, but not for this extension's own
 	// agent-initiated turn. `input` would only cover the TUI editor.
@@ -318,6 +355,9 @@ export default function advisorWake(pi: ExtensionAPI): void {
 		if (message.role === "assistant") {
 			afterFinalAnswer = message.stopReason === "stop";
 			return;
+			if (afterFinalAnswer) {
+				lastAnswer = message.content.flatMap(part => (part.type === "text" ? [part.text] : [])).join("\n");
+			}
 		}
 		if (message.role !== "custom" || message.customType !== "advisor") return;
 		const details = message.details as CardDetails | undefined;

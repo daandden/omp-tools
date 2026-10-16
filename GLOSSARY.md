@@ -57,7 +57,7 @@ A turn this plugin starts so the agent acts on an **Advisor card** with a concer
 _Avoid_: concern wake, wake (unqualified), nudge
 
 **Revised answer**:
-The reply that ends an **Advisor wake** and restates, in full and in the same form, the latest complete answer to the user's prompt: the agent's final answer, or an earlier **Revised answer**. The agent writes one only when a fix changes what that answer told the user.
+The reply that ends an **Advisor wake** and restates, in full and in the same form, the latest complete answer to the user's prompt: the agent's final answer, or an earlier **Revised answer**. The agent writes one only when a fix changes what that answer told the user, and only after a final answer short enough to restate.
 _Avoid_: corrected answer, restated answer, updated reply
 
 **generate_image**:

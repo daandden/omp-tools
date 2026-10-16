@@ -259,6 +259,14 @@ If a fix changes nothing that you were told (for example, a code-only fix), the
 agent replies briefly with what it fixed. Advisor wakes for concerns and
 blockers follow the same rule in the TUI, RPC, and ACP.
 
+The wake no longer asks for a Revised answer after a long answer. When the
+agent's final answer to your prompt is longer than 600 tokens (counted with
+tiktoken's `o200k_base` encoding), the wake only asks the agent to check the
+notes and fix what holds. The agent may still restate the answer on its own.
+If the count fails, the wake does the same. The first Advisor wake
+after your prompt chooses the message, and later wakes until your next prompt
+use the same one, so a short reply to a wake never counts as the answer.
+
 A card wakes the agent only when it follows the agent's final answer and no
 turn starts for it. A run that you stopped and did not resume ends without a
 final answer, so its cards stay passive. In plan mode the card stays passive
@@ -369,8 +377,11 @@ tokens like a short agent turn.
 From the repository root:
 
 ```bash
+bun install --ignore-scripts
 omp plugin link "$PWD"
 ```
+
+`bun install` fetches `js-tiktoken`, which the Advisor wake uses to count tokens.
 
 The link uses the working tree, so edits need no reinstall. Start a new OMP
 session after you link the plugin or change its code. Running sessions keep the
@@ -433,6 +444,17 @@ Fresh OMP sessions verified this behavior:
   answer let it finish and ended the thread; the next main prompt cleared the
   panel and a new `/btw` started a fresh thread. A Picker btw used grep while
   `ask` waited, and its thread file was deleted when the Picker closed. Called
+- OMP 18.11.1 in RPC mode with Claude Haiku 5.5: the wake message by answer
+  length, over fact-fix Advisor wakes (the answer had to contain a wrong fact,
+  and the user prompt said not to question it). Final answers over 600 tokens
+  got the short message in 11 of 11 wakes (4 with the wrong fact on the first
+  line). The agent stated the correction in 9 of 11. In 2 it pointed to the
+  "do not question" instruction and offered to fix instead. In 2 of the 9 it
+  restated the whole answer anyway. Shorter answers got the Revised answer
+  message, and 13 of 13 wakes ended with only the corrected answer (6 with the
+  wrong fact on the first line). Three answers that refused to state the
+  wrong fact got a short reply. The linked plugin loaded `js-tiktoken` from
+  its `node_modules`.
   directly with a prompt that asked for them, bash and write were refused and
   created no files while read ran. The mirror's first request read 25126
   cached tokens, the full main prefix. The same with `PI_TUI_NATIVE=0`

@@ -294,7 +294,14 @@ the Picker btw asks the same kind of Side question.
   headless advisor drain after the last prompt (`prepareForHeadlessAdvisorDrain`),
   prints the final text, then disposes, so a woken turn would never be emitted.
   `advisor-wake.md` holds the wake prompt; the custom type is `advisor-wake`.
-  The prompt also states the Revised answer rule (GLOSSARY.md). When a fix
+  `advisor-wake-short.md` holds the short prompt, without the Revised answer
+  rule. The first wake of a prompt cycle counts the text of the last final
+  answer (`js-tiktoken`, `o200k_base`, loaded on first use, ~125 ms) and sends
+  the short prompt when it is over `REVISED_ANSWER_MAX_TOKENS` (600) or the
+  count fails; later wakes in the cycle reuse that choice, so a brief wake
+  reply is never measured. `js-tiktoken` is the plugin's only runtime
+  dependency; OMP resolves it from the plugin's `node_modules`.
+  `advisor-wake.md` also states the Revised answer rule (GLOSSARY.md). When a fix
   changes what the latest complete answer told the user, the final reply of
   the Advisor wake is only that answer, restated in full and in the same form.
   Nothing comes before or after it. When no fix changes what the user was
@@ -406,7 +413,8 @@ model refuse before it calls a blocked tool; a file outside the plugin cannot
 resolve `@oh-my-pi/*`); OMP 18.11.0 for the Revised answer (RPC mode with
 Claude Haiku 5.5, the linked plugin loaded as for a user, a throwaway extension
 command that posted `advisor` cards, and the core advisor off through
-`--config`). A headless Tern window drives
+`--config`; OMP 18.11.1 for the short wake prompt, the same way). A headless
+Tern window drives
 the Tern smokes: `tern serve --control <sock>`, then `tern ctl --control <sock>`
 `run`, `type`, `key`, `click '<css selector>'`, and `shot <name>` (PNG plus a
 layout JSON of every element). `PI_TUI_NATIVE=0` in the same window checks the

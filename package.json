@@ -23,5 +23,8 @@
 			"./extensions/advisor-wake.ts",
 			"./extensions/btw.ts"
 		]
+	},
+	"dependencies": {
+		"js-tiktoken": "^1.0.21"
 	}
 }

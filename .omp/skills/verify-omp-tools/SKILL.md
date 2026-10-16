@@ -27,12 +27,12 @@ Shots, notes, and copied session lines go at the top level of `$VERIFY_RUN_DIR`.
 
 ## Doctor
 
-Run these read-only checks first, and again whenever anything looks off. Stop and report on any failure.
+Run these read-only checks before launch, on each fresh OMP session, and whenever anything looks off. Stop and report on any failure.
 
 1. `omp --version` and `tern --version` both print a version.
 2. `ls -la ~/.omp/plugins/node_modules/omp-tools` points at this checkout (`git rev-parse --show-toplevel`). If it points elsewhere, OMP loads other code: stop and report. Do not relink; the link is the user's global state.
 3. `bun run check` passes (it warns when the installed SDK types differ from `omp --version`; a warning is fine).
-4. `test -S "$SOCK"` fails, so no other run owns the socket.
+4. The socket matches the phase of the run. Before launch, `test -S "$SOCK"` fails, so no other run owns the socket. After this run started `tern serve`, `tern ctl --control "$SOCK" tree` exits 0 and prints `"ok":true`, so the run's own server still responds.
 5. A model with working credentials exists. The cheap default is `anthropic/claude-haiku-5-5`; Codex paths use `openai-codex/gpt-5.6-luna`.
 
 ## Launch

@@ -29,6 +29,12 @@
   Advisor wake restates the latest Revised answer. A fix that changes nothing
   you were told (for example, a code-only fix) still gets a short reply. Only
   the `advisor-wake` message changed.
+- An Advisor wake after a final answer longer than 600 tokens (tiktoken
+  `o200k_base`) now sends only "Check the advisor notes above; fix what
+  holds.", which does not ask the agent to restate the answer. The first wake after
+  your prompt picks the message and later wakes until your next prompt reuse
+  it. If the count fails, the short message is sent. Install now needs
+  `bun install` for the new `js-tiktoken` dependency.
 
 ### Added
 

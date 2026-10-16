@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -33,6 +33,10 @@ mock.module("@oh-my-pi/pi-coding-agent/judgment", () => ({
 
 const { default: advisorWake } = await import("../extensions/advisor-wake");
 const { PICKER_ANSWERED } = await import("../extensions/deferred-notes");
+const { default: revisedAnswerPrompt } = await import("../extensions/advisor-wake.md", { with: { type: "text" } });
+const { default: shortPrompt } = await import("../extensions/advisor-wake-short.md", { with: { type: "text" } });
+
+const LONG_ANSWER = "word ".repeat(700);
 
 const STALLED = /changed no files after the last wake/;
 const CEILING = /10 wakes in this prompt cycle/;
@@ -49,9 +53,9 @@ interface Harness {
 	wakes: Sent[];
 	releases: Sent[];
 	notices: string[];
-	/** A concern card after the agent's last reply, a final answer unless `reply` says otherwise. */
-	concern(note: string, reply?: string): Promise<void>;
-	blocker(note: string, reply?: string): Promise<void>;
+	/** A concern card after the agent's last reply (text `answer`), a final answer unless `reply` says otherwise. */
+	concern(note: string, reply?: string, answer?: string): Promise<void>;
+	blocker(note: string, reply?: string, answer?: string): Promise<void>;
 	/** Plan mode on (`"plan"`) or off (`"none"`), as core records it on the branch. */
 	mode(mode: string): void;
 	/** The agent turn the wake started, with the tools it ran. */
@@ -107,8 +111,8 @@ function harness(): Harness {
 	const emit = (name: string, event: unknown = {}) => {
 		for (const handler of handlers.get(name) ?? []) handler(event, ctx);
 	};
-	const card = async (notes: { note: string; severity: string }[], reply: string) => {
-		emit("message_end", { message: { role: "assistant", stopReason: reply } });
+	const card = async (notes: { note: string; severity: string }[], reply: string, answer: string) => {
+		emit("message_end", { message: { role: "assistant", stopReason: reply, content: [{ type: "text", text: answer }] } });
 		emit("message_end", { message: { role: "custom", customType: "advisor", details: { notes } } });
 		await Bun.sleep(30);
 	};
@@ -117,8 +121,8 @@ function harness(): Harness {
 		wakes,
 		releases,
 		notices,
-		concern: (note, reply = "stop") => card([{ note, severity: "concern" }], reply),
-		blocker: (note, reply = "stop") => card([{ note, severity: "blocker" }], reply),
+		concern: (note, reply = "stop", answer = "Done.") => card([{ note, severity: "concern" }], reply, answer),
+		blocker: (note, reply = "stop", answer = "Done.") => card([{ note, severity: "blocker" }], reply, answer),
 		mode(mode) {
 			branch.push({ type: "mode_change", mode });
 		},
@@ -170,6 +174,14 @@ afterEach(() => {
 	fs.rmSync(sessionDir, { recursive: true, force: true });
 });
 
+// The first wake loads the o200k_base table (~125 ms); the cards above wait only 30 ms.
+beforeAll(async () => {
+	sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-tools-wake-"));
+	await harness().concern("Warm the token counter.");
+	await Bun.sleep(500);
+	fs.rmSync(sessionDir, { recursive: true, force: true });
+});
+
 beforeEach(() => {
 	nativeJudge = true;
 	decide = () => "none";
@@ -197,6 +209,25 @@ describe("advisor wake", () => {
 		expect(h.wakes).toHaveLength(1);
 		expect(h.wakes[0].deliverAs).toBe("steer");
 		expect(h.wakes[0].triggerTurn).toBe(true);
+	});
+
+	test("a final answer over 600 tokens gets the short prompt, and later wakes in the cycle keep it", async () => {
+		const h = harness();
+		await h.concern("This function can return null.", "stop", LONG_ANSWER);
+		h.wokenTurn([{ name: "edit" }]);
+		await h.concern("The README does not describe the timeout option.", "stop", "Fixed.");
+		expect(h.wakes.map(w => w.content)).toEqual([shortPrompt.trim(), shortPrompt.trim()]);
+	});
+
+	test("a short final answer gets the Revised answer prompt until the next user prompt", async () => {
+		const h = harness();
+		await h.concern("This function can return null.");
+		h.wokenTurn([{ name: "edit" }]);
+		// A long wake reply is not the cycle's answer.
+		await h.concern("The README does not describe the timeout option.", "stop", LONG_ANSWER);
+		h.userPrompt();
+		await h.concern("The cache key ignores the locale.", "stop", LONG_ANSWER);
+		expect(h.wakes.map(w => w.content)).toEqual([revisedAnswerPrompt.trim(), revisedAnswerPrompt.trim(), shortPrompt.trim()]);
 	});
 
 	test.each([

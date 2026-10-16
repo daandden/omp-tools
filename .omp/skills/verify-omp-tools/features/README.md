@@ -4,7 +4,7 @@ This directory is the maintained source for verifying what users see from the om
 
 ## Baseline preconditions
 
-- Doctor in `../SKILL.md` passed: the plugin link points at this checkout, `bun run check` passes, and the socket is free.
+- Doctor in `../SKILL.md` passed: the plugin link points at this checkout, `bun run check` passes, and the socket check for the current phase passes.
 - A headless Tern window started by this run is serving on `$SOCK`, and a fresh OMP session runs in it with `--config $VERIFY_RUN_DIR/smoke-config.yml --session-dir $VERIFY_RUN_DIR/data/sessions`.
 - The session has a saved transcript: send one main prompt (`Reply with only: ok`) and wait for the reply before anything that needs a session file (Side questions, Picker btw).
 - Never drive a Tern window or OMP session this run did not start.
