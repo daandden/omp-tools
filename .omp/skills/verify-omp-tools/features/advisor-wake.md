@@ -1,21 +1,26 @@
 # Advisor wake
 
-An advisor concern or blocker card that lands after the agent's final answer, with no turn started for it, makes the plugin send one short `advisor-wake` message that starts a turn. The message points at the card and never repeats the note. If the fix changes what the latest complete answer told the user, the final reply is only a Revised answer: that answer again from its first line to its last, in the same form, with the fix in place. Nothing comes before or after it, so it has no heading, label, or line about what changed. A code-only or file-only fix gets a short reply. Per prompt cycle, three checks hold a card back: a repeat of a woken note (check 1), a concern after an Advisor wake that changed no file (check 2), and more than 10 Advisor wakes (check 3).
+An advisor concern or blocker card that lands after the agent's final answer, with no turn started for it, makes the plugin send one short `advisor-wake` message that starts a turn. The message points at the card and never repeats the note. If the fix changes what the latest complete answer told the user, the final reply is only a Revised answer: that answer again from its first line to its last, in the same form, with the fix in place. Nothing comes before or after it, so it has no heading, label, or line about what changed. A code-only or file-only fix gets a short reply. Per prompt cycle, three checks hold a card back: a repeat of a woken note (check 1), a concern after an Advisor wake that made no successful `edit`, `write`, `ast_edit`, `bash`, `eval`, or `task` call (check 2), and more than 10 Advisor wakes (check 3).
+
+The Picker release is the second path. While a run waits in the ask picker, OMP keeps the advisor's concerns for the end of the run (deferred notes). When the user answers the picker, the plugin reads those concerns from the session's `__advisor*.jsonl` and steers them into the run as one `advisor` card, so the agent gets them before its final answer. That card has `details.releasedBy: "omp-tools"` and no `advisor-wake`.
 
 ## Sub-features
 
-- `wake-once` sends exactly one `advisor-wake` message per card, and the message does not contain the note text.
+- `wake-once` sends exactly one `advisor-wake` message per card that passes the checks, and the message does not contain the note text. A held or repeated card gets none.
 - `wake-revised` answers a concern that a stated fact is wrong with a Revised answer. The intro line, the table, and the closing sentence all come back, with only the fact changed.
 - `wake-first-line` answers a concern about a fact on the answer's first line with a Revised answer whose first line carries the corrected fact.
 - `wake-blocker` gives the same result as `wake-revised` for a blocker card.
 - `wake-short` answers a code-only concern, sent after a new user prompt, with a short reply that names the fix.
 - `wake-second` answers a second fact concern with a new Revised answer that keeps the first fix. The first concern also asks for a file write, so check 2 lets the second concern through.
 - `wake-held` keeps a new concern as a card after an Advisor wake that ran only reads (check 2). The agent gets no new turn.
+- `release-picker` steers a deferred concern into the run when the user answers the picker. The agent acts on it before its final answer.
+- `release-repeat` keeps the same concern as a card with no Advisor wake when it arrives again after the final answer.
 
 ## How to get to it (user POV)
 
 - Turn the OMP advisor on, ask a question, and wait for the final answer. The advisor posts a concern or blocker card under it, and the Advisor wake starts a turn by itself.
-- Proof needs a card on demand. A throwaway extension command posts it, and a `--config` overlay turns the core advisor off so it adds no cards of its own.
+- With the advisor on, answer an ask picker while the advisor holds a concern for the end of the run. The concern shows as an Advisor card right after the `ask` card, and the agent acts on it in the same run.
+- Proof needs a card or a deferred concern on demand. A throwaway extension command posts a card, a line written by hand to the session's `__advisor.smoke.jsonl` stands in for a deferred concern, and a `--config` overlay turns the core advisor off so it adds no cards of its own.
 
 ## Driving it with tern ctl
 
@@ -44,12 +49,12 @@ Preconditions:
   }
   ```
 
-- `$VERIFY_RUN_DIR/smoke-config.yml` holds `advisor:` and `  enabled: false` on two lines.
+- `$VERIFY_RUN_DIR/smoke-config.yml` exists (Run entry in `../SKILL.md`).
 - `$VERIFY_RUN_DIR/ws/team.md` holds a `# Team` heading and three lines: `- Alice: role Tech lead, office Lisbon`, `- Bob: role Backend engineer, office Paris`, `- Carol: role Designer, office Oslo`. Keep fixtures out of the checkout.
-- The Tern window serves with `cwd` = `$VERIFY_RUN_DIR/ws`, and OMP starts without `--no-extensions`, so the linked plugin loads as it does for a user:
+- The Tern window serves as `../SKILL.md` describes, and OMP starts in `$VERIFY_RUN_DIR/ws` without `--no-extensions`, so the linked plugin loads as it does for a user:
 
   ```sh
-  $C run "\"omp --model anthropic/claude-haiku-5-5 -e <checkout>/extensions/smoke-advisor.ts --config $VERIFY_RUN_DIR/smoke-config.yml --session-dir $VERIFY_RUN_DIR/data/sessions --no-title --no-lsp\""
+  $C run "\"sh -c 'cd $VERIFY_RUN_DIR/ws && exec omp --model anthropic/claude-haiku-5-5 -e <checkout>/extensions/smoke-advisor.ts --config $VERIFY_RUN_DIR/smoke-config.yml --session-dir $VERIFY_RUN_DIR/data/sessions --no-title --no-lsp'\""
   ```
 
 Steps for `wake-revised` in the Tern view:
@@ -72,6 +77,30 @@ Steps for `wake-held`, in the same session:
 2. Run `$C key Enter`.
 3. Run `sleep 20`.
 4. Run `$C shot wake-held`.
+
+Pass: the card shows and no new turn starts.
+
+Steps for `release-picker`, in the same session:
+
+1. Run `$C type '"Call the ask tool once: question Proceed?, options yes and no. After my answer, apply any advisor note you receive, then reply with only: finished"'`.
+2. Run `$C key Enter`. Wait until `$C tree` contains `Ask aside`.
+3. While the picker is open, append one line to `<session file without .jsonl>/__advisor.smoke.jsonl` (create the folder if it is missing). The line is a deferred `advise` result in the format that OMP's advisor recorder writes:
+
+   ```json
+   {"type":"message","message":{"role":"toolResult","toolName":"advise","content":[{"type":"text","text":"Queued for the end of the turn. Do not re-raise."}],"details":{"note":"Write release-probe.txt in the working directory with the text: release received","severity":"concern","advisor":"smoke"}}}
+   ```
+
+4. Run `$C key Enter` to answer `yes`.
+5. Run `sleep 30`.
+6. Run `$C shot release-card`.
+
+Pass: an Advisor card `CONCERN [smoke] Write release-probe.txt …` shows under the `ask` card, then a `Write release-probe.txt` card, then `finished`. `ws/release-probe.txt` holds `release received`. The session JSONL has a `custom_message` with `customType` `advisor` and `details.releasedBy` `omp-tools`, and no `advisor-wake` after it.
+
+Steps for `release-repeat`, in the same session:
+
+1. Run `$C type '"/smoke-advisor concern Write release-probe.txt in the working directory with the text: release received"'`.
+2. Run `$C key Enter`.
+3. Run `sleep 25`.
 
 Pass: the card shows and no new turn starts.
 
@@ -119,16 +148,17 @@ Pass: the reply names the fix in one or two sentences and restates nothing, and 
 
 Steps for `wake-once`, the second view of every run:
 
-1. Run `jq -r 'select(.type=="custom_message") | .customType' <session>.jsonl`. It prints `advisor` and then `advisor-wake`, once per card.
+1. Run `jq -r 'select(.type=="custom_message") | .customType' <session>.jsonl`. Each card that passes the checks is followed by one `advisor-wake`. A held, repeated, or released card has none.
 2. Run `jq -r 'select(.type=="custom_message" and .customType=="advisor-wake") | .content' <session>.jsonl`. The output does not contain the note.
 3. Run `jq -r 'select(.type=="message" and .message.role=="assistant" and .message.stopReason=="stop") | [.message.content[] | select(.type=="text") | .text] | join("")' <session>.jsonl`. The reply of each Advisor wake is the last of these messages after its `advisor-wake` message.
 
 ## Gotchas
 
-- The reply of an Advisor wake varies from run to run. Run at least 12 fact-fix Advisor wakes across `wake-revised`, `wake-blocker`, and `wake-first-line`, with at least 4 of `wake-first-line`, and report the pass count. Expect no failure. One pass does not prove the prompt.
+- The reply of an Advisor wake varies from run to run. Run at least 12 fact-fix Advisor wakes across `wake-revised`, `wake-blocker`, and `wake-first-line`, with at least 4 of `wake-first-line`, and report the pass count. Expect no failure. One pass does not prove the prompt. A Markdown table with its columns padded to a new width is the same form.
 - Send the card only after the final answer lands. A card during a run reaches the live turn and never wakes.
 - Two `advisor-wake` messages for one card mean two copies of `advisor-wake.ts` loaded. Do not add `-e <checkout>/extensions/advisor-wake.ts` while the plugin link is in place.
 - Check 1 treats a note with the same wording pattern as a woken note (for example "X's office is Y. That is wrong: team.md now says ...") as a repeat. It stays a card with no notice. Word `wake-held` notes differently to reach check 2.
 - RPC has no UI, so the check 2 and check 3 notices show only in the TUI views. In the Tern view (OMP 18.11.0, Tern 0.8.3), the check 2 notice did not show in `$C tree` or in the bell inbox. Treat the notice as unproven there.
 - Esc does not close the Tern bell inbox (`button.tn-ib-badge`), and typed text goes nowhere while it is open. Click the bell again before typing.
 - Delete `extensions/smoke-advisor.ts` after the drive. `git status -s` must not list it.
+- The deferred line format and its acknowledgment text are private to OMP. If OMP changes them, the Picker release finds nothing. Compare the fixture with `ADVISOR_ACK_DEFERRED` in OMP's `advisor/advise-tool.ts` (`Queued for the end of the turn. Do not re-raise.` in OMP 18.11.1).

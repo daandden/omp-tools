@@ -5,7 +5,7 @@ This directory is the maintained source for verifying what users see from the om
 ## Baseline preconditions
 
 - Doctor in `../SKILL.md` passed: the plugin link points at this checkout, `bun run check` passes, and the socket is free.
-- A headless Tern window started by this run is serving on `$SOCK`, and a fresh OMP session runs in it with `--session-dir $VERIFY_RUN_DIR/data/sessions`.
+- A headless Tern window started by this run is serving on `$SOCK`, and a fresh OMP session runs in it with `--config $VERIFY_RUN_DIR/smoke-config.yml --session-dir $VERIFY_RUN_DIR/data/sessions`.
 - The session has a saved transcript: send one main prompt (`Reply with only: ok`) and wait for the reply before anything that needs a session file (Side questions, Picker btw).
 - Never drive a Tern window or OMP session this run did not start.
 
@@ -34,4 +34,4 @@ Each feature file starts with an H1 title and one paragraph of user-visible beha
 - [Picker btw](./picker-btw.md): a Side question from inside the ask picker, while `ask` waits.
 - [Ask picker](./ask-picker.md): Markdown questions, keys, Other and notes, Submit, and the answer the agent gets.
 - [generate_image](./generate-image.md): a generation and an edit through Codex Images, and the tool card.
-- [Advisor wake](./advisor-wake.md): one `advisor-wake` message per late card, a Revised answer for a fact fix, a second Revised answer that keeps the first fix, a short reply for a code-only fix, and a concern held back after an Advisor wake that changed no file.
+- [Advisor wake](./advisor-wake.md): one `advisor-wake` message per late card that passes the checks, a Revised answer for a fact fix, a second Revised answer that keeps the first fix, a short reply for a code-only fix, a concern held back after an Advisor wake that changed no file, and the Picker release of deferred concerns when the user answers the picker.
