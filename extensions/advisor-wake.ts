@@ -5,11 +5,12 @@
 // passive card. Core starts a turn for a late blocker, but not while its user
 // interrupt flag (`autoResumeSuppressed`) is set. Esc, the Picker's cancel
 // (`ctx.abort()`), and other user aborts set that flag, even while idle and
-// without writing an `aborted` reply. Only a user prompt or a tree jump clears
-// it, so a run that resumes after an interrupt without a prompt still ends with
-// passive cards. Extensions cannot read the flag, so the rule is the outcome:
-// a concern or blocker card that follows a final answer (an assistant reply
-// with `stopReason: "stop"`) and that no turn picks up wakes the agent. A run
+// without writing an `aborted` reply. Only a user prompt, a tree jump, or (in
+// OMP after 18.11.1, PR #14831) `/retry` clears it, so a run that resumes any
+// other way still ends with passive cards. Extensions cannot read the flag, so
+// the rule is the outcome: a concern or blocker card that follows a final
+// answer (an assistant reply with `stopReason: "stop"`) and that no turn picks
+// up wakes the agent. A run
 // the user stopped ends with an `aborted` reply, so its cards never wake. The
 // preserved card is already in the agent's context (a developer `<advisory>`
 // message), so the wake only points at it and never repeats the notes.

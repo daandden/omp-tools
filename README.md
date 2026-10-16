@@ -346,7 +346,7 @@ BTW history, and autocomplete is OMP's.
 - Model and context: the main agent's model, thinking level, system prompt,
   and conversation so far, copied from the live session when the thread
   starts. The first request reuses the main agent's prompt cache, also after a
-  compaction and when LSP or MCP tools sit at the top level
+  compaction or a `/tree` jump and when LSP or MCP tools sit at the top level
   (`tools.xdev: false`).
 - Cache misses: with OMP's Cache Miss Marker setting on
   (`display.cacheMissMarker`), an answer whose requests had to write the
@@ -455,6 +455,15 @@ Fresh OMP sessions verified this behavior:
   In 16 of them, the wrong fact was on the answer's first line. A code-only
   concern got a short reply. A second fact concern, after a first Advisor wake
   that also wrote a file, got a Revised answer that kept the first correction.
+- OMP 18.11.1 in RPC mode with Claude Haiku 5.5: side questions with the
+  mirror built from the fork file alone, without the live copy. After a
+  compaction with eval history (two `eval` calls, `/compact`, one prompt), the
+  first request read 16859 cached tokens of the main session's 16863-token
+  last prompt. After `eval`, a later prompt, a `/tree` jump back to the `eval`
+  answer, and one prompt, the live messages held an `eval-state-context`
+  message before the new prompt that the transcript lacked, and the first
+  request read 16562 of 16742 tokens. The live copy stays for that case (OMP
+  issue #15933).
 - OMP 18.11.1 in RPC mode with Claude Haiku 5.5: the wake message by answer
   length, over fact-fix Advisor wakes (the answer had to contain a wrong fact,
   and the user prompt said not to question it). Final answers over 600 tokens

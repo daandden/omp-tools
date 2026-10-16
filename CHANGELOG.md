@@ -41,10 +41,10 @@
 - Took over `/btw <question>` in the interactive TUI: a side question that can
   read, grep, glob, find, and web_search (only calls OMP rates as reads; any
   other call is refused). It runs with the main agent's model and context and
-  reuses its prompt cache, also after a compaction (it starts from the main
-  agent's live messages, not the transcript) and when LSP or MCP tools are
-  top-level (the side question sends the same tool list and refuses those
-  tools). The answer shows in a panel above the editor, which
+  reuses its prompt cache, also when LSP or MCP tools are top-level (the side
+  question sends the same tool list and refuses those tools) and, from OMP
+  18.11.0, after a compaction in a session that used `eval`. The answer shows
+  in a panel above the editor, which
   keeps focus; tool calls fold into one line that `t` (or a click in Tern)
   opens, and Esc cancels or closes. A later `/btw` follows up in the same
   thread until the next main prompt. With OMP's Cache Miss Marker setting on,

@@ -93,7 +93,7 @@ interface ToolCallBlock {
 /**
  * A copy of the main agent's messages for the mirror, so its requests start
  * with exactly what the main agent sends (the transcript lacks messages the
- * live session adds, such as the eval state after a compaction). Calls the main
+ * live session adds, such as the eval state after a `/tree` jump). Calls the main
  * agent still waits on get an aborted result, as OMP's fork repair writes, so
  * the copy is a valid conversation and the pending call stays visible.
  */
@@ -256,9 +256,10 @@ export class SideQuestionThread {
 			});
 			mirror = created.session;
 			matchToolCatalog(mirror, main);
-			// The transcript lacks messages the live main session adds (the eval
-			// state after a compaction), so a mirror rebuilt from it diverged from
-			// the main request and missed the cache in long sessions.
+			// The transcript lacks messages the live main session adds: OMP 18.11
+			// writes the eval state at a compaction (#15695), but `/tree` still
+			// adds it in memory only (#15933), so a mirror rebuilt from the file
+			// diverged from the main request and missed the cache.
 			const seeded = seedMessages(main.agent.state.messages);
 			mirror.agent.replaceMessages(seeded);
 			expectedPrompt = seeded.map(requestPrompt).findLast(tokens => tokens !== undefined);
@@ -271,15 +272,10 @@ export class SideQuestionThread {
 			throw error;
 		}
 		// Codex missed the main prompt cache on a new websocket (0 of 4 in the
-		// spike); SSE with parent affinity hit 4 of 5. `parentSessionId` is an
-		// OMP 18.10 stream option that the 18.8 SDK types lack.
+		// spike); SSE with parent affinity hit 4 of 5.
 		const stream = mirror.agent.streamFn;
 		mirror.agent.streamFn = (streamModel, context, options) =>
-			stream(streamModel, context, {
-				...options,
-				preferWebsockets: false,
-				...({ parentSessionId: main.sessionId } as object),
-			});
+			stream(streamModel, context, { ...options, preferWebsockets: false, parentSessionId: main.sessionId });
 		return new SideQuestionThread(mirror, file, main.settings, expectedPrompt);
 	}
 

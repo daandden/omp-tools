@@ -38,9 +38,9 @@ the Picker btw asks the same kind of Side question.
   cache. Use `getActiveToolNames`, not `getEnabledToolNames`: the latter makes
   xd://-mounted tools top-level and changed the prefix (cache read fell from
   the full ~22k prefix to 7k in the spike). On Codex, `streamFn` is wrapped to
-  add `parentSessionId` (OMP 18.10 stream option, missing from the 18.8 types)
-  and `preferWebsockets: false`; over a new websocket the first request missed
-  the cache 4 of 4 times. The mirror gets its own `AgentRegistry` (out of the
+  add `parentSessionId` and `preferWebsockets: false`; over a new websocket the
+  first request missed the cache 4 of 4 times. The mirror gets its own
+  `AgentRegistry` (out of the
   Agent Hub), subagent settings, the parent's prepared extensions, and an
   inline gate extension: a `tool_call` handler that blocks every tool outside
   read/grep/glob/find/web_search and every call `resolveToolTier`
@@ -57,12 +57,16 @@ the Picker btw asks the same kind of Side question.
   reads the whole main prefix. After that, `seedMessages` replaces the
   mirror's messages with a copy of `main.agent.state.messages`
   (`structuredClone`, plus an aborted result for each call the last reply
-  still waits on, as `repairInterruptedTail` writes). The transcript lacks
-  messages the live session adds: after a compaction with eval history OMP
-  inserts an `eval-state-context` message it never persists, so a mirror built
-  from the file differed from the main request after it and read only the
-  system and tool head (15.8k of ~230k tokens in a long session). The fork
-  file still holds the mirror's own turns. `cacheMissTokens` flags a request
+  still waits on, as `repairInterruptedTail` writes). The copy is also on the
+  main session's selected branch, which the file does not record. The
+  transcript lacks messages the live session adds: OMP inserts an
+  `eval-state-context` message when it rebuilds the context. Since OMP
+  18.11.0 (#15695) a compaction writes it to the file, but `/tree`
+  (`navigateTree`) still does not (#15933, checked in 18.11.1). A mirror built
+  from the file differs from the main request after that point (15.8k of ~230k
+  tokens read after a compaction before 18.11.0). Drop the copy only when both
+  paths persist it (issue #17). The fork file still holds the mirror's own turns.
+  `cacheMissTokens` flags a request
   that reads more than 2048 tokens less than expected (the main session's last
   request for the first, then the thread's previous one), only when it wrote
   cache (`cacheWrite > 0`, so never on Codex) and only while
@@ -261,9 +265,10 @@ the Picker btw asks the same kind of Side question.
   must not repeat the notes. Core leaves a late blocker without a turn while
   `autoResumeSuppressed` is set (OMP 18.10.4). Every user-reason abort sets
   it: Esc (also while idle, with no `aborted` reply), `ctx.abort()` from a
-  Picker cancel, RPC and ACP abort. Only a user prompt, a typed steer, or a
-  tree jump clears it, so a run that resumes without a prompt still ends with
-  passive cards. Extensions cannot read the flag, hence the outcome rule. Do
+  Picker cancel, RPC and ACP abort. Only a user prompt, a typed steer, a tree
+  jump, or (in OMP after 18.11.1, PR #14831) `/retry` clears it, so a run that
+  resumes any other way still ends with passive cards. Extensions cannot read
+  the flag, hence the outcome rule. Do
   not go back to `aside`: its idle branch in core `sendCustomMessage` folds
   into context while the flag is set. A steer with `triggerTurn` only checks
   ACP deferral, so the wake reads plan mode itself (the branch's latest
@@ -413,8 +418,12 @@ model refuse before it calls a blocked tool; a file outside the plugin cannot
 resolve `@oh-my-pi/*`); OMP 18.11.0 for the Revised answer (RPC mode with
 Claude Haiku 5.5, the linked plugin loaded as for a user, a throwaway extension
 command that posted `advisor` cards, and the core advisor off through
-`--config`; OMP 18.11.1 for the short wake prompt, the same way). A headless
-Tern window drives
+`--config`; OMP 18.11.1 for the short wake prompt, the same way); OMP 18.11.1
+for the Side question cache after a compaction and after a `/tree` jump on a
+branch with eval history (RPC mode, `compaction.keepRecentTokens` lowered
+through `--config`, a throwaway extension command calling
+`SideQuestionThread` or `ctx.navigateTree`, and its `message_end` handler
+logging the mirror's usage). A headless Tern window drives
 the Tern smokes: `tern serve --control <sock>`, then `tern ctl --control <sock>`
 `run`, `type`, `key`, `click '<css selector>'`, and `shot <name>` (PNG plus a
 layout JSON of every element). `PI_TUI_NATIVE=0` in the same window checks the
