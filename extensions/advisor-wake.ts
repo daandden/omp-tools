@@ -21,23 +21,22 @@
 // release reads the concerns from the advisor transcript (`deferred-notes.ts`)
 // and steers them as an advisor card, as core steers a blocker. Core still
 // sends them at the final answer; that card does not wake for released notes.
-// A release is not a wake: it needs the user's answer, so checks 2 and 3 skip
+// A release is not a wake: it needs the user's answer, so the wake limit skips
 // it. Released notes join check 1's earlier list. A release steers in plan
 // mode too.
 //
 // The woken turn is itself reviewed and can raise another note, so wakes are
-// gated per prompt cycle (one user prompt until the next) by three checks:
+// gated per prompt cycle (one user prompt until the next) by two checks:
 // 1. The note is new: an OMP judge call (TypeSafe Jev) or, without a native
 //    judge, word overlap finds no earlier woken note with the same issue. A
 //    concern is compared with every woken note, a blocker only with woken
 //    blockers, so a concern raised again as a blocker is an escalation, as in
 //    core's emission guard. A repeat stays a card; the agent already answered.
-// 2. Concerns only: the last wake changed something, that is, the woken turn
-//    ran a file-changing tool without error. A turn that only read and replied
-//    means the agent did not agree; the user decides. Core never holds back a
-//    blocker for an earlier quiet turn, so a blocker skips this check.
-// 3. Fewer than MAX_WAKES_PER_PROMPT wakes, as a backstop.
-// When check 2 or 3 holds back a new note, the user gets a notification.
+// 2. Fewer than MAX_WAKES_PER_PROMPT wakes, as a backstop.
+// What the woken turn did is not checked: a Revised answer fixes the answer in
+// text with no tool call, and the advisor's next note is often about that text.
+// Notes that check 2 keeps back are counted in a footer status until the cycle
+// resets.
 //
 // The wake is a `steer` with `triggerTurn`: it starts a turn while idle even
 // with the interrupt flag set, which an `aside` does not (it folds into
@@ -80,10 +79,10 @@ import {
 	transcriptSizes,
 } from "./deferred-notes";
 
-/** Backstop on wakes per prompt cycle; checks 1 and 2 normally stop a loop first. */
+/** Backstop on wakes per prompt cycle; check 1 normally stops a loop first. */
 const MAX_WAKES_PER_PROMPT = 10;
-/** Tools whose successful call in a woken turn counts as the agent acting on the notes. */
-const CHANGING_TOOLS = new Set(["edit", "write", "ast_edit", "bash", "eval", "task"]);
+/** Footer status key for the notes check 2 kept back in this prompt cycle. */
+const WAITING_STATUS = "advisor-wake";
 /** A judge call slower than this falls back to word overlap. */
 const JUDGE_TIMEOUT_MS = 15_000;
 /** Core can preserve the card during the post-loop unwind, while the session still reports streaming. */
@@ -92,9 +91,9 @@ const IDLE_WAIT_MAX_MS = 30_000;
 /** A final answer longer than this, in o200k_base tokens, gets the short wake prompt. */
 const REVISED_ANSWER_MAX_TOKENS = 600;
 
-const STALLED_NOTICE =
-	"Advisor concern not sent to the agent: the agent changed no files after the last wake. Send a prompt if you want the agent to act.";
-const CEILING_NOTICE = `Advisor note not sent to the agent: ${MAX_WAKES_PER_PROMPT} wakes in this prompt cycle. Send a prompt if you want the agent to act.`;
+function waitingStatus(count: number): string {
+	return `advisor: ${count} note${count === 1 ? "" : "s"} waiting`;
+}
 
 /** An advisor card's details; `releasedBy` marks this extension's release card. */
 interface CardDetails extends AdvisorMessageDetails {
@@ -115,11 +114,6 @@ function inPlanMode(ctx: ExtensionContext): boolean {
 		if (entry.type === "mode_change") return entry.mode === "plan";
 	}
 	return false;
-}
-
-/** An advisor card's details; `releasedBy` marks this extension's release card. */
-interface CardDetails extends AdvisorMessageDetails {
-	releasedBy?: "omp-tools";
 }
 
 /** The `judge` role when it resolves to a native System One model (Jev); otherwise none. */
@@ -202,9 +196,8 @@ export default function advisorWake(pi: ExtensionAPI): void {
 	/** Notes already woken for, or released, in this prompt cycle. */
 	let woken: WakeNote[] = [];
 	let wakes = 0;
-	/** Check 2; true before the first wake of a cycle. */
-	let lastWakeChangedFiles = true;
-	let wakeTurn: "idle" | "sent" | "running" = "idle";
+	/** Notes check 2 kept back in this prompt cycle, shown in the footer. */
+	let waiting = 0;
 	/** The last assistant reply was a final answer, not a tool call, an error, or an interrupted reply. */
 	let afterFinalAnswer = false;
 	/** The text of the last final answer (assistant reply with `stopReason: "stop"`). */
@@ -236,8 +229,8 @@ export default function advisorWake(pi: ExtensionAPI): void {
 		poll = undefined;
 	};
 
-	const notify = (ctx: ExtensionContext, text: string) => {
-		if (ctx.hasUI) ctx.ui.notify(text, "info");
+	const showWaiting = (ctx: ExtensionContext) => {
+		if (ctx.hasUI) ctx.ui.setStatus(WAITING_STATUS, waiting > 0 ? waitingStatus(waiting) : undefined);
 	};
 
 	const wake = async (ctx: ExtensionContext) => {
@@ -251,18 +244,13 @@ export default function advisorWake(pi: ExtensionAPI): void {
 			const [fresh, prompt] = await Promise.all([freshNotes(ctx, notes, woken), cyclePrompt ?? promptFor(lastAnswer)]);
 			if (started !== generation || !ctx.isIdle() || ctx.hasPendingMessages()) return;
 			if (fresh.length === 0) return;
-			if (!lastWakeChangedFiles && !fresh.some(n => n.blocker)) {
-				notify(ctx, STALLED_NOTICE);
-				return;
-			}
 			if (wakes >= MAX_WAKES_PER_PROMPT) {
-				notify(ctx, CEILING_NOTICE);
+				waiting += fresh.length;
+				showWaiting(ctx);
 				return;
 			}
 			woken.push(...fresh);
 			wakes++;
-			lastWakeChangedFiles = false;
-			wakeTurn = "sent";
 			cyclePrompt = prompt;
 			// An idle steer with `triggerTurn` starts a turn even while core's user
 			// interrupt flag is set; an `aside` folds into context there.
@@ -291,13 +279,15 @@ export default function advisorWake(pi: ExtensionAPI): void {
 		}, IDLE_POLL_MS);
 	};
 
-	const resetCycle = () => {
+	const resetCycle = (_event: unknown, ctx: ExtensionContext) => {
 		generation++;
 		woken = [];
 		wakes = 0;
-		lastWakeChangedFiles = true;
-		wakeTurn = "idle";
 		cyclePrompt = undefined;
+		if (waiting > 0) {
+			waiting = 0;
+			showWaiting(ctx);
+		}
 	};
 	// Fires for every user-authored prompt in every mode (TUI, print, RPC, ACP,
 	// SDK), including queued user messages, but not for this extension's own
@@ -321,23 +311,13 @@ export default function advisorWake(pi: ExtensionAPI): void {
 	pi.on("session_branch", resetCycle);
 	pi.on("session_tree", resetCycle);
 
-	// Check 2 watches only the turn this extension started. Core flushes
-	// deferred notes at the end of each run, so a run's deferred notes are the
-	// ones logged after it starts.
+	// Core flushes deferred notes at the end of each run, so a run's deferred
+	// notes are the ones logged after it starts.
 	pi.on("agent_start", (_event, ctx) => {
-		if (wakeTurn === "sent") wakeTurn = "running";
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		run = { sessionFile, sizes: transcriptSizes(sessionFile) };
 		carried = new Set();
 		released = new Set();
-	});
-	pi.on("tool_execution_end", event => {
-		if (wakeTurn === "running" && !event.isError && CHANGING_TOOLS.has(event.toolName)) {
-			lastWakeChangedFiles = true;
-		}
-	});
-	pi.on("agent_end", () => {
-		if (wakeTurn === "running") wakeTurn = "idle";
 	});
 
 	// Output after the card means the agent already has it in its live turn

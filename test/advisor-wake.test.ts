@@ -38,8 +38,7 @@ const { default: shortPrompt } = await import("../extensions/advisor-wake-short.
 
 const LONG_ANSWER = "word ".repeat(700);
 
-const STALLED = /changed no files after the last wake/;
-const CEILING = /10 wakes in this prompt cycle/;
+const waiting = (count: number) => `advisor: ${count} note${count === 1 ? "" : "s"} waiting`;
 
 interface Sent {
 	customType: string;
@@ -52,14 +51,15 @@ interface Sent {
 interface Harness {
 	wakes: Sent[];
 	releases: Sent[];
-	notices: string[];
+	/** The footer status for notes the wake limit kept back; undefined when none. */
+	readonly status: string | undefined;
 	/** A concern card after the agent's last reply (text `answer`), a final answer unless `reply` says otherwise. */
 	concern(note: string, reply?: string, answer?: string): Promise<void>;
 	blocker(note: string, reply?: string, answer?: string): Promise<void>;
 	/** Plan mode on (`"plan"`) or off (`"none"`), as core records it on the branch. */
 	mode(mode: string): void;
-	/** The agent turn the wake started, with the tools it ran. */
-	wokenTurn(tools: { name: string; isError?: boolean }[]): void;
+	/** The agent turn the wake started. */
+	wokenTurn(): void;
 	userPrompt(): void;
 	/** A user prompt whose run is still going: core defers concerns until it ends. */
 	startRun(): void;
@@ -77,7 +77,7 @@ function harness(): Harness {
 	const bus = new Map<string, ((data: unknown) => void)[]>();
 	const wakes: Sent[] = [];
 	const releases: Sent[] = [];
-	const notices: string[] = [];
+	let status: string | undefined;
 	const branch: { type: string; mode?: string }[] = [];
 	const sessionFile = `${sessionDir}.jsonl`;
 	const pi = {
@@ -99,7 +99,11 @@ function harness(): Harness {
 	const ctx = {
 		mode: "tui",
 		hasUI: true,
-		ui: { notify: (text: string) => notices.push(text) },
+		ui: {
+			setStatus: (key: string, text: string | undefined) => {
+				if (key === "advisor-wake") status = text;
+			},
+		},
 		isIdle: () => true,
 		hasPendingMessages: () => false,
 		setInterval: (fn: () => void) => setInterval(fn, 1),
@@ -120,18 +124,17 @@ function harness(): Harness {
 	return {
 		wakes,
 		releases,
-		notices,
+		get status() {
+			return status;
+		},
 		concern: (note, reply = "stop", answer = "Done.") => card([{ note, severity: "concern" }], reply, answer),
 		blocker: (note, reply = "stop", answer = "Done.") => card([{ note, severity: "blocker" }], reply, answer),
 		mode(mode) {
 			branch.push({ type: "mode_change", mode });
 		},
-		wokenTurn(tools) {
+		wokenTurn() {
 			emit("agent_start");
 			emit("message_start", { message: { role: "assistant" } });
-			for (const tool of tools) {
-				emit("tool_execution_end", { toolName: tool.name, isError: tool.isError ?? false });
-			}
 			emit("agent_end");
 		},
 		userPrompt() {
@@ -188,19 +191,24 @@ beforeEach(() => {
 });
 
 describe("advisor wake", () => {
-	test("new concerns that each lead to file changes wake up to ten times, then notify", async () => {
+	test("new concerns wake up to ten times, then count as waiting in the footer until the next prompt", async () => {
 		const h = harness();
 		for (let i = 1; i <= 10; i++) {
 			await h.concern(`Problem number ${i} in module ${i}.`);
 			expect(h.wakes).toHaveLength(i);
-			h.wokenTurn([{ name: "edit" }]);
+			h.wokenTurn();
 		}
 		await h.concern("Problem number 11 in module 11.");
 		expect(h.wakes).toHaveLength(10);
-		expect(h.notices).toHaveLength(1);
-		expect(h.notices[0]).toMatch(CEILING);
+		expect(h.status).toBe(waiting(1));
+		await h.concern("Problem number 12 in module 12.");
+		expect(h.status).toBe(waiting(2));
 		// The card is already in the agent's context; the wake never repeats the note.
 		expect(h.wakes.every(w => !w.content.includes("Problem number"))).toBe(true);
+		h.userPrompt();
+		expect(h.status).toBeUndefined();
+		await h.concern("Problem number 13 in module 13.");
+		expect(h.wakes).toHaveLength(11);
 	});
 
 	test("a blocker after the final answer wakes with a steer that starts a turn", async () => {
@@ -214,7 +222,7 @@ describe("advisor wake", () => {
 	test("a final answer over 600 tokens gets the short prompt, and later wakes in the cycle keep it", async () => {
 		const h = harness();
 		await h.concern("This function can return null.", "stop", LONG_ANSWER);
-		h.wokenTurn([{ name: "edit" }]);
+		h.wokenTurn();
 		await h.concern("The README does not describe the timeout option.", "stop", "Fixed.");
 		expect(h.wakes.map(w => w.content)).toEqual([shortPrompt.trim(), shortPrompt.trim()]);
 	});
@@ -222,7 +230,7 @@ describe("advisor wake", () => {
 	test("a short final answer gets the Revised answer prompt until the next user prompt", async () => {
 		const h = harness();
 		await h.concern("This function can return null.");
-		h.wokenTurn([{ name: "edit" }]);
+		h.wokenTurn();
 		// A long wake reply is not the cycle's answer.
 		await h.concern("The README does not describe the timeout option.", "stop", LONG_ANSWER);
 		h.userPrompt();
@@ -241,30 +249,27 @@ describe("advisor wake", () => {
 		expect(h.wakes).toEqual([]);
 	});
 
-	test("a blocker wakes after a woken turn that changed nothing, but a concern does not", async () => {
+	test("a new concern after a woken turn that only wrote a Revised answer wakes", async () => {
 		const h = harness();
-		await h.concern("This function can return null.");
-		h.wokenTurn([{ name: "read" }]);
-		await h.blocker("The smoke test for the Picker was not run.");
+		await h.concern("Drop the blanket refusal; explain how patching works.");
+		h.wokenTurn();
+		await h.concern("Warn that uninstalling the app in step 5 deletes its data.", "stop", "1. Decode… 5. Uninstall the original.");
 		expect(h.wakes).toHaveLength(2);
-		h.wokenTurn([{ name: "read" }]);
-		await h.concern("The README does not describe the timeout option.");
-		expect(h.wakes).toHaveLength(2);
-		expect(h.notices[0]).toMatch(STALLED);
+		expect(h.status).toBeUndefined();
 	});
 
 	test("a concern raised again as a blocker wakes; the same blocker again does not", async () => {
 		nativeJudge = false;
 		const h = harness();
 		await h.concern("The smoke test for the Picker was not run.");
-		h.wokenTurn([{ name: "edit" }]);
+		h.wokenTurn();
 		await h.blocker("The smoke test for the Picker was not run.");
 		expect(h.wakes).toHaveLength(2);
-		h.wokenTurn([{ name: "edit" }]);
+		h.wokenTurn();
 		await h.blocker("The smoke test for the Picker was still not run.");
 		await h.concern("The smoke test for the Picker was not run.");
 		expect(h.wakes).toHaveLength(2);
-		expect(h.notices).toEqual([]);
+		expect(h.status).toBeUndefined();
 	});
 
 	test("plan mode keeps the card without a wake until it ends", async () => {
@@ -277,32 +282,14 @@ describe("advisor wake", () => {
 		expect(h.wakes).toHaveLength(1);
 	});
 
-	test("a concern the judge matches to an earlier one stays a card without a notice", async () => {
+	test("a concern the judge matches to an earlier one stays a card and is not counted as waiting", async () => {
 		const h = harness();
 		await h.concern("This function can return null.");
-		h.wokenTurn([{ name: "edit" }]);
+		h.wokenTurn();
 		decide = (note, earlier) => (note.includes("null") ? earlier.indexOf("This function can return null.") : "none");
 		await h.concern("Make sure that this function cannot return null.");
 		expect(h.wakes).toHaveLength(1);
-		expect(h.notices).toEqual([]);
-	});
-
-	test("a new concern after a woken turn that changed nothing notifies instead of waking", async () => {
-		const h = harness();
-		await h.concern("This function can return null.");
-		h.wokenTurn([{ name: "read" }, { name: "edit", isError: true }]);
-		await h.concern("The README does not describe the timeout option.");
-		expect(h.wakes).toHaveLength(1);
-		expect(h.notices).toHaveLength(1);
-		expect(h.notices[0]).toMatch(STALLED);
-	});
-
-	test("a wake that started no turn counts as no change", async () => {
-		const h = harness();
-		await h.concern("This function can return null.");
-		await h.concern("The README does not describe the timeout option.");
-		expect(h.wakes).toHaveLength(1);
-		expect(h.notices[0]).toMatch(STALLED);
+		expect(h.status).toBeUndefined();
 	});
 
 	test.each([
@@ -319,7 +306,7 @@ describe("advisor wake", () => {
 		decide = judge;
 		const h = harness();
 		await h.concern("The test for the parser is missing.");
-		h.wokenTurn([{ name: "write" }]);
+		h.wokenTurn();
 		await h.concern("The test for the parser is missing in this file.");
 		expect(h.wakes).toHaveLength(1);
 		await h.concern("The README does not describe the timeout option.");
@@ -329,18 +316,17 @@ describe("advisor wake", () => {
 	test("a user prompt starts a new cycle", async () => {
 		const h = harness();
 		await h.concern("This function can return null.");
-		h.wokenTurn([{ name: "read" }]);
+		h.wokenTurn();
 		h.userPrompt();
 		decide = () => 0;
 		await h.concern("This function can return null.");
 		expect(h.wakes).toHaveLength(2);
-		expect(h.notices).toEqual([]);
 	});
 
 	test("a user prompt during the judge call drops the wake", async () => {
 		const h = harness();
 		await h.concern("This function can return null.");
-		h.wokenTurn([{ name: "edit" }]);
+		h.wokenTurn();
 		let release: (value: "none") => void = () => {};
 		decide = () => new Promise(resolve => (release = resolve));
 		const arriving = h.concern("The README does not describe the timeout option.");
@@ -349,23 +335,23 @@ describe("advisor wake", () => {
 		release("none");
 		await arriving;
 		expect(h.wakes).toHaveLength(1);
-		expect(h.notices).toEqual([]);
+		expect(h.status).toBeUndefined();
 	});
 
 	test("a turn that the user did not start, during the judge call, drops the wake", async () => {
 		const h = harness();
 		await h.concern("This function can return null.");
-		h.wokenTurn([{ name: "edit" }]);
+		h.wokenTurn();
 		let release: (value: "none") => void = () => {};
 		decide = () => new Promise(resolve => (release = resolve));
 		const arriving = h.concern("The README does not describe the timeout option.");
 		await Bun.sleep(10);
 		// A blocker or another extension starts and finishes a turn; the agent is idle again.
-		h.wokenTurn([{ name: "edit" }]);
+		h.wokenTurn();
 		release("none");
 		await arriving;
 		expect(h.wakes).toHaveLength(1);
-		expect(h.notices).toEqual([]);
+		expect(h.status).toBeUndefined();
 	});
 });
 
@@ -411,7 +397,7 @@ describe("release of deferred concerns at a Picker answer", () => {
 		expect(h.wakes).toEqual([]);
 		await h.concern("The README does not describe the timeout option.");
 		expect(h.wakes).toHaveLength(1);
-		expect(h.notices).toEqual([]);
+		expect(h.status).toBeUndefined();
 	});
 
 	test("a blocker with the text of a released concern wakes as an escalation", async () => {

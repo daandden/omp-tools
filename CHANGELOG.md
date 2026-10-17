@@ -4,6 +4,12 @@
 
 ### Changed
 
+- An Advisor wake no longer holds back a new concern because the last woken
+  turn changed no files. A Revised answer fixes the answer in text, so that
+  check held back valid notes about the revised text. Repeats (check 1) and
+  the 10-wake limit still apply. A note the limit keeps back now shows as a
+  footer status, `advisor: N note(s) waiting`, until your next prompt, in Tern
+  and the classic view, instead of a notification.
 - Sized each ask question's picker to its content, up to 70% of the
   terminal's height (in Tern, the pane's), instead of to the tallest question
   at up to half the pane. Option rows in Tern use the terminal's font size and

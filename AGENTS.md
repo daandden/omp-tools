@@ -273,7 +273,7 @@ the Picker btw asks the same kind of Side question.
   into context while the flag is set. A steer with `triggerTurn` only checks
   ACP deferral, so the wake reads plan mode itself (the branch's latest
   `mode_change` entry is `plan`) and skips it there, as core does for
-  advisor cards. Local guards: queued messages and three per-prompt-cycle
+  advisor cards. Local guards: queued messages and two per-prompt-cycle
   checks before each wake. (1) New note: one host
   judge call (`resolveJudge` from `@oh-my-pi/pi-coding-agent/judgment` with the
   root `settings` and `ctx.modelRegistry`, used only when `hasNativeJudge`)
@@ -281,12 +281,14 @@ the Picker btw asks the same kind of Side question.
   (`extensions/concern-match.ts`); a concern is compared with every woken note,
   a blocker only with woken blockers (an escalation wakes, as in core's
   emission guard). No native judge, an error, or a 15 s timeout
-  falls back to word-overlap Jaccard ≥ 0.5. (2) Concerns only: the last woken
-  turn (`agent_start` after the send to `agent_end`) ran a `CHANGING_TOOLS`
-  tool without `isError`; the flag drops to false at send, so a wake with no
-  turn counts as no change. A blocker skips it. (3)
-  `MAX_WAKES_PER_PROMPT = 10`. Checks 2 and 3
-  notify through `ctx.ui.notify` (when `ctx.hasUI`); a repeat stays silent. The
+  falls back to word-overlap Jaccard ≥ 0.5. (2) `MAX_WAKES_PER_PROMPT = 10`.
+  What the woken turn did is not checked: a Revised answer fixes the answer
+  with no tool call, and the next note is often about that text (a former
+  "last wake ran a changing tool" check held back valid notes; in 85 recorded
+  wakes no disagreement loop showed). Notes check 2 keeps back are counted in
+  the footer through `ctx.ui.setStatus("advisor-wake", "advisor: N note(s)
+  waiting")` (when `ctx.hasUI`; in Tern a composer-bar fact), cleared when the
+  cycle resets; no toast. A repeat stays silent. The
   cycle resets on `before_agent_start`, which fires for user prompts in every
   mode but not for the extension's agent-initiated turn (`input` is TUI-only),
   and a counter drops a judge result that lands after the reset or after any
@@ -325,8 +327,8 @@ the Picker btw asks the same kind of Side question.
   private and in memory; core flushes it only at the run's terminal boundary.
   Keep the `advisor` custom type: core keeps such cards on interrupt and leaves
   them out of the advisor's review input. The handler is synchronous so the
-  steer is queued before `ask` returns. A release is not a wake (checks 2 and
-  3 skip it); released notes join `woken`, and a later card's concern with the
+  steer is queued before `ask` returns. A release is not a wake (check 2
+  skips it); released notes join `woken`, and a later card's concern with the
   same text does not wake. `agent_start` snapshots the transcript sizes and
   clears the notes that cards carried in the run (never released) and the
   release receipts. Receipts live per run, not per prompt cycle: a prompt
@@ -423,7 +425,9 @@ for the Side question cache after a compaction and after a `/tree` jump on a
 branch with eval history (RPC mode, `compaction.keepRecentTokens` lowered
 through `--config`, a throwaway extension command calling
 `SideQuestionThread` or `ctx.navigateTree`, and its `message_end` handler
-logging the mirror's usage). A headless Tern window drives
+logging the mirror's usage); OMP 18.11.3 with Tern 0.9.2 and
+RPC for the Advisor wake without the "last wake changed files" check and its
+footer status. A headless Tern window drives
 the Tern smokes: `tern serve --control <sock>`, then `tern ctl --control <sock>`
 `run`, `type`, `key`, `click '<css selector>'`, and `shot <name>` (PNG plus a
 layout JSON of every element). `PI_TUI_NATIVE=0` in the same window checks the

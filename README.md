@@ -285,19 +285,18 @@ prompt cycle (one prompt you send until the next) must pass these checks:
    as a blocker wakes the agent again. When the `judge` role does not resolve
    to Jev, or the judge call fails, the extension compares words instead (half
    or more shared words is the same issue).
-2. For concerns only: the last wake changed something. The woken turn ran
-   `edit`, `write`, `ast_edit`, `bash`, `eval`, or `task` without an error. If
-   the agent only read and replied, it did not agree with the advisor, and you
-   decide. A blocker skips this check, as it does in OMP. An Advisor wake that
-   only wrote a Revised answer ran none of these tools, so it counts as no
-   change.
-3. Fewer than 10 wakes ran in this prompt cycle, as a safety limit.
+2. Fewer than 10 wakes ran in this prompt cycle, as a safety limit.
 
-When check 2 or 3 holds back a new note, you get a notification that says why.
-The card stays, and you can send a prompt if you want the agent to act. Every
-prompt you send starts a new cycle, in the TUI, RPC, and ACP alike. Switching
-sessions (`/new`, resume, fork) or jumping in `/tree` drops any note still
-waiting, so it never lands in the other conversation, and starts a new cycle.
+A new note wakes the agent whatever the last woken turn did. A Revised answer
+fixes the answer in text, with no tool call, and the advisor's next note is
+often about that new text.
+
+When check 2 keeps a new note back, the card stays and the footer shows
+`advisor: 1 note waiting` (in Tern, in the composer's bottom row) until your
+next prompt. Send a prompt if you want the agent to act. Every prompt you send
+starts a new cycle, in the TUI, RPC, and ACP alike. Switching sessions (`/new`,
+resume, fork) or jumping in `/tree` drops any note still waiting to be checked,
+so it never lands in the other conversation, and starts a new cycle.
 
 Limits:
 
@@ -305,8 +304,8 @@ Limits:
   delay these wakes.
 - Extensions cannot see OMP's interrupt state either. The extension reads plan
   mode from the session's mode changes.
-- Notifications need a UI. In RPC or ACP without one, a held-back note stays a
-  card without a notification.
+- The footer status needs a UI. In RPC or ACP without one, a note kept back
+  stays a card with no status.
 - Off in print and JSON mode (`omp -p`, `--mode json`). After the last prompt,
   print mode prints the final answer and only records late advisor notes before
   exiting, so a new turn's answer would never be shown. Late notes there stay
@@ -322,7 +321,7 @@ that the advisor writes after your answer keep OMP's timing.
 
 At the final answer, OMP still sends the released concerns, so their card shows
 a second time. That card does not wake the agent. A release is not a wake: it
-does not count toward the 10-wake limit or check 2.
+does not count toward the 10-wake limit.
 
 Limits:
 
