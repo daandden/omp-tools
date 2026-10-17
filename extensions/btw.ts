@@ -4,7 +4,7 @@ import { prompt } from "@oh-my-pi/pi-utils";
 import btwPrompt from "./btw.md" with { type: "text" };
 import { BtwPanel } from "./btw-panel";
 import { LazySideQuestionThread, sideQuestionsAvailable } from "./side-question";
-import { answerInto, isInterruptKey, newTurn, type SideQuestionTurn } from "./side-question-view";
+import { answerInto, hasToolCalls, isInterruptKey, newTurn, type SideQuestionTurn } from "./side-question-view";
 
 const WIDGET_KEY = "omp-tools.btw";
 const BTW_COMMAND = /^\/btw(?:\s+([\s\S]*))?$/;
@@ -98,7 +98,7 @@ class BtwCycle {
 			else this.#hide();
 			return { consume: true };
 		}
-		if (data === "t" && this.#turns.some(turn => turn.tools.length > 0)) {
+		if (data === "t" && this.#turns.some(hasToolCalls)) {
 			this.#toolsOpen = !this.#toolsOpen;
 			this.#render();
 			return { consume: true };

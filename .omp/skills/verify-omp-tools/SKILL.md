@@ -66,7 +66,7 @@ RPC drive for checks without a screen: spawn `omp --mode rpc --model <m> --confi
 
 ## Helpers
 
-- `helpers/gate-probe.ts` is the throwaway extension for the `btw-refuse` check in `features/side-question-btw.md`. Copy it to `<checkout>/extensions/verify-gate-probe.ts`, because a file outside the plugin cannot import `@oh-my-pi/*`. Run it with the RPC drive plus `--no-extensions -e <checkout>/extensions/verify-gate-probe.ts` and `VERIFY_GATE_LOG=$VERIFY_RUN_DIR/gate.json` in the environment. Delete the copy after the drive.
+- `helpers/side-question-probe.ts` is the throwaway extension for the `btw-tools` and `btw-agent` checks in `features/side-question-btw.md`. Copy it to `<checkout>/extensions/verify-side-question-probe.ts`, because a file outside the plugin cannot import `@oh-my-pi/*`. Run it with the RPC drive plus `--no-extensions -e <checkout>/extensions/verify-side-question-probe.ts`, with `VERIFY_PROBE=tools` or `VERIFY_PROBE=agent` and `VERIFY_PROBE_LOG=$VERIFY_RUN_DIR/<check>.json` in the environment. Delete the copy after the drive.
 
 ## Evidence
 

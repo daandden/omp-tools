@@ -1,7 +1,7 @@
 import { type Component, type DescribeContext, getKeybindings, type NativeNode, node, span, type TUI, text, truncateToWidth } from "@oh-my-pi/pi-tui";
 import { theme } from "@oh-my-pi/pi-tui/theme";
 import { hintsRow, hintText, type KeyHint, SCROLL_BOX_CSS, scrollBox } from "./ask-editor";
-import { type SideQuestionTurn, SideQuestionTurnView } from "./side-question-view";
+import { hasToolCalls, type SideQuestionTurn, SideQuestionTurnView } from "./side-question-view";
 
 const PANEL_HEIGHT_RATIO = 0.4;
 
@@ -17,7 +17,7 @@ export interface BtwPanelState {
 function panelHints(state: BtwPanelState): KeyHint[] {
 	const esc = getKeybindings().getKeys("app.interrupt")[0] ?? "escape";
 	if (state.turns.at(-1)?.status === "running") return [{ keys: [esc], label: "to cancel" }];
-	const tools = state.turns.some(turn => turn.tools.length > 0);
+	const tools = state.turns.some(hasToolCalls);
 	return [
 		...(tools ? [{ keys: ["t"], label: state.toolsOpen ? "to fold tool calls" : "to show tool calls" }] : []),
 		{ keys: [esc], label: "to close" },

@@ -16,8 +16,8 @@
   row height, with 2px of padding and no gap, and a smaller radio or checkbox
   marker, so they are more compact.
 - Let the Picker btw look things up with read-only tools, as `/btw` does (see
-  Added). Each answer shows an "N tool calls" line, and later questions in the
-  same ask follow up in one thread.
+  Added). Each answer shows its text and "N tool calls" lines in the order
+  they happened, and later questions in the same ask follow up in one thread.
 - Renamed the advisor concern wake to Advisor wake (`advisor-wake.ts`, custom
   message type `advisor-wake`). It now also wakes the agent for a blocker that
   arrives after the final answer when OMP starts no turn for it: after an
@@ -44,19 +44,22 @@
 
 ### Added
 
-- Took over `/btw <question>` in the interactive TUI: a side question that can
-  read, grep, glob, find, and web_search (only calls OMP rates as reads; any
-  other call is refused). It runs with the main agent's model and context and
-  reuses its prompt cache, also when LSP or MCP tools are top-level (the side
-  question sends the same tool list and refuses those tools) and, from OMP
-  18.11.0, after a compaction in a session that used `eval`. The answer shows
-  in a panel above the editor, which
-  keeps focus; tool calls fold into one line that `t` (or a click in Tern)
-  opens, and Esc cancels or closes. A later `/btw` follows up in the same
-  thread until the next main prompt. With OMP's Cache Miss Marker setting on,
-  an answer that missed the cache shows `⊘ cache miss · N tokens`, as the
-  Picker btw does. Bare `/btw`, subagent views, and RPC keep
-  OMP's `/btw`.
+- Took over `/btw <question>` in the interactive TUI: a side question that is
+  offered only read, grep, glob, find, and web_search, so it cannot ask you,
+  run commands, or message or stop agents; `read agent://<id>` reaches the
+  main session's agents, also one still running. It starts from the main
+  agent's model, thinking level, and conversation, with OMP's default system
+  prompt for those tools, so a thread's first request does not reuse the main
+  prompt cache. A call the main agent still waits on, such as a pending `ask`
+  while you use the Picker btw, shows to it as still open, so it no longer
+  asks you the same question again. The answer shows in a panel above the
+  editor, which keeps focus: its text and tool calls appear in the order they
+  happened, each group of calls folded into one line that `t` (or a click in
+  Tern) opens, and Esc cancels or closes. A later `/btw` follows up in the
+  same thread until the next main prompt. With OMP's Cache Miss Marker setting
+  on, a follow-up that missed the thread's cache shows
+  `⊘ cache miss · N tokens`, as the Picker btw does. Bare `/btw`, subagent
+  views, and RPC keep OMP's `/btw`.
 - Drew the ask picker and the `ask` and `generate_image` tool cards natively in
   Tern (terminals that speak the Tern Surface Protocol). Each option is a row
   with its full Markdown in Tern's theme (UI font, theme colors, a gray fill on

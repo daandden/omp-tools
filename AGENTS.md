@@ -33,45 +33,37 @@ the Picker btw asks the same kind of Side question.
   (`tan-command-controller.ts`): `SessionManager.forkFrom` the main transcript
   (with `repairInterruptedTail`, since the main agent may be mid-turn) into
   `<session dir>/SideQuestion-<uuid>.jsonl`, then `createAgentSession` with the
-  main session's `systemPrompt`, model, thinking level, `getActiveToolNames()`,
-  and `providerPromptCacheKey`, so the first request reuses the main prompt
-  cache. Use `getActiveToolNames`, not `getEnabledToolNames`: the latter makes
-  xd://-mounted tools top-level and changed the prefix (cache read fell from
-  the full ~22k prefix to 7k in the spike). On Codex, `streamFn` is wrapped to
-  add `parentSessionId` and `preferWebsockets: false`; over a new websocket the
-  first request missed the cache 4 of 4 times. The mirror gets its own
-  `AgentRegistry` (out of the
-  Agent Hub), subagent settings, the parent's prepared extensions, and an
-  inline gate extension: a `tool_call` handler that blocks every tool outside
-  read/grep/glob/find/web_search and every call `resolveToolTier`
-  (`/tools/approval`) does not rate `"read"`. The gate runs at call time
-  because a smaller tool list breaks the cached prefix. Under OMP's Code Mode,
-  tools reachable only through `eval`'s `tool.*` bridge cannot run, since
-  `eval` is blocked. The mirror runs with `enableLsp` and `enableMCP` off, so
-  it starts no servers. `matchToolCatalog` then sets the mirror's tool list to
-  the main session's, in order: the mirror's own tool where it has one, else a
-  `rejectingCopy` of the main definition (provider-visible fields only, with a
-  mirror-local executor that throws). Without it, a session with top-level LSP
-  or MCP tools (`tools.xdev: false`) sent 15 of 18 tools and its first request
-  read 0 cached tokens; with it the tools JSON is equal and the first request
-  reads the whole main prefix. After that, `seedMessages` replaces the
-  mirror's messages with a copy of `main.agent.state.messages`
-  (`structuredClone`, plus an aborted result for each call the last reply
-  still waits on, as `repairInterruptedTail` writes). The copy is also on the
-  main session's selected branch, which the file does not record. The
-  transcript lacks messages the live session adds: OMP inserts an
-  `eval-state-context` message when it rebuilds the context. Since OMP
-  18.11.0 (#15695) a compaction writes it to the file, but `/tree`
-  (`navigateTree`) still does not (#15933, checked in 18.11.1). A mirror built
-  from the file differs from the main request after that point (15.8k of ~230k
-  tokens read after a compaction before 18.11.0). Drop the copy only when both
-  paths persist it (issue #17). The fork file still holds the mirror's own turns.
-  `cacheMissTokens` flags a request
-  that reads more than 2048 tokens less than expected (the main session's last
-  request for the first, then the thread's previous one), only when it wrote
-  cache (`cacheWrite > 0`, so never on Codex) and only while
+  main session's model and thinking level, `toolNames` read, grep, glob, find,
+  and web_search, and `restrictToolNames` (which also turns off MCP, LSP, IRC,
+  and ambient extension tools). No `systemPrompt` is passed, so OMP renders
+  its default prompt for those five tools. Offering only these is the read-only
+  limit; there is no call-time gate. The mirror once copied the main system
+  prompt and tool list so its first request read the main prompt cache, and
+  refused other tools at call time. With `ask`, `bash`, and `write` offered,
+  a Picker btw during a pending `ask` from a subagent's IRC message called
+  them in 3 of 15 replays of a real session (0 of 15 now); the first request
+  is a cache miss by design. The mirror gets subagent settings, the parent's
+  prepared extensions, and a `SideQuestionRegistry`: its own `AgentRegistry`
+  (out of the Agent Hub, so nothing can message or list it) whose `get` and
+  `list` fall back to `AgentRegistry.global()`. `read agent://<id>` resolves
+  a running agent with no published output through the reader's registry, so
+  without the fallback it returned `Not found`. Then `seedMessages` replaces
+  the mirror's messages with a copy of `main.agent.state.messages`
+  (`structuredClone`, plus a still-open result for each call the last reply
+  still waits on: for `ask`, the user is answering it now; for others, still
+  running; both say not to call it again). An "aborted" result there made the
+  model ask the user again. The copy is also on the main session's selected
+  branch, which the file does not record, and it holds messages the live
+  session adds that the file lacks (the `eval-state-context` message after a
+  `/tree` jump, #15933). The fork file still holds the mirror's own turns.
+  `cacheMissTokens` flags a follow-up request that reads more than 2048
+  tokens less than the thread's previous one, only when it wrote cache
+  (`cacheWrite > 0`, so never on Codex) and only while
   `display.cacheMissMarker` is on (`/modes/settings`); the answer then shows
-  OMP's `⊘ cache miss · N tokens` label. The answer is the last
+  OMP's `⊘ cache miss · N tokens` label. The thread reports each assistant
+  message's start (`onMessageStart`), its streamed text, and tool calls;
+  `answerInto` keeps them as ordered parts (text, then a group of calls), so
+  a later message never replaces earlier text. `ask` returns the last
   assistant message's text; the fork file is deleted on dispose. A Side
   question needs a live main session (`AgentRegistry.global()`) and a session
   file; without them `/btw` falls through to native and Picker btw is off.
@@ -219,14 +211,16 @@ the Picker btw asks the same kind of Side question.
 - `extensions/picker-btw.ts`, `picker-btw.md`, `picker-btw-view.ts`: the
   Picker btw runner (one Side question thread per ask), its prompt, and its
   thread view.
-- `extensions/side-question.ts`: `SideQuestionThread` (the mirror session, the
-  read-only gate, streamed text and tool-call callbacks; an already-aborted
+- `extensions/side-question.ts`: `SideQuestionThread` (the mirror session with
+  only the five read-only tools, its `SideQuestionRegistry`, `seedMessages`,
+  and the message-start, text, and tool-call callbacks; an already-aborted
   signal is rejected before any request), `LazySideQuestionThread` (opened on
   first use, shared by both callers), and `sideQuestionsAvailable`.
 - `extensions/side-question-view.ts`: what both views share: the turn
-  (`SideQuestionTurn`, `answerInto`), the interrupt key, and
-  `SideQuestionTurnView`, which draws a turn with its folded "N tool calls"
-  line (classic lines, or a Tern collapsible `section`).
+  (`SideQuestionTurn` with ordered `parts`, `answerInto`), the interrupt key,
+  and `SideQuestionTurnView`, which draws a turn's text and each group of tool
+  calls as a folded "N tool calls" line, in order (classic lines, or one Tern
+  collapsible `section` per group).
 - `extensions/btw.ts`, `btw.md`, `btw-panel.ts`: the `/btw` takeover
   (`parseBtwQuestion`, `BtwCycle`, keys), its prompt, and its panel.
 - `extensions/flexible-ask.md`: static model-facing description; keep aligned
@@ -252,9 +246,10 @@ the Picker btw asks the same kind of Side question.
   `codex-image-backend-model.md` (live check of which model serves; inconclusive).
 - `test/`: `bun test` behavior tests for `generate_image` through `execute`
   with a stubbed `fetch`, for `advisor-wake` through its event
-  handlers with a mocked `@oh-my-pi/pi-coding-agent/judgment`, and for
-  `parseBtwQuestion`. The gate, the thread cycle, the mirror session, and the
-  panel have live smoke only.
+  handlers with a mocked `@oh-my-pi/pi-coding-agent/judgment`, for
+  `parseBtwQuestion`, and for the Side question's `seedMessages`,
+  `cacheMissTokens`, and `answerInto`. The tool limit, the thread cycle, the
+  mirror session, and the panel have live smoke only.
 - `extensions/advisor-wake.ts`: listens for preserved `advisor` cards
   (`message_end`, `customType: "advisor"`) with `concern` or `blocker` notes
   that follow a final answer (the last assistant `message_end` had
@@ -404,7 +399,8 @@ the `"latest"` specifier; `bun.lock` records the resolved version, so update
 through `bun run update` to keep types and the installed omp in step.
 
 Run typechecking and `bun test` after code changes; tests cover
-`generate_image`, `advisor-wake`, and `parseBtwQuestion`, and there is
+`generate_image`, `advisor-wake`, `parseBtwQuestion`, and the Side question's
+`seedMessages`, `cacheMissTokens`, and `answerInto`, and there is
 no repository CI. Registration, ask, and Side question changes
 require a fresh-session OMP smoke; typechecking alone does not exercise host
 integration or UI. OMP 18.3.1 was used for the latest fresh-session picker and
@@ -413,19 +409,17 @@ smoke; OMP 18.4.8 for the host judge call behind the advisor wake checks; OMP
 18.6.1 for the Picker btw; OMP 18.8.0 for the picker key flow and Submit note;
 OMP 18.8.6 with Tern 0.6.3 for the Tern views; OMP 18.10.4 with Tern 0.8.3 for
 the Picker release (a deferred concern written by hand to the session's
-`__advisor.jsonl` while the Picker was open) and for Side questions (`/btw`,
-Picker btw, and the gate checked by a throwaway extension in `extensions/`
-calling `SideQuestionThread.ask` directly, because the `/btw` prompt makes the
-model refuse before it calls a blocked tool; a file outside the plugin cannot
-resolve `@oh-my-pi/*`); OMP 18.11.0 for the Revised answer (RPC mode with
+`__advisor.jsonl` while the Picker was open) and for Side questions (`/btw`
+and Picker btw); OMP 18.11.0 for the Revised answer (RPC mode with
 Claude Haiku 5.5, the linked plugin loaded as for a user, a throwaway extension
 command that posted `advisor` cards, and the core advisor off through
-`--config`; OMP 18.11.1 for the short wake prompt, the same way); OMP 18.11.1
-for the Side question cache after a compaction and after a `/tree` jump on a
-branch with eval history (RPC mode, `compaction.keepRecentTokens` lowered
-through `--config`, a throwaway extension command calling
-`SideQuestionThread` or `ctx.navigateTree`, and its `message_end` handler
-logging the mirror's usage); OMP 18.11.3 with Tern 0.9.2 and
+`--config`; OMP 18.11.1 for the short wake prompt, the same way); OMP 18.11.3
+for the read-only Side question (RPC mode with a throwaway extension in
+`extensions/` that replayed a real session's messages into the main agent and
+ran Picker btw questions through `SideQuestionThread` and `answerInto`, and
+one that read `agent://` of a running subagent; a file outside the plugin
+cannot resolve `@oh-my-pi/*`), and Tern 0.9.2 for a Picker btw during an
+`ask` that a subagent's IRC message started; OMP 18.11.3 with Tern 0.9.2 and
 RPC for the Advisor wake without the "last wake changed files" check and its
 footer status. A headless Tern window drives
 the Tern smokes: `tern serve --control <sock>`, then `tern ctl --control <sock>`

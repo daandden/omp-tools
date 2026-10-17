@@ -1,53 +1,32 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { AgentSession, ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import type { AgentSession, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { AgentRegistry, createAgentSession, createSubagentSettings, SessionManager } from "@oh-my-pi/pi-coding-agent";
-import { resolveToolTier } from "@oh-my-pi/pi-coding-agent/tools/approval";
 import { cfgDisplayCacheMissMarker } from "@oh-my-pi/pi-coding-agent/modes/settings";
 
-const SIDE_QUESTION_TOOLS = new Set(["read", "grep", "glob", "find", "web_search"]);
-
-const BLOCKED_REASON =
-	"Side questions are read-only: only read, grep, glob, find, and web_search run, and only for reads. This call did not run.";
+/** The only tools a Side question is offered. */
+const SIDE_QUESTION_TOOLS = ["read", "grep", "glob", "find", "web_search"];
 
 const CANCELLED_NOTE = "The user cancelled the previous side question. Do not answer it.";
 
-type AgentTool = AgentSession["agent"]["state"]["tools"][number];
+type AgentRef = NonNullable<ReturnType<AgentRegistry["get"]>>;
 
 /**
- * The provider-visible fields of a main-session tool the mirror cannot build
- * (LSP and MCP stay off there), with an executor that refuses. The gate blocks
- * the call first; this keeps the request's tool list equal to the main one.
+ * The mirror's own registry, out of the Agent Hub, so nothing can message or
+ * list the mirror. Lookups of ids it does not hold fall back to the global
+ * registry, so `read agent://<id>` also finds a main-session agent that has
+ * not published output yet.
  */
-function rejectingCopy(tool: AgentTool): AgentTool {
-	return {
-		name: tool.name,
-		label: tool.label,
-		description: tool.description,
-		parameters: tool.parameters,
-		strict: tool.strict,
-		deferLoading: tool.deferLoading,
-		customFormat: tool.customFormat,
-		customWireName: tool.customWireName,
-		native: tool.native,
-		examples: tool.examples,
-		// A function intent means the schema gets no intent field; "omit" says the same.
-		intent: typeof tool.intent === "function" ? "omit" : tool.intent,
-		loadMode: tool.loadMode,
-		async execute() {
-			throw new Error(BLOCKED_REASON);
-		},
-	};
-}
+class SideQuestionRegistry extends AgentRegistry {
+	override get(id: string): AgentRef | undefined {
+		return super.get(id) ?? AgentRegistry.global().get(id);
+	}
 
-/** Give the mirror the main session's tool list in the same order, so the request prefix matches. */
-function matchToolCatalog(mirror: AgentSession, main: AgentSession): void {
-	const own = new Map(mirror.agent.state.tools.map(tool => [tool.name, tool]));
-	const mainTools = main.agent.state.tools;
-	const sameOrder =
-		mainTools.length === own.size && mainTools.every((tool, i) => mirror.agent.state.tools[i]?.name === tool.name);
-	if (sameOrder) return;
-	mirror.agent.setTools(mainTools.map(tool => own.get(tool.name) ?? rejectingCopy(tool)));
+	override list(): AgentRef[] {
+		const own = super.list();
+		const ids = new Set(own.map(ref => ref.id));
+		return [...own, ...AgentRegistry.global().list().filter(ref => !ids.has(ref.id))];
+	}
 }
 
 /** The shortfall OMP's cache-miss marker ignores, as noise or below the cacheable floor. */
@@ -61,10 +40,10 @@ interface PromptUsage {
 
 /**
  * Tokens a request wrote to the cache again instead of reading them, when
- * that is more than OMP's 2048-token floor. `expectedPrompt` is the prompt the
- * request should have found cached: the main session's last request for a
- * thread's first one, the thread's previous request after that. Providers that
- * write no cache (implicit caching, Codex) never count, as in OMP's marker.
+ * that is more than OMP's 2048-token floor. `expectedPrompt` is the thread's
+ * previous request; a thread's first request has none, because its tools and
+ * system prompt differ from the main session's. Providers that write no cache
+ * (implicit caching, Codex) never count, as in OMP's marker.
  */
 export function cacheMissTokens(expectedPrompt: number | undefined, usage: PromptUsage): number | undefined {
 	if (expectedPrompt === undefined || expectedPrompt < MIN_CACHE_FOOTPRINT || usage.cacheWrite <= 0) return undefined;
@@ -90,12 +69,17 @@ interface ToolCallBlock {
 	name: string;
 }
 
+const PENDING_ASK =
+	"The user is answering this question in the Picker now. The answer is not known here. Do not call ask again.";
+const PENDING_CALL =
+	"This call is still running in the main conversation. Its result is not known here. Do not call it again.";
+
 /**
- * A copy of the main agent's messages for the mirror, so its requests start
- * with exactly what the main agent sends (the transcript lacks messages the
- * live session adds, such as the eval state after a `/tree` jump). Calls the main
- * agent still waits on get an aborted result, as OMP's fork repair writes, so
- * the copy is a valid conversation and the pending call stays visible.
+ * A copy of the main agent's messages for the mirror, so it sees what the
+ * main agent sees (the transcript lacks messages the live session adds, such
+ * as the eval state after a `/tree` jump). Each call the main agent still
+ * waits on gets a result that says the call is still open, so the copy is a
+ * valid conversation and the model does not take the call as failed.
  */
 export function seedMessages<T>(messages: readonly T[]): T[] {
 	const copy = structuredClone(messages) as T[];
@@ -114,9 +98,9 @@ export function seedMessages<T>(messages: readonly T[]): T[] {
 			role: "toolResult",
 			toolCallId: call.id,
 			toolName: call.name,
-			content: [{ type: "text", text: "Tool execution was aborted." }],
-			details: { __synthetic: true, source: "assistant_stop_aborted", executed: false },
-			isError: true,
+			content: [{ type: "text", text: call.name === "ask" ? PENDING_ASK : PENDING_CALL }],
+			details: { __synthetic: true, source: "side_question_pending", executed: false },
+			isError: false,
 			timestamp: Date.now(),
 		} as T);
 	}
@@ -128,11 +112,13 @@ export interface SideQuestionToolCall {
 	name: string;
 	/** The call's main argument (path, pattern, or query), for one line in the view. */
 	target: string;
-	status: "running" | "done" | "error" | "blocked";
+	status: "running" | "done" | "error";
 }
 
 export interface SideQuestionCallbacks {
-	/** Text of the assistant message being streamed; a new message starts from empty. */
+	/** A new assistant message starts; its text follows through `onText`. */
+	onMessageStart(): void;
+	/** Text so far of the assistant message being streamed. */
 	onText(text: string): void;
 	onToolCall(call: SideQuestionToolCall): void;
 	/** A request missed the cache by this many tokens; only while OMP's Cache Miss Marker setting is on. */
@@ -173,23 +159,17 @@ export class SideQuestionThread {
 	readonly #session: AgentSession;
 	readonly #file: string;
 	readonly #mainSettings: AgentSession["settings"];
-	/** The prompt the next request should find cached: the main session's last request, then this thread's last. */
+	/** The thread's last request, which the next one should find cached. */
 	#expectedPrompt: number | undefined;
 	#running = false;
 	#disposed = false;
 	/** The last question was cancelled; its prompt stays in the history, so the next one says so. */
 	#lastCancelled = false;
 
-	private constructor(
-		session: AgentSession,
-		file: string,
-		mainSettings: AgentSession["settings"],
-		expectedPrompt: number | undefined,
-	) {
+	private constructor(session: AgentSession, file: string, mainSettings: AgentSession["settings"]) {
 		this.#session = session;
 		this.#file = file;
 		this.#mainSettings = mainSettings;
-		this.#expectedPrompt = expectedPrompt;
 	}
 
 	static async open(ctx: ExtensionContext): Promise<SideQuestionThread> {
@@ -212,57 +192,37 @@ export class SideQuestionThread {
 		});
 
 		let mirror: AgentSession | undefined;
-		const gate = (pi: ExtensionAPI) => {
-			pi.on("tool_call", event => {
-				if (!SIDE_QUESTION_TOOLS.has(event.toolName)) return { block: true, reason: BLOCKED_REASON };
-				const tool = mirror?.getToolByName(event.toolName);
-				if (!tool || resolveToolTier(tool, event.input) !== "read") return { block: true, reason: BLOCKED_REASON };
-				return undefined;
-			});
-		};
 		const parentPreparedExtensions = main.preparedExtensions;
 		const parentExtensionPaths = main.extensionPaths;
 		const parentExtensionRoots = main.effectiveExtensionRoots;
-		let expectedPrompt: number | undefined;
 		try {
+			// Only the read-only tools are offered, with OMP's default system
+			// prompt for them; restricted, the session also starts no MCP, LSP,
+			// or IRC. Its first request cannot reuse the main prompt cache.
 			const created = await createAgentSession({
 				cwd: ctx.cwd,
 				sessionManager: fork,
 				model,
 				thinkingLevel: main.configuredThinkingLevel(),
-				systemPrompt: [...main.systemPrompt],
-				// Top-level tools only: enabled tools also list the ones mounted
-				// under xd://, and naming those makes them top-level, which changes
-				// the request prefix.
-				toolNames: main.getActiveToolNames(),
+				toolNames: SIDE_QUESTION_TOOLS,
+				restrictToolNames: true,
 				providerSessionId: `${main.sessionId}:side-question:${id}`,
-				providerPromptCacheKey: main.agent.promptCacheKey ?? main.sessionId,
 				modelRegistry: main.modelRegistry,
 				authStorage: main.modelRegistry.authStorage,
 				settings: createSubagentSettings(main.settings),
 				hasUI: false,
-				enableMCP: false,
-				enableLsp: false,
 				agentId: id,
 				agentDisplayName: "side question",
 				parentAgentId: ctx.agent.id,
-				agentRegistry: new AgentRegistry(),
+				agentRegistry: new SideQuestionRegistry(),
 				disableExtensionDiscovery: true,
 				// The parent's extensions re-register its providers on the shared model registry.
 				preloadedPreparedExtensions: parentPreparedExtensions?.length ? parentPreparedExtensions : undefined,
 				preloadedExtensionPaths: parentExtensionPaths?.length ? [...parentExtensionPaths] : undefined,
 				extensionRoots: () => parentExtensionRoots,
-				extensions: [gate],
 			});
 			mirror = created.session;
-			matchToolCatalog(mirror, main);
-			// The transcript lacks messages the live main session adds: OMP 18.11
-			// writes the eval state at a compaction (#15695), but `/tree` still
-			// adds it in memory only (#15933), so a mirror rebuilt from the file
-			// diverged from the main request and missed the cache.
-			const seeded = seedMessages(main.agent.state.messages);
-			mirror.agent.replaceMessages(seeded);
-			expectedPrompt = seeded.map(requestPrompt).findLast(tokens => tokens !== undefined);
+			mirror.agent.replaceMessages(seedMessages(main.agent.state.messages));
 		} catch (error) {
 			try {
 				await mirror?.dispose();
@@ -271,12 +231,7 @@ export class SideQuestionThread {
 			}
 			throw error;
 		}
-		// Codex missed the main prompt cache on a new websocket (0 of 4 in the
-		// spike); SSE with parent affinity hit 4 of 5.
-		const stream = mirror.agent.streamFn;
-		mirror.agent.streamFn = (streamModel, context, options) =>
-			stream(streamModel, context, { ...options, preferWebsockets: false, parentSessionId: main.sessionId });
-		return new SideQuestionThread(mirror, file, main.settings, expectedPrompt);
+		return new SideQuestionThread(mirror, file, main.settings);
 	}
 
 	/** Run one question to its answer; follow-ups see the earlier questions, answers, and tool results. */
@@ -292,7 +247,7 @@ export class SideQuestionThread {
 				case "message_start":
 					if (event.message.role === "assistant") {
 						text = "";
-						callbacks.onText(text);
+						callbacks.onMessageStart();
 					}
 					break;
 				case "message_end": {
@@ -324,8 +279,7 @@ export class SideQuestionThread {
 				case "tool_execution_end": {
 					const call = calls.get(event.toolCallId);
 					if (!call) break;
-					const blocked = event.isError && JSON.stringify(event.result ?? "").includes(BLOCKED_REASON);
-					call.status = blocked ? "blocked" : event.isError ? "error" : "done";
+					call.status = event.isError ? "error" : "done";
 					callbacks.onToolCall(call);
 					break;
 				}

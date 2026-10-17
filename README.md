@@ -90,8 +90,9 @@ box below it (the same editor as `Other`, without image paste). Enter asks. The
 answer streams into the thread, and later questions in the same ask follow up
 on the earlier ones. The side question also sees your answers so far (ticked
 options, `Other` text, notes), so "is my pick a good idea?" works. It can look
-things up with read-only tools (see [Side questions](#side-questions)); each
-answer shows an "N tool calls" line, which opens with a click in Tern. Esc
+things up with read-only tools (see [Side questions](#side-questions)); its
+tool calls fold into "N tool calls" lines between the answer's text, and each
+opens with a click in Tern. Esc
 while an answer streams cancels it and keeps the partial text. The next Esc
 returns to the options with your answers untouched, and `?` reopens the
 thread. PgUp/PgDn scroll a long thread. The thread is discarded when the ask
@@ -339,24 +340,28 @@ Limits:
 up. It replaces OMP's `/btw` answer for that form; bare `/btw` still opens OMP's
 BTW history, and autocomplete is OMP's.
 
-- Tools: read, grep, glob, find, and web_search, each only for calls OMP rates
-  as reads. Any other call is refused, and the model sees a tool error that
-  says so. Each tool keeps its own size limits, and there is no cap on rounds.
-- Model and context: the main agent's model, thinking level, system prompt,
-  and conversation so far, copied from the live session when the thread
-  starts. The first request reuses the main agent's prompt cache, also after a
-  compaction or a `/tree` jump and when LSP or MCP tools sit at the top level
-  (`tools.xdev: false`).
+- Tools: only read, grep, glob, find, and web_search are offered, whatever
+  tools the main agent has, so a side question cannot ask you, run commands,
+  or message or stop agents. Each tool keeps its own size limits, and there is
+  no cap on rounds. `read agent://<id>` reads the main session's agents, also
+  one still running that has no output yet.
+- Model and context: the main agent's model, thinking level, and conversation
+  so far, copied from the live session when the thread starts, with OMP's
+  default system prompt for those five tools. A call the main agent still
+  waits on (a pending `ask`, or a tool still running) shows to the side
+  question as still open, not as failed. The first request of a thread does
+  not reuse the main agent's prompt cache; later ones reuse the thread's.
 - Cache misses: with OMP's Cache Miss Marker setting on
-  (`display.cacheMissMarker`), an answer whose requests had to write the
-  cached prompt again shows `⊘ cache miss · N tokens` under it, in the panel
-  and in the Picker btw. Like OMP's marker, it shows only for providers that
-  report cache writes (Anthropic), not for Codex.
+  (`display.cacheMissMarker`), a follow-up whose requests had to write the
+  thread's cached prompt again shows `⊘ cache miss · N tokens` under it, in
+  the panel and in the Picker btw. Like OMP's marker, it shows only for
+  providers that report cache writes (Anthropic), not for Codex.
 - Privacy: only you see the answers. Nothing is added to the main session, and
   the agent never sees a side question.
 - Panel: answers show in a panel above the editor, and the editor keeps focus.
-  Tool calls fold into one "N tool calls" line. With the editor empty, `t`
-  opens or folds them (a click on the line works in Tern), and Esc cancels a
+  An answer shows its text and its tool calls in the order they happened; each
+  group of calls folds into one "N tool calls" line. With the editor empty,
+  `t` opens or folds them (a click on a line works in Tern), and Esc cancels a
   running answer or closes the panel.
 - Threads: a later `/btw` follows up in the same thread, also after Esc closed
   the panel. Your next main prompt ends the thread and clears the panel when
@@ -442,11 +447,8 @@ Fresh OMP sessions verified this behavior:
   running answer and then closed the panel; a main prompt sent during an
   answer let it finish and ended the thread; the next main prompt cleared the
   panel and a new `/btw` started a fresh thread. A Picker btw used grep while
-  `ask` waited, and its thread file was deleted when the Picker closed. Called
-  directly with a prompt that asked for them, bash and write were refused and
-  created no files while read ran. The mirror's first request read 25126
-  cached tokens, the full main prefix. The same with `PI_TUI_NATIVE=0`
-  verified the text panel.
+  `ask` waited, and its thread file was deleted when the Picker closed. The
+  same with `PI_TUI_NATIVE=0` verified the text panel.
 - OMP 18.11.0 in RPC mode with Claude Haiku 5.5: the Revised answer. A
   throwaway command posted an advisor card after a final answer. In 32 of 32
   Advisor wakes, a concern or blocker that a stated fact was wrong ended the
@@ -454,15 +456,6 @@ Fresh OMP sessions verified this behavior:
   In 16 of them, the wrong fact was on the answer's first line. A code-only
   concern got a short reply. A second fact concern, after a first Advisor wake
   that also wrote a file, got a Revised answer that kept the first correction.
-- OMP 18.11.1 in RPC mode with Claude Haiku 5.5: side questions with the
-  mirror built from the fork file alone, without the live copy. After a
-  compaction with eval history (two `eval` calls, `/compact`, one prompt), the
-  first request read 16859 cached tokens of the main session's 16863-token
-  last prompt. After `eval`, a later prompt, a `/tree` jump back to the `eval`
-  answer, and one prompt, the live messages held an `eval-state-context`
-  message before the new prompt that the transcript lacked, and the first
-  request read 16562 of 16742 tokens. The live copy stays for that case (OMP
-  issue #15933).
 - OMP 18.11.1 in RPC mode with Claude Haiku 5.5: the wake message by answer
   length, over fact-fix Advisor wakes (the answer had to contain a wrong fact,
   and the user prompt said not to question it). Final answers over 600 tokens
@@ -474,3 +467,12 @@ Fresh OMP sessions verified this behavior:
   wrong fact on the first line). Three answers that refused to state the
   wrong fact got a short reply. The linked plugin loaded `js-tiktoken` from
   its `node_modules`.
+- OMP 18.11.3: side questions offered only the five read-only tools.
+  Replaying a real session where a subagent's IRC message led to a pending
+  `ask` (Claude Opus 5.5), the Picker btw made no call outside the five in
+  15 of 15 answers (before: `ask`, `bash`, or `write proc://…/kill` in 3 of
+  15, each hiding the earlier text). In a headless Tern 0.9.2 window with
+  Claude Haiku 5.5, a Picker btw during that `ask` showed its first line, the
+  folded tool calls, and the answer in order. In RPC mode, `read
+  agent://Sleeper` on a running subagent with no output returned its progress
+  (before: `Not found`).
