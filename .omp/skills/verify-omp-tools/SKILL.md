@@ -32,12 +32,14 @@ Run these read-only checks before launch, on each fresh OMP session, and wheneve
 1. `omp --version` and `tern --version` both print a version.
 2. `ls -la ~/.omp/plugins/node_modules/omp-tools` points at this checkout (`git rev-parse --show-toplevel`). If it points elsewhere, OMP loads other code: stop and report. Do not relink; the link is the user's global state.
 3. `bun run check` passes (it warns when the installed SDK types differ from `omp --version`; a warning is fine).
-4. The socket matches the phase of the run. Before launch, `test -S "$SOCK"` fails, so no other run owns the socket. After this run started `tern serve`, `tern ctl --control "$SOCK" tree` exits 0 and prints `"ok":true`, so the run's own server still responds.
+4. The socket matches the phase of the run. Before launch, `test -S "$SOCK"` fails, so no other run owns the socket. After this run starts Tern, `tern ctl --control "$SOCK" tree` exits 0 and prints `"ok":true`, so the run's own instance still responds.
 5. A model with working credentials exists. The cheap default is `anthropic/claude-haiku-5-5`; Codex paths use `openai-codex/gpt-5.6-luna`.
+
+For the isolated launch guard alone, no OMP session runs. Check the Tern version, `lsof`, `bun run check`, and the socket phase instead. The plugin-link and model-credential checks apply only when the drive starts OMP.
 
 ## Launch
 
-Start the window as a long-lived service (bash tool with a unique `name`, `ready.log` = `serving`, `cwd` = the checkout):
+For the default headless check, keep the user's Tern configuration. Start the window as a long-lived service (bash tool with a unique `name`, `ready.log` = `serving`, `cwd` = the checkout):
 
 ```sh
 tern serve --control "$SOCK" --out "$VERIFY_RUN_DIR"
@@ -53,6 +55,31 @@ sleep 12
 ```
 
 For the classic text TUI, prefix the inner command with `env PI_TUI_NATIVE=0 `. To start OMP in another directory, wrap the inner command in `sh -c 'cd <dir> && exec omp …'`. A new OMP session is needed after every code change; `$C type '"/quit"'` then `$C key Enter` ends the current one, and the next `$C run` starts another. A feature that needs other settings (for example `ask.timeout`) passes its own `--config` file, which also holds the `advisor:` lines.
+
+### Isolated starts and native windows
+
+For every start with a fresh config dir, use `helpers/tern-isolated`. This is the only fresh-config launcher, for both `tern serve` and native `tern --control` windows. Native windows are allowed when a check needs one, such as clipboard or paste.
+
+The helper assigns its own `TERN_CONFIG_DIR` and `TERN_DAEMON_SOCKET` and clears the calling pane's routing variables. Before Tern starts, it writes `omp/state.json` with the state from **Not Now**. Without that state, a native window shows "Tern is better with omp. Install it?" on top of the user's screen. Tern 0.9.4 with omp on `PATH` instead shows "Let Tern keep omp up to date?". A shot does not show native alerts.
+
+Use a new `$VERIFY_RUN_DIR` for each instance. Set `V` to this skill's absolute directory plus `/helpers/tern-isolated`:
+
+```sh
+V="<directory of this SKILL.md>/helpers/tern-isolated"
+"$V" start "$VERIFY_RUN_DIR" serve
+# For a native window instead:
+# "$V" start "$VERIFY_RUN_DIR" window "$VERIFY_RUN_DIR"
+SOCK="$(cat "$VERIFY_RUN_DIR/tern/sock-dir")/ctl.sock"
+C="tern ctl --control $SOCK"
+sleep 5
+"$V" ctl "$VERIFY_RUN_DIR" system
+```
+
+Require `"dialogs":[]` before the drive. The config starts with only the seeded omp state and has none of the user's Tern plugins or settings. Use the default headless check for proof that depends on those.
+
+Logs and pids stay in `$VERIFY_RUN_DIR/tern/`. Sockets live in a short `/tmp/omp-tools-tern.*` directory because macOS limits Unix socket paths to 104 bytes. Headless shots stay in `$VERIFY_RUN_DIR/serve/`. For native shots, use the paths returned by `$C shot <name>`.
+
+For the launch guard itself, start a native window on an empty run dir. After five seconds, save `system` output with `"dialogs":[]`. Save the window and daemon pids. Run `"$V" stop "$VERIFY_RUN_DIR"`. Verify that both pids exited and no process names the run's socket directory.
 
 ## Drive
 
@@ -82,7 +109,15 @@ RPC drive for checks without a screen: spawn `omp --mode rpc --model <m> --confi
 
 ## Cleanup
 
-Stop only what this run started:
+Stop only what this run started. For an isolated instance, use the helper instead of `$C quit`:
+
+```sh
+"$V" stop "$VERIFY_RUN_DIR"
+```
+
+It stops the window and its daemon, checks for leftover processes of the instance, and removes its config and sockets. It keeps logs, pids, shots, and OMP session data. If start fails, use the same stop command to clean up the partial instance.
+
+For the default headless service:
 
 ```sh
 $C type '"/quit"'; $C key Enter; sleep 2
