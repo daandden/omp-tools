@@ -184,6 +184,11 @@ export class SideQuestionThread {
 		const id = `SideQuestion-${crypto.randomUUID()}`;
 		const sessionDir = parentFile.slice(0, -".jsonl".length);
 		const file = path.join(sessionDir, `${id}.jsonl`);
+		// The mirror reads the main session's `local://` files (pasted images,
+		// large pastes) in place, as OMP's `/tan` does: a snapshot of the main
+		// mapping, since the main session manager can switch transcripts.
+		const parentArtifactsDir = main.sessionManager.getArtifactsDir();
+		const parentLocalSessionId = main.sessionManager.getSessionId();
 		const fork = await SessionManager.forkFrom(parentFile, ctx.cwd, sessionDir, undefined, {
 			copyArtifacts: false,
 			suppressBreadcrumb: true,
@@ -215,6 +220,13 @@ export class SideQuestionThread {
 				agentId: id,
 				agentDisplayName: "side question",
 				parentAgentId: ctx.agent.id,
+				// A child session: binds no process-wide state and keeps the shared
+				// `local://` mapping to itself instead of installing a global override.
+				parentTaskPrefix: id,
+				localProtocolOptions: {
+					getArtifactsDir: () => parentArtifactsDir,
+					getSessionId: () => parentLocalSessionId,
+				},
 				agentRegistry: new SideQuestionRegistry(),
 				disableExtensionDiscovery: true,
 				// The parent's extensions re-register its providers on the shared model registry.
