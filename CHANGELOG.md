@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Cmd+V in Tern now pastes text and copied images into the picker's `Other`,
+  option-note, and Submit note editors, and pasted images go with Picker btw
+  questions. On the option list, the picker pastes nothing and says to open a
+  note or `Other`. Text that you select with the mouse in the question or an
+  option copies with Cmd+C.
+
 ### Changed
 
 - An Advisor wake no longer holds back a new concern because the last woken

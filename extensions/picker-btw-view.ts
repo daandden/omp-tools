@@ -2,6 +2,7 @@
 // side questions (oldest first, scrolling) above a question box. It renders
 // inside the Picker's panel; the Picker owns focus hand-back and the answers.
 // Answers come from ./picker-btw.ts; the thread lives as long as the Picker.
+import type { CustomEditor } from "@oh-my-pi/pi-coding-agent";
 import {
 	type AutocompleteProvider,
 	getKeybindings,
@@ -14,8 +15,10 @@ import {
 	text,
 } from "@oh-my-pi/pi-tui";
 import { theme } from "@oh-my-pi/pi-tui/theme";
+import type { AskImage } from "./ask-dialog";
 import { AnswerEditor, externalEditorKey, scrollBox, withoutSideBorders } from "./ask-editor";
-import { type AskPickerBtw, renderPickerBtwPrompt } from "./picker-btw";
+import { loadImagePaths, type PasteOutcome, type PastedImage, readClipboardPaste } from "./ask-images";
+import { type AskPickerBtw, numberImagesByAppearance, renderPickerBtwPrompt } from "./picker-btw";
 import { answerInto, isInterruptKey, newTurn, type SideQuestionTurn, SideQuestionTurnView } from "./side-question-view";
 
 /** Rows reserved for the question box. */
@@ -25,6 +28,7 @@ const EMPTY_THREAD = "Ask about this question or the conversation. The agent nev
 export interface PickerBtwViewOptions {
 	tui: TUI;
 	ask: AskPickerBtw;
+	cwd: string;
 	/** The user's unsubmitted answers to the pending ask, as the agent would get them. */
 	draftAnswers(): string;
 	/** Fraction of the terminal the Picker may occupy. */
@@ -50,6 +54,8 @@ export class PickerBtwView {
 	/** PgUp/PgDn forwarded to Tern, which owns the scroller there. */
 	#nativeScroll: NativeScroll | undefined;
 	#disposed = false;
+	#images: AskImage[] = [];
+	#imageCount = 0;
 
 	constructor(options: PickerBtwViewOptions) {
 		this.#options = options;
@@ -74,11 +80,12 @@ export class PickerBtwView {
 			],
 			onSubmit: text => this.#submit(text),
 			onCancel: () => this.#close(),
-			onPasteImage: async () => {
-				this.#options.notify("Images can't be sent with a Picker btw question.");
-				return true;
+			onAttachImage: image => this.#retainImage({ image }),
+			onPasteImage: async target => this.#insertPaste(target, await readClipboardPaste(this.#options.cwd)),
+			onPasteImagePath: async (target, path) => {
+				const outcome = await loadImagePaths([path], this.#options.cwd);
+				if (!this.#insertPaste(target, outcome)) target.pasteText(path);
 			},
-			onPasteImagePath: async (target, path) => target.pasteText(path),
 			editExternally: text => this.#options.editExternally(text),
 			// The ask timeout stays paused while this view is open.
 			onInput: () => {},
@@ -135,6 +142,7 @@ export class PickerBtwView {
 	#close(): void {
 		this.#editor?.dispose();
 		this.#editor = undefined;
+		this.#clearImages();
 		this.#options.onClose();
 	}
 
@@ -196,9 +204,33 @@ export class PickerBtwView {
 		return last?.status === "running" ? last : undefined;
 	}
 
+	#retainImage(image: PastedImage): number {
+		this.#imageCount += 1;
+		this.#images.push({ ...image, label: `[Image #${this.#imageCount}]` });
+		return this.#imageCount;
+	}
+
+	#insertPaste(editor: CustomEditor, outcome: PasteOutcome): boolean {
+		if (this.#editor?.editor !== editor || this.#disposed) return false;
+		if ("error" in outcome) {
+			this.#options.notify(outcome.error);
+			return false;
+		}
+		if ("text" in outcome) {
+			editor.pasteText(outcome.text);
+		} else {
+			for (const image of outcome.images) {
+				const number = this.#retainImage(image);
+				editor.insertAtom(`${theme.symbol("chip.image")} #${number}`, `[Image #${number}]`);
+			}
+		}
+		this.#options.tui.requestRender();
+		return true;
+	}
+
 	#submit(text: string): void {
-		const question = text.trim();
-		if (!question) {
+		if (!text.trim()) {
+			this.#clearImages();
 			this.open();
 			return;
 		}
@@ -207,6 +239,8 @@ export class PickerBtwView {
 			this.open(text);
 			return;
 		}
+		const { text: question, images } = numberImagesByAppearance(text.trim(), this.#images);
+		this.#clearImages();
 		const turn = newTurn(question);
 		this.#turns.push(turn);
 		const abort = new AbortController();
@@ -216,11 +250,16 @@ export class PickerBtwView {
 		const promptText = renderPickerBtwPrompt(question, this.#options.draftAnswers());
 		void answerInto(
 			turn,
-			callbacks => this.#options.ask({ promptText, signal: abort.signal, ...callbacks }),
+			callbacks => this.#options.ask({ promptText, images, signal: abort.signal, ...callbacks }),
 			() => this.#options.tui.requestRender(),
 		).then(() => {
 			if (this.#abort === abort) this.#abort = undefined;
 		});
+	}
+
+	#clearImages(): void {
+		this.#images = [];
+		this.#imageCount = 0;
 	}
 
 	#cancel(): void {

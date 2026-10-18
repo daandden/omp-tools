@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import type { ImageContent } from "@oh-my-pi/pi-ai";
 import type { AgentSession, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { AgentRegistry, createAgentSession, createSubagentSettings, SessionManager } from "@oh-my-pi/pi-coding-agent";
 import { cfgDisplayCacheMissMarker } from "@oh-my-pi/pi-coding-agent/modes/settings";
@@ -235,7 +236,12 @@ export class SideQuestionThread {
 	}
 
 	/** Run one question to its answer; follow-ups see the earlier questions, answers, and tool results. */
-	async ask(promptText: string, callbacks: SideQuestionCallbacks, signal: AbortSignal): Promise<string> {
+	async ask(
+		promptText: string,
+		callbacks: SideQuestionCallbacks,
+		signal: AbortSignal,
+		images?: ImageContent[],
+	): Promise<string> {
 		if (this.#disposed) throw new Error("This side question thread is closed.");
 		if (signal.aborted) throw new DOMException("Side question cancelled", "AbortError");
 		if (this.#running) throw new Error("A side question is already running.");
@@ -289,7 +295,7 @@ export class SideQuestionThread {
 		signal.addEventListener("abort", abort, { once: true });
 		try {
 			const message = this.#lastCancelled ? `${CANCELLED_NOTE}\n${promptText}` : promptText;
-			await this.#session.prompt(message, { attribution: "user" });
+			await this.#session.prompt(message, { attribution: "user", images });
 			await this.#session.waitForIdle();
 			const last = this.#session.getLastAssistantMessage();
 			if (signal.aborted) throw new DOMException("Side question cancelled", "AbortError");
