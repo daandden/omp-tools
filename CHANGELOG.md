@@ -4,6 +4,10 @@
 
 ### Changed
 
+- The Verify skill now uses a seeded omp state for isolated Tern starts, so
+  native test windows do not show Tern's omp install or update offer.
+  Its `tern-isolated` helper starts headless or native instances and stops
+  the instance and its daemon without touching the user's Tern.
 - An Advisor wake no longer holds back a new concern because the last woken
   turn changed no files. A Revised answer fixes the answer in text, so that
   check held back valid notes about the revised text. Repeats (check 1) and
