@@ -94,7 +94,15 @@ the Picker btw asks the same kind of Side question.
   `flexible-ask.ts`), opened on the first question, followed up by later ones,
   and disposed when the dialog closes; a cancelled turn keeps the thread.
   `?` disposes the countdown and the next key in the options restarts it.
-  `?` is off when Side questions cannot run.
+  `?` is off when Side questions cannot run. Pasted images in the Picker btw
+  go to `SideQuestionThread.ask` as prompt images.
+- Tern sends Cmd+V as OSC 5522 enhanced paste. OMP reads it and calls the
+  focused component's paste contract: `pasteText`, `beginPaste`,
+  `acceptsImages`, and `attachImage`. `AnswerEditor` accepts host text and
+  images, turns host markers into image chips, and queues keys until pending
+  pastes finish. The option list implements the same contract only to refuse
+  a paste and show `Open a note (n) or Other to paste`. Native selection copy
+  stays Tern's.
 - In Tern (terminals that speak the Tern Surface Protocol), OMP calls a
   component's `describe(cx)` instead of `render()`. The picker describes a
   `col` with role `omp.editor` (in the composer's place, as pi-tui's
@@ -203,9 +211,9 @@ the Picker btw asks the same kind of Side question.
   dropped, `#` prompt actions are hidden,
   completion `onApplied` side effects are dropped, and `trySyncSlashCompletion`
   is not forwarded, so nothing typed runs. It subclasses
-  `HookEditorComponent` only so the host routes the external-editor key to it
-  while it holds focus; the base editor is dropped, and `pasteText` is hidden so
-  the host does not claim the image-paste key.
+  `HookEditorComponent` so the host routes the external-editor key and paste
+  contract to it while it holds focus; the base editor is dropped. The plugin
+  reader still handles bracketed pastes inside the `CustomEditor`.
 - `extensions/ask-images.ts`: clipboard and path image loading for the picker's
   editors, using the host's clipboard/image-loading helpers.
 - `extensions/picker-btw.ts`, `picker-btw.md`, `picker-btw-view.ts`: the
@@ -247,9 +255,11 @@ the Picker btw asks the same kind of Side question.
 - `test/`: `bun test` behavior tests for `generate_image` through `execute`
   with a stubbed `fetch`, for `advisor-wake` through its event
   handlers with a mocked `@oh-my-pi/pi-coding-agent/judgment`, for
-  `parseBtwQuestion`, and for the Side question's `seedMessages`,
-  `cacheMissTokens`, and `answerInto`. The tool limit, the thread cycle, the
-  mirror session, and the panel have live smoke only.
+  `parseBtwQuestion`, `AnswerEditor`'s host paste contract, Picker btw
+  `numberImagesByAppearance`, and for the Side
+  question's `seedMessages`, `cacheMissTokens`, and `answerInto`. The tool
+  limit, the thread cycle, the mirror session, and the panel have live smoke
+  only.
 - `extensions/advisor-wake.ts`: listens for preserved `advisor` cards
   (`message_end`, `customType: "advisor"`) with `concern` or `blocker` notes
   that follow a final answer (the last assistant `message_end` had
@@ -399,8 +409,9 @@ the `"latest"` specifier; `bun.lock` records the resolved version, so update
 through `bun run update` to keep types and the installed omp in step.
 
 Run typechecking and `bun test` after code changes; tests cover
-`generate_image`, `advisor-wake`, `parseBtwQuestion`, and the Side question's
-`seedMessages`, `cacheMissTokens`, and `answerInto`, and there is
+`generate_image`, `advisor-wake`, `parseBtwQuestion`, `AnswerEditor` paste
+handling, and the Side question's `seedMessages`, `cacheMissTokens`, and
+`answerInto`, and there is
 no repository CI. Registration, ask, and Side question changes
 require a fresh-session OMP smoke; typechecking alone does not exercise host
 integration or UI. OMP 18.3.1 was used for the latest fresh-session picker and
@@ -421,7 +432,8 @@ one that read `agent://` of a running subagent; a file outside the plugin
 cannot resolve `@oh-my-pi/*`), and Tern 0.9.2 for a Picker btw during an
 `ask` that a subagent's IRC message started; OMP 18.11.3 with Tern 0.9.2 and
 RPC for the Advisor wake without the "last wake changed files" check and its
-footer status. A headless Tern window drives
+footer status; OMP 18.12.1 with native Tern 0.9.4 for Picker Cmd+C and Cmd+V
+(with a temporary picker extension). A headless Tern window drives
 the Tern smokes: `tern serve --control <sock>`, then `tern ctl --control <sock>`
 `run`, `type`, `key`, `click '<css selector>'`, and `shot <name>` (PNG plus a
 layout JSON of every element). `PI_TUI_NATIVE=0` in the same window checks the

@@ -9,6 +9,7 @@
 // Runtime imports resolve to the host's in-process pi-tui/coding-agent
 // modules through OMP's extension specifier shim; they must stay on exported
 // package subpaths (`@oh-my-pi/pi-tui`, `/chrome`, `/render`, `/theme`).
+import type { ImageContent } from "@oh-my-pi/pi-ai";
 import type {
 	CustomEditor,
 	ExtensionAskDialogQuestion,
@@ -473,6 +474,7 @@ class MarkdownAskDialog implements Component, Focusable {
 	#countdownPaused = false;
 	#timeoutPending = false;
 	#closed = false;
+	#pasteNotice: string | undefined;
 	#prompt: AnswerEditor | undefined;
 	/** The Picker btw thread; kept for this ask once `?` opens it. */
 	#btw: PickerBtwView | undefined;
@@ -575,6 +577,25 @@ class MarkdownAskDialog implements Component, Focusable {
 		this.#panel.dispose();
 	}
 
+	get acceptsImages(): boolean {
+		return !this.#closed;
+	}
+
+	pasteText(_text: string): void {
+		this.#refusePaste();
+	}
+
+	attachImage(_image: ImageContent): undefined {
+		this.#refusePaste();
+		return undefined;
+	}
+
+	#refusePaste(): void {
+		if (this.#closed) return;
+		this.#pasteNotice = "Open a note (n) or Other to paste";
+		this.#requestRender();
+	}
+
 	handleInput(data: string): void {
 		if (this.#closed) return;
 		if (this.#btwOpen) {
@@ -590,6 +611,7 @@ class MarkdownAskDialog implements Component, Focusable {
 			return;
 		}
 		const keybindings = getKeybindings();
+		this.#pasteNotice = undefined;
 		if (keybindings.matches(data, "tui.select.cancel")) {
 			this.#finish(undefined);
 			return;
@@ -616,6 +638,7 @@ class MarkdownAskDialog implements Component, Focusable {
 		this.#btw ??= new PickerBtwView({
 			tui: this.#tui,
 			ask,
+			cwd: this.#options.cwd,
 			draftAnswers: () => formatAskAnswers(this.#questions, this.#results(), this.#submitNote?.text),
 			heightRatio: DIALOG_HEIGHT_RATIO,
 			autocomplete: this.#options.autocomplete,
@@ -699,6 +722,7 @@ class MarkdownAskDialog implements Component, Focusable {
 		} else {
 			this.#describeQuestionBody(children, { lines, width }, shownBody);
 		}
+		if (this.#pasteNotice) children.push(text([span(this.#pasteNotice, "warning")], { wrap: "word" }));
 		// Inline `min`/`max` widths beat the composer's measure: the picker spans the pane.
 		return col(children, { role: "omp.editor", gap: "sm", min: { w: 1 }, max: { w: 1 } });
 	}
@@ -1025,6 +1049,7 @@ class MarkdownAskDialog implements Component, Focusable {
 	 */
 	handleNativeEvent(event: NativeUiEvent): void {
 		if (this.#closed || this.#prompt || this.#btwOpen) return;
+		this.#pasteNotice = undefined;
 		this.#countdownPaused = false;
 		this.#countdown?.reset();
 		if (event.type === "select" && leafKey(event.key) === "tabs") {
@@ -1312,6 +1337,7 @@ class MarkdownAskDialog implements Component, Focusable {
 	}
 
 	#footerHint(indicator: string): string {
+		if (this.#pasteNotice) return this.#pasteNotice;
 		const cancel = `${cancelKeyLabel()} cancel`;
 		const btw = this.#options.askBtw ? " · ? btw" : "";
 		const scroll = indicator ? ` · ${pageKeysLabel()} ${indicator} scroll` : "";
@@ -1591,6 +1617,7 @@ class MarkdownAskDialog implements Component, Focusable {
 				close();
 			},
 			onCancel: close,
+			onAttachImage: image => this.#retainImage({ image }),
 			onPasteImage: async editor => this.#insertPaste(editor, await readClipboardPaste(this.#options.cwd)),
 			onPasteImagePath: async (editor, path) => {
 				const outcome = await loadImagePaths([path], this.#options.cwd);
@@ -1621,6 +1648,12 @@ class MarkdownAskDialog implements Component, Focusable {
 		}
 	}
 
+	#retainImage(image: PastedImage): number {
+		this.#imageCount += 1;
+		this.#promptImages.push({ ...image, label: `[Image #${this.#imageCount}]` });
+		return this.#imageCount;
+	}
+
 	/** Insert pasted images as main-prompt image chips expanding to `[Image #N]`. */
 	async #insertPaste(editor: CustomEditor, outcome: PasteOutcome): Promise<boolean> {
 		if (this.#prompt?.editor !== editor) return false;
@@ -1632,11 +1665,8 @@ class MarkdownAskDialog implements Component, Focusable {
 			editor.pasteText(outcome.text);
 		} else {
 			for (const image of outcome.images) {
-				this.#imageCount += 1;
-				const attached: AskImage = { ...image, label: `[Image #${this.#imageCount}]` };
-				this.#promptImages.push(attached);
-				// Same token as the main prompt's image chip (pi-tui `chipLabel`), so it deletes as a unit.
-				editor.insertAtom(`${theme.symbol("chip.image")} #${this.#imageCount}`, attached.label);
+				const number = this.#retainImage(image);
+				editor.insertAtom(`${theme.symbol("chip.image")} #${number}`, `[Image #${number}]`);
 			}
 		}
 		this.#requestRender();

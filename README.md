@@ -76,17 +76,24 @@ push-to-talk, or draft saving. The external editor key (`app.editor.external`,
 Ctrl+G by default) opens the current text in `$VISUAL`/`$EDITOR` and writes the
 result back.
 
-Images paste as in the main prompt. The image-paste key (Ctrl+V by default)
-reads a copied image, a copied Finder file, or an image path on the clipboard,
-and pasting an image file path also attaches it. Each image shows as the main
-prompt's image chip, and deleting the chip drops the image. Images go to the
-model after the answer text, labeled `[Image #N]` to match.
+Images paste as in the main prompt. In Tern, Cmd+V pastes text or a copied
+image into an open `Other`, option-note, or Submit note editor. On the option
+list, the picker pastes nothing and says to open a note with `n` or choose
+`Other`. The image-paste key (Ctrl+V by default) reads a copied image, a copied
+Finder file, or an image path on the clipboard, and pasting an image file path
+also attaches it. For a file copied in Finder, Cmd+V in Tern pastes only the
+text Tern offers for it, as in the main prompt, so use the image-paste key to
+attach the file. Each image shows as the main prompt's image chip, and deleting
+the chip drops the image. Images go to the model after the answer text,
+labeled `[Image #N]` to match. To copy question or option text, select it with
+the mouse and press Cmd+C.
 
 ### Picker btw
 
 `?` asks a Picker btw: a side question about the ask or the conversation,
 answered inside the picker. The options give way to a thread with a question
-box below it (the same editor as `Other`, without image paste). Enter asks. The
+box below it (the same editor as `Other`). Pasted images go with the question.
+Enter asks. The
 answer streams into the thread, and later questions in the same ask follow up
 on the earlier ones. The side question also sees your answers so far (ticked
 options, `Other` text, notes), so "is my pick a good idea?" works. It can look

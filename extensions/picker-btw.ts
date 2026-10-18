@@ -1,3 +1,4 @@
+import type { ImageContent } from "@oh-my-pi/pi-ai";
 import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { prompt } from "@oh-my-pi/pi-utils";
 import pickerBtwPrompt from "./picker-btw.md" with { type: "text" };
@@ -5,6 +6,7 @@ import { LazySideQuestionThread, type SideQuestionCallbacks, sideQuestionsAvaila
 
 export interface PickerBtwRequest extends SideQuestionCallbacks {
 	promptText: string;
+	images?: ImageContent[];
 	signal: AbortSignal;
 }
 
@@ -22,6 +24,31 @@ export function renderPickerBtwPrompt(question: string, draftAnswers: string): s
 	return prompt.render(pickerBtwPrompt, { question, draftAnswers });
 }
 
+/**
+ * The question with its pasted image labels renumbered `[Image #1]`, `[Image #2]`, … in text
+ * order, and the images in that order, so each label matches its position in the prompt.
+ */
+export function numberImagesByAppearance(
+	text: string,
+	pasted: readonly { label: string; image: ImageContent }[],
+): { text: string; images: ImageContent[] } {
+	const byLabel = new Map(pasted.map(item => [item.label, item.image]));
+	const numbers = new Map<string, number>();
+	const images: ImageContent[] = [];
+	const numbered = text.replace(/\[Image #\d+\]/g, label => {
+		const image = byLabel.get(label);
+		if (!image) return label;
+		let number = numbers.get(label);
+		if (number === undefined) {
+			images.push(image);
+			number = images.length;
+			numbers.set(label, number);
+		}
+		return `[Image #${number}]`;
+	});
+	return { text: numbered, images };
+}
+
 /** The Picker btw runner for one ask, or `undefined` when Side questions cannot run here. */
 export function pickerBtwRunner(ctx: ExtensionContext): PickerBtwRunner | undefined {
 	if (!sideQuestionsAvailable(ctx)) return undefined;
@@ -30,7 +57,7 @@ export function pickerBtwRunner(ctx: ExtensionContext): PickerBtwRunner | undefi
 	return {
 		ask: async request => {
 			if (disposed) throw new Error("The Picker is closed.");
-			return (await thread.get()).ask(request.promptText, request, request.signal);
+			return (await thread.get()).ask(request.promptText, request, request.signal, request.images);
 		},
 		dispose: () => {
 			disposed = true;

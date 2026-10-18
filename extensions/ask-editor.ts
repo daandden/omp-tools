@@ -7,6 +7,7 @@
 // external-editor key to a focused `HookEditorComponent` instead of opening it
 // on the hidden main prompt. The base editor it builds is dropped; this class
 // renders, describes (in Tern), and routes input itself.
+import type { ImageContent } from "@oh-my-pi/pi-ai";
 import { CustomEditor, HookEditorComponent, settings } from "@oh-my-pi/pi-coding-agent";
 import {
 	cfgAutocompleteMaxVisible,
@@ -304,6 +305,8 @@ export interface AnswerEditorOptions {
 	/** Receives the expanded text: paste markers and image chips become their text. */
 	onSubmit(text: string): void;
 	onCancel(): void;
+	/** Retain a host-prepared image and return its number in this Picker. */
+	onAttachImage(image: ImageContent): number | undefined;
 	/** Image-paste key, or an empty bracketed paste (image-only pasteboard). */
 	onPasteImage(editor: CustomEditor): Promise<boolean>;
 	/** A bracketed paste of image or video file paths. */
@@ -326,6 +329,9 @@ export class AnswerEditor extends HookEditorComponent {
 	readonly #tui: TUI;
 	readonly #options: AnswerEditorOptions;
 	#closed = false;
+	readonly #imageChips = new Map<string, number>();
+	/** Host paste reservations and the keys typed after the first one, in arrival order. */
+	readonly #queue: ({ settled: boolean; text: string | undefined } | string)[] = [];
 	/** The Tern view: a card titled like the classic field, the editor (which describes itself), the key hints. */
 	readonly #nativeRoot: NativeNode;
 
@@ -382,9 +388,6 @@ export class AnswerEditor extends HookEditorComponent {
 		this.#field = new FormField(editor, { theme: answerFieldTheme, hint: hintText(options.hints) });
 		this.addChild(this.#field);
 		this.addChild(new Spacer(1));
-		// Keep the host from claiming the image-paste key for its text-only
-		// prompt paste; the editor's own `onPasteImage` handles it.
-		Object.defineProperty(this, "pasteText", { value: undefined });
 		this.#nativeRoot = node("card", { role: this.nativeRole, head: options.title }, [editor, hintsRow(options.hints)]);
 	}
 
@@ -402,8 +405,87 @@ export class AnswerEditor extends HookEditorComponent {
 		this.#field.setUseTerminalCursor(useTerminalCursor);
 	}
 
+	override get acceptsImages(): boolean {
+		return !this.#closed;
+	}
+
+	override attachImage(image: ImageContent): string | undefined {
+		if (this.#closed) return undefined;
+		const number = this.#options.onAttachImage(image);
+		if (number === undefined) return undefined;
+		const marker = `[Image #${number}]`;
+		this.#imageChips.set(marker, number);
+		return marker;
+	}
+
+	override beginPaste(): (text: string | undefined) => boolean {
+		if (this.#closed) return () => false;
+		const pending = { settled: false, text: undefined as string | undefined };
+		this.#queue.push(pending);
+		return text => {
+			if (this.#closed || pending.settled) return false;
+			pending.settled = true;
+			pending.text = text;
+			if (!text) {
+				// A failed paste must not let a queued Enter save the answer without it.
+				const keys = getKeybindings();
+				const from = this.#queue.indexOf(pending);
+				for (let index = this.#queue.length - 1; index > from; index--) {
+					const item = this.#queue[index];
+					if (typeof item === "string" && (keys.matches(item, "tui.input.submit") || isFollowUpSubmit(item))) {
+						this.#queue.splice(index, 1);
+					}
+				}
+			}
+			this.#drain();
+			return !!text;
+		};
+	}
+
+	#drain(): void {
+		while (this.#queue.length > 0 && !this.#closed) {
+			const item = this.#queue[0]!;
+			if (typeof item !== "string" && !item.settled) return;
+			this.#queue.shift();
+			if (typeof item === "string") this.#handleKey(item);
+			else if (item.text) this.#insertPastedText(item.text);
+		}
+	}
+
+	override pasteText(text: string): void {
+		if (this.#closed) return;
+		if (this.#queue.length > 0) {
+			this.beginPaste()(text);
+			return;
+		}
+		this.#insertPastedText(text);
+	}
+
+	#insertPastedText(text: string): void {
+		this.#options.onInput();
+		let offset = 0;
+		for (const match of text.matchAll(/\[Image #\d+\]/g)) {
+			const number = this.#imageChips.get(match[0]);
+			if (number === undefined) continue;
+			if (match.index > offset) this.editor.pasteText(text.slice(offset, match.index));
+			this.editor.insertAtom(`${theme.symbol("chip.image")} #${number}`, match[0]);
+			this.#imageChips.delete(match[0]);
+			offset = match.index + match[0].length;
+		}
+		if (offset < text.length) this.editor.pasteText(text.slice(offset));
+		this.#tui.requestRender();
+	}
+
 	override handleInput(data: string): void {
 		if (this.#closed) return;
+		if (this.#queue.length > 0) {
+			this.#queue.push(data);
+			return;
+		}
+		this.#handleKey(data);
+	}
+
+	#handleKey(data: string): void {
 		this.#options.onInput();
 		if (this.#options.onKey?.(data)) {
 			this.#tui.requestRender();
@@ -422,6 +504,8 @@ export class AnswerEditor extends HookEditorComponent {
 
 	override dispose(): void {
 		this.#closed = true;
+		this.#queue.length = 0;
+		this.#imageChips.clear();
 		super.dispose();
 	}
 
