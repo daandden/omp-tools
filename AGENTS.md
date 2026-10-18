@@ -47,7 +47,13 @@ the Picker btw asks the same kind of Side question.
   (out of the Agent Hub, so nothing can message or list it) whose `get` and
   `list` fall back to `AgentRegistry.global()`. `read agent://<id>` resolves
   a running agent with no published output through the reader's registry, so
-  without the fallback it returned `Not found`. Then `seedMessages` replaces
+  without the fallback it returned `Not found`. As in `/tan`, the mirror is a
+  child session (`parentTaskPrefix`, so it binds no process-wide state) with
+  `localProtocolOptions` snapshotting the main session's artifacts dir and
+  session id: `local://` resolves to the main session's files (a pasted
+  image's `local://pasted-image-*.png`, large pastes). The fork copies no
+  artifacts, so without it those reads returned `Local file not found`. Then
+  `seedMessages` replaces
   the mirror's messages with a copy of `main.agent.state.messages`
   (`structuredClone`, plus a still-open result for each call the last reply
   still waits on: for `ask`, the user is answering it now; for others, still

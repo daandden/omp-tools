@@ -10,6 +10,12 @@
   note or `Other`. Text that you select with the mouse in the question or an
   option copies with Cmd+C.
 
+### Fixed
+
+- A Side question (`/btw` or Picker btw) can now read the main session's
+  `local://` files, such as a pasted image's `local://pasted-image-*.png`.
+  It read its own empty folder and returned `Local file not found`.
+
 ### Changed
 
 - The Verify skill now uses a seeded omp state for isolated Tern starts, so
