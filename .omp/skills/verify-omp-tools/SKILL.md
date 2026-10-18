@@ -39,6 +39,8 @@ For the isolated launch guard alone, no OMP session runs. Check the Tern version
 
 ## Launch
 
+To list Tern's developer commands, run `tern help dev`. Do not run `tern serve --help`. It starts a server on the default control socket `/tmp/tern.sock` instead of printing help.
+
 For the default headless check, keep the user's Tern configuration. Start the window as a long-lived service (bash tool with a unique `name`, `ready.log` = `serving`, `cwd` = the checkout):
 
 ```sh
