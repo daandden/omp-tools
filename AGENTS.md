@@ -439,6 +439,14 @@ the Tern smokes: `tern serve --control <sock>`, then `tern ctl --control <sock>`
 layout JSON of every element). `PI_TUI_NATIVE=0` in the same window checks the
 text renderer.
 
+## Sibling repo
+
+tern-plugins (`~/work/tries/tern-plugins`) also starts isolated Tern instances
+and seeds the same omp state to keep Tern's omp offer alert off the screen.
+When a Tern update changes the omp state, the alert, or how an isolated
+instance starts, fix the start in both repos: `tern-verify start` there and
+`.omp/skills/verify-omp-tools/helpers/tern-isolated` here.
+
 ## vstack
 
 - Issue tracker: GitHub Issues. See `docs/vstack/issue-tracker.md`.

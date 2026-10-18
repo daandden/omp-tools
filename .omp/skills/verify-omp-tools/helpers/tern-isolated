@@ -1,0 +1,152 @@
+#!/bin/sh
+# Starts and stops one isolated Tern instance: its own configuration dir (TERN_CONFIG_DIR) and daemon
+# socket (TERN_DAEMON_SOCKET), so it never touches the Tern that you use. This is the only way that
+# the Verify skill starts Tern with a fresh config dir.
+#
+#   tern-isolated start RUN serve        headless `tern serve`, shots in RUN/serve/
+#   tern-isolated start RUN window [DIR] native `tern --control` window with a tab in DIR (default RUN)
+#   tern-isolated ctl   RUN ARGS...      `tern ctl` on the instance's control socket
+#   tern-isolated stop  RUN              quit the instance, stop its daemon and every process of it
+#
+# RUN is an existing dir, such as $VERIFY_RUN_DIR. The instance keeps its state in RUN/tern/ and its
+# sockets in a short dir under /tmp, because a Unix socket path holds at most 104 bytes on macOS.
+
+set -eu
+
+die() {
+	printf 'tern-isolated: %s\n' "$*" >&2
+	exit 1
+}
+
+[ $# -ge 2 ] || die "usage: tern-isolated start|ctl|stop RUN [ARGS...]"
+cmd=$1
+case $2 in
+/*) run=$2 ;;
+*) run=$(pwd)/$2 ;;
+esac
+shift 2
+
+state=$run/tern
+cfg=$state/config
+
+sockDir() {
+	cat "$state/sock-dir" 2>/dev/null || die "$state/sock-dir is missing: start the instance first"
+}
+
+# A tern command against this instance only. The TERN_PANE* and TERN_WINDOW* variables of the calling
+# pane send CLI commands to the window of that pane.
+iso() {
+	sockets=$(sockDir)
+	env -u TERN_PANE -u TERN_PANE_SOCKET -u TERN_WINDOW_KEY -u TERN_WINDOW_SOCKET \
+		TERN_CONFIG_DIR="$cfg" TERN_DAEMON_SOCKET="$sockets/daemon.sock" "$@"
+}
+
+ctl() {
+	iso tern ctl --control "$(sockDir)/ctl.sock" "$@"
+}
+
+socketOwner() {
+	[ -S "$1" ] && lsof -t "$1" 2>/dev/null | head -n 1 || true
+}
+
+endPids() (
+	[ $# -gt 0 ] || return 0
+	kill "$@" 2>/dev/null || true
+	tries=0
+	while [ $tries -lt 8 ]; do
+		alive=
+		for pid in "$@"; do
+			kill -0 "$pid" 2>/dev/null && alive="$alive $pid"
+		done
+		[ -n "$alive" ] || return 0
+		tries=$((tries + 1))
+		sleep 0.25
+	done
+	printf 'still running after SIGTERM, sending SIGKILL:%s\n' "$alive"
+	kill -9 $alive 2>/dev/null || true
+)
+
+descendants() (
+	for child in $(pgrep -P "$1" || true); do
+		printf '%s\n' "$child"
+		descendants "$child"
+	done
+)
+
+case $cmd in
+start)
+	[ $# -ge 1 ] || die "usage: tern-isolated start RUN serve|window [DIR]"
+	mode=$1
+	dir=${2:-$run}
+	case $mode in serve | window) ;; *) die "unknown mode: $mode (serve or window)" ;; esac
+	[ -d "$run" ] || die "$run does not exist"
+	mkdir "$state" 2>/dev/null || die "$state exists: another instance owns $run, so do not stop it"
+	mkdir "$cfg"
+	mktemp -d /tmp/omp-tools-tern.XXXXXX >"$state/sock-dir"
+	sockets=$(sockDir)
+	# A config dir with no omp state makes a native Tern window show its omp alert on top of the
+	# screen: "Tern is better with omp. Install it?" (Tern 0.9.3), or "Let Tern keep omp up to date?"
+	# (Tern 0.9.4 with omp on PATH). This is the state that Tern writes when you answer Not Now.
+	mkdir "$cfg/omp"
+	printf '{"managed":false,"checked":0,"no_build":false,"offered":true}\n' >"$cfg/omp/state.json"
+	cd "$run"
+	if [ "$mode" = serve ]; then
+		iso tern serve --control "$sockets/ctl.sock" --out "$run" >"$state/serve.log" 2>&1 </dev/null &
+	else
+		iso tern --control "$sockets/ctl.sock" --dir "$dir" >"$state/window.log" 2>&1 </dev/null &
+	fi
+	tries=0
+	until [ -S "$sockets/ctl.sock" ] && ctl state >/dev/null 2>&1; do
+		tries=$((tries + 1))
+		[ $tries -le 60 ] || die "no reply on $sockets/ctl.sock after 30 s, see $state/$mode.log"
+		sleep 0.5
+	done
+	# The process that holds the control socket is the instance, whatever the launcher forked.
+	socketOwner "$sockets/ctl.sock" >"$state/pid"
+	daemonPid=
+	if [ "$mode" = window ]; then
+		tries=0
+		while daemonPid=$(socketOwner "$sockets/daemon.sock") && [ -z "$daemonPid" ]; do
+			tries=$((tries + 1))
+			[ $tries -le 20 ] || die "no daemon on $sockets/daemon.sock after 10 s"
+			sleep 0.5
+		done
+	fi
+	printf '%s\n' "$daemonPid" >"$state/daemon.pid"
+	printf 'ready: %s pid %s, daemon pid %s, control %s\n' \
+		"$mode" "$(cat "$state/pid")" "${daemonPid:-none}" "$sockets/ctl.sock"
+	;;
+ctl)
+	ctl "$@"
+	;;
+stop)
+	sockets=$(sockDir)
+	pid=$(socketOwner "$sockets/ctl.sock")
+	daemonPid=$(socketOwner "$sockets/daemon.sock")
+	panes=
+	[ -z "$daemonPid" ] || panes=$(descendants "$daemonPid")
+	if [ -S "$sockets/ctl.sock" ]; then ctl quit >/dev/null 2>&1 || true; fi
+	tries=0
+	while [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ $tries -lt 8 ]; do
+		tries=$((tries + 1))
+		sleep 0.25
+	done
+	endPids $pid $daemonPid $panes
+	tries=0
+	left=waiting
+	while [ -n "$left" ] && [ $tries -lt 8 ]; do
+		left=
+		for p in $pid $daemonPid $panes; do
+			kill -0 "$p" 2>/dev/null && left="$left $p"
+		done
+		[ -z "$left" ] || sleep 0.25
+		tries=$((tries + 1))
+	done
+	[ -z "$left" ] || die "processes of this instance still run:$left"
+	rm -rf "$cfg" "$sockets" "$state/sock-dir"
+	printf 'stopped %s and daemon %s; no process of this instance runs\n' "${pid:-none}" "${daemonPid:-none}"
+	;;
+*)
+	die "unknown command: $cmd"
+	;;
+esac
