@@ -82,7 +82,6 @@ start)
 	[ -d "$run" ] || die "$run does not exist"
 	mkdir "$state" 2>/dev/null || die "$state exists: another instance owns $run, so do not stop it"
 	mkdir "$cfg"
-	# The caller may be an agent's bash, whose login PATH cannot find omp.
 	printf '{"shell":"/opt/homebrew/bin/fish"}\n' >"$cfg/settings.json"
 	mktemp -d /tmp/omp-tools-tern.XXXXXX >"$state/sock-dir"
 	sockets=$(sockDir)
