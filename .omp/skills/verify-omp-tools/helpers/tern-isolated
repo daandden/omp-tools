@@ -82,6 +82,8 @@ start)
 	[ -d "$run" ] || die "$run does not exist"
 	mkdir "$state" 2>/dev/null || die "$state exists: another instance owns $run, so do not stop it"
 	mkdir "$cfg"
+	# The caller may be an agent's bash, whose login PATH cannot find omp.
+	printf '{"shell":"/opt/homebrew/bin/fish"}\n' >"$cfg/settings.json"
 	mktemp -d /tmp/omp-tools-tern.XXXXXX >"$state/sock-dir"
 	sockets=$(sockDir)
 	# A config dir with no omp state makes a native Tern window show its omp alert on top of the
@@ -93,6 +95,7 @@ start)
 	if [ "$mode" = serve ]; then
 		iso tern serve --control "$sockets/ctl.sock" --out "$run" >"$state/serve.log" 2>&1 </dev/null &
 	else
+		/usr/bin/caffeinate -u -t 2
 		iso tern --control "$sockets/ctl.sock" --dir "$dir" >"$state/window.log" 2>&1 </dev/null &
 	fi
 	tries=0
@@ -105,6 +108,8 @@ start)
 	socketOwner "$sockets/ctl.sock" >"$state/pid"
 	daemonPid=
 	if [ "$mode" = window ]; then
+		/usr/bin/caffeinate -d -w "$(cat "$state/pid")" >/dev/null 2>&1 &
+		ctl ready >/dev/null || die "no shell prompt, see $state/window.log"
 		tries=0
 		while daemonPid=$(socketOwner "$sockets/daemon.sock") && [ -z "$daemonPid" ]; do
 			tries=$((tries + 1))
