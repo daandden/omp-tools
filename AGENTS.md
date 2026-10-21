@@ -344,7 +344,12 @@ the Tern smokes: `tern serve --control <sock>`, then `tern ctl --control <sock>`
 layout JSON of every element). `PI_TUI_NATIVE=0` in the same window checks the
 text renderer.
 
-## Sibling repo
+## Sibling repos
+
+The OMP source is checked out at `~/work/tries/oh-my-pi` (`origin` is
+`can1357/oh-my-pi`). Read it for host behavior, the upstream files named above
+(the native dialog, `packages/coding-agent/src/prompts/tools/ask.md`), and
+`/tan` or `/btw` internals, at the tag matching `omp --version` (`v<version>`).
 
 tern-plugins (`~/work/tries/tern-plugins`) also starts isolated Tern instances
 and seeds the same omp state to keep Tern's omp offer alert off the screen.
