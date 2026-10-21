@@ -1,7 +1,7 @@
 # omp-tools
 
-Local OMP adapters: flexible questions, Codex Images `generate_image`, advisor
-wakes, and read-only side questions (`/btw` and the Picker btw).
+Local OMP adapters: flexible questions, Codex Images `generate_image`, and
+read-only side questions (`/btw` and the Picker btw).
 Formerly `omp-ask`.
 
 ## `ask`
@@ -245,102 +245,6 @@ generate_image:
   enabled: false
 ```
 
-## Advisor wake
-
-While the agent works, OMP defers advisor nits and concerns: it sends them only
-at the final answer. After the final answer, a concern only shows as a card
-until your next prompt. OMP starts a turn for a late blocker, but not after you
-interrupted the run earlier in the prompt cycle (Esc, or cancelling the
-Picker), even when the run went on and finished. This extension starts a new
-turn for such concerns and blockers and asks the agent to check the notes and
-fix what holds. The card is already in the agent's context, so the wake message
-only points at it instead of repeating the notes. Nits stay passive.
-
-When a fix changes what the agent's latest complete answer told you, the agent
-ends the Advisor wake with a Revised answer. A Revised answer is that answer
-again in full and in the same form, with the corrections in place. The agent's
-final reply holds only the Revised answer. It has no heading, and no lines about
-what changed come before or after it. You can read it and ignore the earlier
-answer, which stays in the chat. The latest complete answer is the latest
-Revised answer if there is one, else the agent's final answer to your prompt.
-If a fix changes nothing that you were told (for example, a code-only fix), the
-agent replies briefly with what it fixed. Advisor wakes for concerns and
-blockers follow the same rule in the TUI, RPC, and ACP.
-
-The wake no longer asks for a Revised answer after a long answer. When the
-agent's final answer to your prompt is longer than 600 tokens (counted with
-tiktoken's `o200k_base` encoding), the wake only asks the agent to check the
-notes and fix what holds. The agent may still restate the answer on its own.
-If the count fails, the wake does the same. The first Advisor wake
-after your prompt chooses the message, and later wakes until your next prompt
-use the same one, so a short reply to a wake never counts as the answer.
-
-A card wakes the agent only when it follows the agent's final answer and no
-turn starts for it. A run that you stopped and did not resume ends without a
-final answer, so its cards stay passive. In plan mode the card stays passive
-too, as in OMP. The wake starts a turn even when an earlier interrupt is still
-in effect. ACP clients that refuse agent-started turns get it on their next
-turn. The extension also skips a wake when you have already queued a message.
-
-The woken turn is reviewed too, so the advisor can raise another note. To stop
-an endless advisor/agent loop without stopping real work, every wake in a
-prompt cycle (one prompt you send until the next) must pass these checks:
-
-1. The note is new. OMP's judge (TypeSafe Jev through the `judge` model role)
-   compares it with the notes the agent was already woken for. A note that
-   raises the same issue stays a card: the agent already answered it. A
-   blocker is compared only with earlier blockers, so a concern that comes back
-   as a blocker wakes the agent again. When the `judge` role does not resolve
-   to Jev, or the judge call fails, the extension compares words instead (half
-   or more shared words is the same issue).
-2. Fewer than 10 wakes ran in this prompt cycle, as a safety limit.
-
-A new note wakes the agent whatever the last woken turn did. A Revised answer
-fixes the answer in text, with no tool call, and the advisor's next note is
-often about that new text.
-
-When check 2 keeps a new note back, the card stays and the footer shows
-`advisor: 1 note waiting` (in Tern, in the composer's bottom row) until your
-next prompt. Send a prompt if you want the agent to act. Every prompt you send
-starts a new cycle, in the TUI, RPC, and ACP alike. Switching sessions (`/new`,
-resume, fork) or jumping in `/tree` drops any note still waiting to be checked,
-so it never lands in the other conversation, and starts a new cycle.
-
-Limits:
-
-- Extensions cannot see the `advisor.immuneTurns` cooldown, so it does not
-  delay these wakes.
-- Extensions cannot see OMP's interrupt state either. The extension reads plan
-  mode from the session's mode changes.
-- The footer status needs a UI. In RPC or ACP without one, a note kept back
-  stays a card with no status.
-- Off in print and JSON mode (`omp -p`, `--mode json`). After the last prompt,
-  print mode prints the final answer and only records late advisor notes before
-  exiting, so a new turn's answer would never be shown. Late notes there stay
-  as recorded advisor notes.
-
-### Release at a Picker answer
-
-When you answer the Picker (Submit, or the timeout's pick), the extension sends
-the concerns that OMP deferred in the current run to the agent at once, as an
-advisor card. OMP sends a blocker the same way. The agent reads the concerns in
-its next model call, not at its final answer. Nits stay deferred. Concerns
-that the advisor writes after your answer keep OMP's timing.
-
-At the final answer, OMP still sends the released concerns, so their card shows
-a second time. That card does not wake the agent. A release is not a wake: it
-does not count toward the 10-wake limit.
-
-Limits:
-
-- OMP keeps deferred notes in a private list in memory. The extension reads
-  them from OMP's advisor transcript (`__advisor*.jsonl` in the session
-  folder). That format is private to OMP (checked in 18.10.4). If an OMP update
-  changes it, nothing is released and concerns keep OMP's timing.
-- A release steers in plan mode too.
-- Only the Picker releases. A delegated native `ask` (RPC, ACP, subagents)
-  keeps OMP's timing.
-
 ## Side questions
 
 `/btw <question>` in the main editor asks a side question that can look things
@@ -392,8 +296,6 @@ bun install --ignore-scripts
 omp plugin link "$PWD"
 ```
 
-`bun install` fetches `js-tiktoken`, which the Advisor wake uses to count tokens.
-
 The link uses the working tree, so edits need no reinstall. Start a new OMP
 session after you link the plugin or change its code. Running sessions keep the
 tool definitions they loaded.
@@ -406,25 +308,31 @@ install a second loose copy of the ask extension.
 ```bash
 bun install --ignore-scripts
 bun run check    # warns if SDK types differ from `omp --version`, then typechecks
-bun test         # generate_image, advisor-wake, and /btw parsing tests
+bun test         # generate_image, Picker paste, and Side question tests
 bun run update   # runs omp update, installs the newest SDK types, then checks
 ```
 
 Runtime value imports of `@oh-my-pi/*` resolve to the running OMP's own modules.
 Development types track the `latest` SDK release. Run `bun run update` so omp
 and the types move together. `bun test` runs `generate_image` against a stubbed
-endpoint, `advisor-wake` through its event handlers, and the `/btw`
-question parser. Typechecking and tests do not load the plugin into OMP, so a
-change to registration, the picker, or side questions needs a check in a fresh
-OMP session.
+endpoint, the `/btw` question parser, the Picker's paste handling, and the Side
+question's message seeding. Typechecking and tests do not load the plugin into
+OMP, so a change to registration, the picker, or side questions needs a check
+in a fresh OMP session.
 
 Fresh OMP sessions verified this behavior:
 
+- OMP 18.12.5 with Tern 0.9.5: the picker in the Tern and classic views
+  (single and multiple questions, `Other`, notes, Submit, timeout, and Tern
+  pointer actions), Picker btw, `/btw`, and the read-only Side question
+  probes over RPC. A live generation and reference-image edit succeeded
+  through Codex Images. Both tool cards and an argument-error card rendered
+  in Tern and the classic view. The Picker's Tern option labels measured
+  weight 500, with the terminal's font size and row height.
 - OMP 18.3.1: the Markdown picker (one question, an `Other` custom answer, two
   questions with multi-select, Esc cancel).
 - OMP 18.4.4: `generate_image` live (a generation, an edit with a PNG reference
   path, and an edit with `num_last_images_to_include`).
-- OMP 18.4.8: the host judge call behind the advisor wake checks.
 - OMP 18.6.1: the Picker btw (an answer that named the ticked option, a
   follow-up that quoted the earlier question, Esc cancelling a streaming answer
   and then returning to the options, the timer paused past the timeout and
@@ -443,11 +351,6 @@ Fresh OMP sessions verified this behavior:
 - OMP 18.8.9 in a headless Tern 0.7.2 window: each question's box as tall as
   its content up to the cap, a long question scrolling at the cap, and the
   same in the text picker.
-- OMP 18.10.4 in a headless Tern 0.8.3 window: the release at a Picker answer.
-  A deferred concern was written to the session's `__advisor.jsonl` in OMP's
-  format while the Picker was open. After Submit, the advisor card showed
-  below the `ask` result, the session file held it between the `ask` result
-  and the agent's reply, and the agent quoted the `<advisory>` text.
 - OMP 18.10.4 in a headless Tern 0.8.3 window: side questions. `/btw` answered
   with read, also when sent while the main agent was still running; a follow-up
   stayed in the thread; `t` opened and folded the tool calls; Esc cancelled a
@@ -456,24 +359,6 @@ Fresh OMP sessions verified this behavior:
   panel and a new `/btw` started a fresh thread. A Picker btw used grep while
   `ask` waited, and its thread file was deleted when the Picker closed. The
   same with `PI_TUI_NATIVE=0` verified the text panel.
-- OMP 18.11.0 in RPC mode with Claude Haiku 5.5: the Revised answer. A
-  throwaway command posted an advisor card after a final answer. In 32 of 32
-  Advisor wakes, a concern or blocker that a stated fact was wrong ended the
-  wake with only the whole answer, in the same form, with the fact corrected.
-  In 16 of them, the wrong fact was on the answer's first line. A code-only
-  concern got a short reply. A second fact concern, after a first Advisor wake
-  that also wrote a file, got a Revised answer that kept the first correction.
-- OMP 18.11.1 in RPC mode with Claude Haiku 5.5: the wake message by answer
-  length, over fact-fix Advisor wakes (the answer had to contain a wrong fact,
-  and the user prompt said not to question it). Final answers over 600 tokens
-  got the short message in 11 of 11 wakes (4 with the wrong fact on the first
-  line). The agent stated the correction in 9 of 11. In 2 it pointed to the
-  "do not question" instruction and offered to fix instead. In 2 of the 9 it
-  restated the whole answer anyway. Shorter answers got the Revised answer
-  message, and 13 of 13 wakes ended with only the corrected answer (6 with the
-  wrong fact on the first line). Three answers that refused to state the
-  wrong fact got a short reply. The linked plugin loaded `js-tiktoken` from
-  its `node_modules`.
 - OMP 18.11.3: side questions offered only the five read-only tools.
   Replaying a real session where a subagent's IRC message led to a pending
   `ask` (Claude Opus 5.5), the Picker btw made no call outside the five in

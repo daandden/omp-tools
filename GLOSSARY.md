@@ -40,26 +40,6 @@ _Avoid_: stock /btw, OMP btw
 A **Side question** asked from inside the **Picker** while an `ask` waits; shown and kept only in the **Picker**.
 _Avoid_: btw (unqualified), our /btw, custom /btw
 
-**Advisor note**:
-One item of advice from OMP's advisor, with a severity: nit, concern, or blocker. A concern is an advisor note of severity concern.
-_Avoid_: advice (as a countable item), advisory
-
-**Advisor card**:
-The message in the chat that shows one or more **Advisor notes** to the user and the main agent.
-_Avoid_: advisor message, advice card
-
-**Deferred note**:
-An **Advisor note** that OMP holds back while the agent's run continues and sends only at the agent's final answer. Blocker notes are never deferred. Sending a deferred note earlier is a release.
-_Avoid_: held note, withheld note, queued note
-
-**Advisor wake**:
-A turn this plugin starts so the agent acts on an **Advisor card** with a concern or blocker that arrived after the agent's final answer and that OMP left without a turn.
-_Avoid_: concern wake, wake (unqualified), nudge
-
-**Revised answer**:
-The reply that ends an **Advisor wake** and restates, in full and in the same form, the latest complete answer to the user's prompt: the agent's final answer, or an earlier **Revised answer**. The agent writes one only when a fix changes what that answer told the user, and only after a final answer short enough to restate.
-_Avoid_: corrected answer, restated answer, updated reply
-
 **generate_image**:
 This plugin's image tool. It replaces native `generate_image`, which the user disables.
 _Avoid_: custom image tool, image wrapper

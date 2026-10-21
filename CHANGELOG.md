@@ -15,19 +15,22 @@
 - A Side question (`/btw` or Picker btw) can now read the main session's
   `local://` files, such as a pasted image's `local://pasted-image-*.png`.
   It read its own empty folder and returned `Local file not found`.
+- Option labels in the Tern picker are medium weight again, as designed. The
+  stylesheet copied the terminal's font size and row height onto Tern's
+  region element, which a program stylesheet cannot style, so the label rule
+  was dropped and labels drew in regular weight.
+- A picker with `ask.timeout` now keeps the display awake while it waits, like
+  native timed `ask`. OMP 18.12 lets the Mac sleep while a dialog waits for
+  you, unless the dialog states a timeout, and the picker did not state its
+  timeout to OMP.
 
 ### Changed
 
+- Updated the SDK types to OMP 18.12.5.
 - The Verify skill now uses a seeded omp state for isolated Tern starts, so
   native test windows do not show Tern's omp install or update offer.
   Its `tern-isolated` helper starts headless or native instances and stops
   the instance and its daemon without touching the user's Tern.
-- An Advisor wake no longer holds back a new concern because the last woken
-  turn changed no files. A Revised answer fixes the answer in text, so that
-  check held back valid notes about the revised text. Repeats (check 1) and
-  the 10-wake limit still apply. A note the limit keeps back now shows as a
-  footer status, `advisor: N note(s) waiting`, until your next prompt, in Tern
-  and the classic view, instead of a notification.
 - Sized each ask question's picker to its content, up to 70% of the
   terminal's height (in Tern, the pane's), instead of to the tallest question
   at up to half the pane. Option rows in Tern use the terminal's font size and
@@ -36,29 +39,15 @@
 - Let the Picker btw look things up with read-only tools, as `/btw` does (see
   Added). Each answer shows its text and "N tool calls" lines in the order
   they happened, and later questions in the same ask follow up in one thread.
-- Renamed the advisor concern wake to Advisor wake (`advisor-wake.ts`, custom
-  message type `advisor-wake`). It now also wakes the agent for a blocker that
-  arrives after the final answer when OMP starts no turn for it: after an
-  interrupt earlier in the prompt cycle (Esc, or a cancelled Picker), OMP left
-  such a blocker as a passive card even when the run went on and finished.
-  Wakes start a turn (`steer` with `triggerTurn` instead of `aside`), so
-  concern wakes now also work after an interrupt. A card wakes only when it
-  follows a final answer, never in plan mode. Blockers skip the "last wake
-  changed files" check and are compared only with earlier blockers, and the
-  per-cycle limit rose from 6 to 10 wakes.
-- An Advisor wake now ends with a Revised answer when a fix changes what the
-  agent's latest complete answer told you. The final reply is then only that
-  answer, again in full and in the same form, with the corrections in place.
-  No heading and no lines about what changed come before or after it. A later
-  Advisor wake restates the latest Revised answer. A fix that changes nothing
-  you were told (for example, a code-only fix) still gets a short reply. Only
-  the `advisor-wake` message changed.
-- An Advisor wake after a final answer longer than 600 tokens (tiktoken
-  `o200k_base`) now sends only "Check the advisor notes above; fix what
-  holds.", which does not ask the agent to restate the answer. The first wake after
-  your prompt picks the message and later wakes until your next prompt reuse
-  it. If the count fails, the short message is sent. Install now needs
-  `bun install` for the new `js-tiktoken` dependency.
+
+### Removed
+
+- Removed the Advisor wake and the release of deferred advisor concerns at a
+  Picker answer. Since OMP 18.12.1, OMP itself continues the run for a concern
+  or blocker that arrives after the final answer (`advisor.continueSeverity`,
+  default `concern`). The wake prompts, the repeat check, the
+  `advisor: N note(s) waiting` footer status, and the `js-tiktoken` dependency
+  are gone with it.
 
 ### Added
 
@@ -90,15 +79,6 @@
   Tern text fields. The `ask` card shows the answers like native ask, plus the
   Submit note. The `generate_image` card shows the prompt, size, quality, the
   saved path as a link, any near-limit warning, and the image.
-- Woke the agent to check advisor concerns that arrive after its final answer,
-  instead of leaving them as a card until the next prompt. Wakes in one prompt
-  cycle stop when a concern repeats an earlier one (checked by OMP's judge,
-  TypeSafe Jev, or by shared words without it), when the last woken turn
-  changed no files, or after 6 wakes; the last two cases notify you.
-- Sent the advisor concerns that OMP defers during a run to the agent when you
-  answer the Picker, as an advisor card, instead of at the agent's final
-  answer. The extension reads them from OMP's advisor transcript. The repeat
-  card at the final answer does not wake the agent.
 - Added `generate_image`, replacing native `generate_image`. It calls the Codex
   Images endpoint directly with a ChatGPT/Codex login, the way the Codex CLI
   does: the prompt goes unchanged and without system instructions, the model

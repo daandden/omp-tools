@@ -16,6 +16,26 @@ Hypothesis tested: `gpt-image-2-codex` is a server-side alias that may route to 
 
 Client-side observations alone can't prove or disprove the hypothesis.
 
+## Source check, 2026-10-21
+
+**[PRIMARY]** Codex still requests `gpt-image-2`. The constant is unchanged in
+[stable 0.163.0](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/ext/image-generation/src/tool.rs#L58),
+[0.164.0-alpha.8](https://github.com/openai/codex/blob/57dedf20a502c8d1d13b89f0a9c0cbf4f5f71320/codex-rs/ext/image-generation/src/tool.rs#L65),
+and [main at c7234c11](https://github.com/openai/codex/blob/c7234c1174b27d9c55199fba0d546dc27d1b0415/codex-rs/ext/image-generation/src/tool.rs#L65).
+Those source snapshots contain no `gpt-image-2.5` identifier. Current
+`codex-rs` also contains no `gpt-image-2-codex` identifier.
+
+The generation and edit request bodies, image endpoints, and quality values
+have not changed since 0.160.0. Main and the latest alpha add optional
+[`x-codex-turn-metadata`](https://github.com/openai/codex/blob/c7234c1174b27d9c55199fba0d546dc27d1b0415/codex-rs/ext/image-generation/src/backend.rs#L135-L154)
+for attribution, not model selection. The plugin has no corresponding Codex
+turn metadata to forward.
+
+**[INFERENCE]** Keep the plugin's request model at `gpt-image-2` to match
+Codex. This source check does not identify the model that serves the request,
+so the backend verdict above remains inconclusive. No request-model change
+to GPT Image 2.5 is supported by this evidence.
+
 ## How it was tested
 
 - **Real built-in tool.** `codex exec` ran the session model, which called `tools.image_gen__imagegen({prompt})`. I did not call the image API myself.

@@ -1,6 +1,6 @@
 ---
 name: verify-omp-tools
-description: Live proof for the omp-tools OMP plugin. Drives a fresh OMP session inside a headless Tern window (Tern views) or with PI_TUI_NATIVE=0 (classic text TUI), plus OMP RPC mode for checks that need no screen. Surfaces are the ask picker, the Picker btw, /btw Side questions, generate_image, the Advisor wake, and the Picker release. Use it for any change to registration, the picker, Side questions, tool cards, or extension event handling.
+description: Live proof for the omp-tools OMP plugin. Drives a fresh OMP session inside a headless Tern window (Tern views) or with PI_TUI_NATIVE=0 (classic text TUI), plus OMP RPC mode for checks that need no screen. Surfaces are the ask picker, the Picker btw, /btw Side questions, and generate_image. Use it for any change to registration, the picker, Side questions, tool cards, or extension event handling.
 ---
 
 # Verify omp-tools
@@ -21,9 +21,9 @@ SOCK="/tmp/verify-omp-tools-$RUN_ID.sock"
 printf 'advisor:\n  enabled: false\n' > "$VERIFY_RUN_DIR/smoke-config.yml"
 ```
 
-`smoke-config.yml` turns the core advisor off for every session this run starts. The user's own config can turn it on, and then its cards start Advisor wakes in the middle of other drives.
+`smoke-config.yml` turns the core advisor off for every session this run starts. The user's own config can turn it on, and then its cards and the turns OMP continues for them land in the middle of other drives.
 
-Shots, notes, and copied session lines go at the top level of `$VERIFY_RUN_DIR`. OMP session dirs go in `$VERIFY_RUN_DIR/data/`. A session dir holds one `<timestamp>_<id>.jsonl` transcript per session, and a folder of the same name beside it holds that session's `SideQuestion-*.jsonl` and `__advisor*.jsonl` files.
+Shots, notes, and copied session lines go at the top level of `$VERIFY_RUN_DIR`. OMP session dirs go in `$VERIFY_RUN_DIR/data/`. A session dir holds one `<timestamp>_<id>.jsonl` transcript per session, and a folder of the same name beside it holds that session's `SideQuestion-*.jsonl` files.
 
 ## Doctor
 
@@ -41,7 +41,7 @@ For the isolated launch guard alone, no OMP session runs. Check the Tern version
 
 To list Tern's developer commands, run `tern help dev`. Do not run `tern serve --help`. It starts a server on the default control socket `/tmp/tern.sock` instead of printing help.
 
-For the default headless check, keep the user's Tern configuration. Start the window as a long-lived service (bash tool with a unique `name`, `ready.log` = `serving`, `cwd` = the checkout):
+For the default headless check, start a plain `tern serve`. It runs with Tern's default settings and no Tern plugins, not the user's (checked in Tern 0.9.5: default theme and font, no plugins).
 
 ```sh
 tern serve --control "$SOCK" --out "$VERIFY_RUN_DIR"
@@ -56,7 +56,11 @@ $C run "\"omp --model anthropic/claude-haiku-5-5 --config $VERIFY_RUN_DIR/smoke-
 sleep 12
 ```
 
-For the classic text TUI, prefix the inner command with `env PI_TUI_NATIVE=0 `. To start OMP in another directory, wrap the inner command in `sh -c 'cd <dir> && exec omp …'`. A new OMP session is needed after every code change; `$C type '"/quit"'` then `$C key Enter` ends the current one, and the next `$C run` starts another. A feature that needs other settings (for example `ask.timeout`) passes its own `--config` file, which also holds the `advisor:` lines.
+For the classic text TUI, prefix the inner command with `env PI_TUI_NATIVE=0 `. `$C run` does not start in the service's cwd (in Tern 0.9.5 it started in the main checkout), so wrap the inner command in `sh -c 'cd <checkout> && exec omp …'` whenever the drive reads repository files. A new OMP session is needed after every code change; `$C type '"/quit"'` then `$C key Enter` ends the current one, and the next `$C run` starts another. A feature that needs other settings (for example `ask.timeout`) passes its own `--config` file, which also holds the `advisor:` lines.
+
+In the classic TUI, run `sleep 0.5` after `$C key Escape` before the next key or screenshot. With OMP 18.12.5 and Tern 0.9.5, Escape arrives as a bare byte after a user message. OMP holds it for about 200 ms. A following `k` in that window forms Alt+k instead of closing the Picker btw and moving the cursor.
+
+To check a worktree while the plugin link points at another checkout, leave the link alone and load the worktree's entry points instead: `--no-extensions -e <checkout>/extensions/flexible-ask.ts -e <checkout>/extensions/generate-image.ts -e <checkout>/extensions/btw.ts`. Doctor step 2 then checks those paths instead of the link.
 
 ### Isolated starts and native windows
 
@@ -77,7 +81,7 @@ sleep 5
 "$V" ctl "$VERIFY_RUN_DIR" system
 ```
 
-Require `"dialogs":[]` before the drive. The config starts with only the seeded omp state and the explicit fish shell; none of the user's Tern plugins or other settings are copied. Use the default headless check for proof that depends on those.
+Require `"dialogs":[]` before the drive. The config starts with only the seeded omp state and the explicit fish shell; none of the user's Tern plugins or other settings are copied. Headless `tern serve` has none either. For proof that depends on Tern plugins or settings, configure the owned test instance explicitly and confirm what it loaded. Do not drive an existing user window.
 
 Logs and pids stay in `$VERIFY_RUN_DIR/tern/`. Sockets live in a short `/tmp/omp-tools-tern.*` directory because macOS limits Unix socket paths to 104 bytes. Headless shots stay in `$VERIFY_RUN_DIR/serve/`. For native shots, use the paths returned by `$C shot <name>`.
 
@@ -91,7 +95,7 @@ For the launch guard itself, start a native window on an empty run dir. After fi
 - Inspect: `$C tree` prints the visible element tree with text as JSON. Search it for visible strings instead of reading pixels.
 - Wait by polling `$C tree` for the string that marks the state (for example `to cancel` while a Side answer runs), or with `sleep`. Model turns take 10 to 30 seconds with Haiku. A shot taken too early shows a running state, not a result.
 
-RPC drive for checks without a screen: spawn `omp --mode rpc --model <m> --config "$VERIFY_RUN_DIR/smoke-config.yml" --session-dir "$VERIFY_RUN_DIR/data/rpc"` with the checkout as cwd, write `{"id":"p1","type":"prompt","message":"..."}` lines to stdin, and wait for the `{"type":"prompt_result","id":"p1"}` line on stdout. A turn that starts later (an Advisor wake) ends with an `{"type":"agent_end"}` line.
+RPC drive for checks without a screen: spawn `omp --mode rpc --model <m> --config "$VERIFY_RUN_DIR/smoke-config.yml" --session-dir "$VERIFY_RUN_DIR/data/rpc"` with the checkout as cwd, write `{"id":"p1","type":"prompt","message":"..."}` lines to stdin, and wait for the `{"type":"prompt_result","id":"p1"}` line on stdout. A turn that starts later ends with an `{"type":"agent_end"}` line.
 
 ## Helpers
 

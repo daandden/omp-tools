@@ -34,4 +34,3 @@ Each feature file starts with an H1 title and one paragraph of user-visible beha
 - [Picker btw](./picker-btw.md): a Side question from inside the ask picker, while `ask` waits.
 - [Ask picker](./ask-picker.md): Markdown questions, keys, Other and notes, Submit, and the answer the agent gets.
 - [generate_image](./generate-image.md): a generation and an edit through Codex Images, and the tool card.
-- [Advisor wake](./advisor-wake.md): one `advisor-wake` message per late card that passes the checks, a Revised answer for a fact fix, a second Revised answer that keeps the first fix, a short reply for a code-only fix, a concern held back after an Advisor wake that changed no file, and the Picker release of deferred concerns when the user answers the picker.

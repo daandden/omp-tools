@@ -388,15 +388,12 @@ const NATIVE_SHEET_NAME = "omp-tools-ask";
  * rows follow its theme (and the program palette where Tern applies it).
  *
  * The rows sit on the terminal grid to stay compact: their text takes the
- * terminal's font size and row height (`--sf-fs`, `--sf-lh`, read on the
- * surface before the composer sets its own), one row per line, 2px of padding
- * above and below for the highlight fill, and no gap between rows.
+ * terminal's font size and row height (`--sf-fs`, `--sf-lh`), one row per
+ * line, 2px of padding above and below for the highlight fill, and no gap
+ * between rows. A program sheet only reaches strict descendants of its
+ * region, so it cannot copy them onto `.sf-region` itself.
  */
 const NATIVE_SHEET = `
-.sf-region {
-	--omp-tools-fs: var(--sf-fs, 13px);
-	--omp-tools-lh: var(--sf-lh, 17px);
-}
 ${SCROLL_BOX_CSS}
 .sf-list[data-role='omp-tools.ask-body'] > .sf-list-scroll > .sf-list-slot > .sf-col { gap: 0; }
 .sf-list[data-role='omp-tools.ask-body'] [data-role='omp.ask.question'] { margin-bottom: 6px; }
@@ -409,12 +406,12 @@ ${SCROLL_BOX_CSS}
 [data-role^='omp-tools.ask-row'] .sf-col { gap: 0; }
 [data-role^='omp-tools.ask-row']:hover { background: var(--l1); }
 [data-role='omp-tools.ask-row.on'], [data-role='omp-tools.ask-row.on']:hover { background: var(--l2); }
-[data-role='omp-tools.ask-label'] { font: 500 var(--omp-tools-fs)/var(--omp-tools-lh) var(--sans); color: var(--t1); }
+[data-role='omp-tools.ask-label'] { font: 500 var(--sf-fs, 13px)/var(--sf-lh, 17px) var(--sans); color: var(--t1); }
 [data-role='omp-tools.ask-label'] .sf-t-code { font-family: var(--tv-font, var(--mono)); }
-[data-role^='omp-tools.ask-row'] .sf-md, [data-role^='omp-tools.ask-row'] .sf-md .md { font-family: var(--sans); font-size: var(--omp-tools-fs); line-height: var(--omp-tools-lh); color: var(--t3); }
+[data-role^='omp-tools.ask-row'] .sf-md, [data-role^='omp-tools.ask-row'] .sf-md .md { font-family: var(--sans); font-size: var(--sf-fs, 13px); line-height: var(--sf-lh, 17px); color: var(--t3); }
 [data-role^='omp-tools.ask-row'] .sf-md code { font-family: var(--tv-font, var(--mono)); }
-[data-role='omp-tools.ask-typed'] { font: var(--omp-tools-fs)/var(--omp-tools-lh) var(--sans); }
-[data-role='omp-tools.ask-marker'] { font-size: 0.75em; line-height: var(--omp-tools-lh); }
+[data-role='omp-tools.ask-typed'] { font: var(--sf-fs, 13px)/var(--sf-lh, 17px) var(--sans); }
+[data-role='omp-tools.ask-marker'] { font-size: 0.75em; line-height: var(--sf-lh, 17px); }
 [data-role='omp-tools.ask-answers'] { font-family: var(--sans); font-size: 13px; }
 [data-role='omp-tools.ask-title'] { font: 600 13px/1.4 var(--sans); color: var(--t3); }
 `;
@@ -1771,6 +1768,10 @@ export function showMarkdownAskDialog(
 	questions: ExtensionAskDialogQuestion[],
 	options: DialogOptions & { signal?: AbortSignal },
 ): Promise<MarkdownAskResult | undefined> {
+	// The host's custom-UI options do not declare `timeout`, but the host reads
+	// it: a dialog with a deadline settles by itself, so its time stays the
+	// agent's and the display stays awake, as with native timed ask.
+	const customOptions = { signal: options.signal, timeout: options.timeout };
 	return ui.custom<MarkdownAskResult | undefined>(
 		(tui, _theme, _keybindings, done) =>
 			new MarkdownAskDialog(
@@ -1779,6 +1780,6 @@ export function showMarkdownAskDialog(
 				{ onSubmit: result => done(result), onCancel: () => done(undefined) },
 				options,
 			),
-		options.signal ? { signal: options.signal } : undefined,
+		customOptions,
 	);
 }

@@ -6,19 +6,16 @@
 drop the model-facing option count and show questions
 as full Markdown in the interactive picker; outside the TUI it delegates to
 native `ask`. It replaces native `generate_image` with a tool that calls the Codex
-Images endpoint directly with Codex OAuth. It also wakes the agent for advisor
-concerns and blockers that arrive after its final answer and that OMP leaves
-without a turn, and sends the concerns that OMP deferred during a run to the
-agent when the user answers the picker. It takes
+Images endpoint directly with Codex OAuth. It takes
 over `/btw <question>` with a Side question that may use read-only tools, and
 the Picker btw asks the same kind of Side question.
 
 ## Architecture & Data Flow
 
 - `package.json` registers `extensions/flexible-ask.ts`,
-  `extensions/generate-image.ts`, `extensions/advisor-wake.ts`, and
-  `extensions/btw.ts` as entry points. OMP also loads `skills/*/SKILL.md` from
-  the plugin root (the `omp-plugins` discovery provider, priority 90).
+  `extensions/generate-image.ts`, and `extensions/btw.ts` as entry points.
+  OMP also loads `skills/*/SKILL.md` from the plugin root (the `omp-plugins`
+  discovery provider, priority 90).
 - The extension registers a shadow `ask` description/schema. In `ctx.mode ===
   "tui"` with `ctx.hasUI`, it shows its own picker (`extensions/ask-dialog.ts`)
   through `ctx.ui.custom` and formats results with native wording and details.
@@ -134,10 +131,11 @@ the Picker btw asks the same kind of Side question.
   pi-tui opens a new inline surface on `gone` with the same describe context,
   so a once-only send is lost): theme variables only (`--sans`, `--t1`,
   `--t3`, `--l1`, `--l2`), so rows follow Tern's theme and appearance. Row
-  text takes the terminal's `--sf-fs` and `--sf-lh`, copied on `.sf-region`
-  because the composer sets its own `--sf-lh` below it, so each line is one
-  terminal row (the `reader-terminal-text` Tern plugin does the same for
-  omp's text). The sheet's row padding and gap are in
+  text reads the terminal's `--sf-fs` and `--sf-lh` directly, so each line
+  is one terminal row. Tern scopes a program sheet to strict descendants of
+  its region, so a rule on `.sf-region` itself never applies (a copy of the
+  variables there left them unset and dropped the label's `font` shorthand,
+  Tern 0.9.5). The sheet's row padding and gap are in
   `NATIVE_STYLED_ROW_LINES`, the height estimate.
   Tern's Markdown hangs list numbers left of a 2-cell indent, into the page
   margin; a scroll box clips them, so the sheet pads each `scrollBox` scroller
@@ -165,6 +163,11 @@ the Picker btw asks the same kind of Side question.
 - Preserve `approval: "read"`, `concurrency: "exclusive"`, cancellation
   (`ctx.abort()` plus `ToolAbortError`), `ask.timeout` auto-selection,
   `ask.notify`, and the explicit error when native ask delegation is unavailable.
+  The Picker passes its timeout to `ui.custom` as `{ signal, timeout }`
+  (`timeout` is not in `ExtensionCustomOptions`): since OMP 18.12 the host
+  runs each extension dialog as a wait for the user, which ends the computer
+  turn so the display can sleep, unless an options argument has a positive
+  `timeout`, as native timed ask does.
 - Keep native `ask` enabled. Replace legacy `omp-ask` installations rather than
   loading duplicate wrappers.
 - `generate_image` posts to `chatgpt.com/backend-api/codex/images/generations`
@@ -259,103 +262,10 @@ the Picker btw asks the same kind of Side question.
   any `model` with no visible effect, so rules stay model-agnostic), and
   `codex-image-backend-model.md` (live check of which model serves; inconclusive).
 - `test/`: `bun test` behavior tests for `generate_image` through `execute`
-  with a stubbed `fetch`, for `advisor-wake` through its event
-  handlers with a mocked `@oh-my-pi/pi-coding-agent/judgment`, for
-  `parseBtwQuestion`, `AnswerEditor`'s host paste contract, Picker btw
-  `numberImagesByAppearance`, and for the Side
-  question's `seedMessages`, `cacheMissTokens`, and `answerInto`. The tool
-  limit, the thread cycle, the mirror session, and the panel have live smoke
-  only.
-- `extensions/advisor-wake.ts`: listens for preserved `advisor` cards
-  (`message_end`, `customType: "advisor"`) with `concern` or `blocker` notes
-  that follow a final answer (the last assistant `message_end` had
-  `stopReason: "stop"`; a stopped, failed, or mid-run reply never wakes) and,
-  once the session is idle with no turn started for the card, sends a short
-  wake prompt with `deliverAs: "steer"` and `triggerTurn`. The card is
-  already in LLM context (a `developer` `<advisory>` message), so the wake
-  must not repeat the notes. Core leaves a late blocker without a turn while
-  `autoResumeSuppressed` is set (OMP 18.10.4). Every user-reason abort sets
-  it: Esc (also while idle, with no `aborted` reply), `ctx.abort()` from a
-  Picker cancel, RPC and ACP abort. Only a user prompt, a typed steer, a tree
-  jump, or (in OMP after 18.11.1, PR #14831) `/retry` clears it, so a run that
-  resumes any other way still ends with passive cards. Extensions cannot read
-  the flag, hence the outcome rule. Do
-  not go back to `aside`: its idle branch in core `sendCustomMessage` folds
-  into context while the flag is set. A steer with `triggerTurn` only checks
-  ACP deferral, so the wake reads plan mode itself (the branch's latest
-  `mode_change` entry is `plan`) and skips it there, as core does for
-  advisor cards. Local guards: queued messages and two per-prompt-cycle
-  checks before each wake. (1) New note: one host
-  judge call (`resolveJudge` from `@oh-my-pi/pi-coding-agent/judgment` with the
-  root `settings` and `ctx.modelRegistry`, used only when `hasNativeJudge`)
-  asks one Choice per new note against the woken ones
-  (`extensions/concern-match.ts`); a concern is compared with every woken note,
-  a blocker only with woken blockers (an escalation wakes, as in core's
-  emission guard). No native judge, an error, or a 15 s timeout
-  falls back to word-overlap Jaccard ≥ 0.5. (2) `MAX_WAKES_PER_PROMPT = 10`.
-  What the woken turn did is not checked: a Revised answer fixes the answer
-  with no tool call, and the next note is often about that text (a former
-  "last wake ran a changing tool" check held back valid notes; in 85 recorded
-  wakes no disagreement loop showed). Notes check 2 keeps back are counted in
-  the footer through `ctx.ui.setStatus("advisor-wake", "advisor: N note(s)
-  waiting")` (when `ctx.hasUI`; in Tern a composer-bar fact), cleared when the
-  cycle resets; no toast. A repeat stays silent. The
-  cycle resets on `before_agent_start`, which fires for user prompts in every
-  mode but not for the extension's agent-initiated turn (`input` is TUI-only),
-  and a counter drops a judge result that lands after the reset or after any
-  assistant `message_start` (a blocker or extension turn that ran during the
-  judge call already saw the cards). Held notes are
-  dropped on `session_before_switch` / `_branch` / `_tree` (the runner and its
-  timers outlive `/new`); the after-events reset the cycle.
-  `advisor.immuneTurns` is core-private and not applied. Disabled when
-  `ctx.mode` is `"print"` or `"json"`: print mode enters a preserve-only
-  headless advisor drain after the last prompt (`prepareForHeadlessAdvisorDrain`),
-  prints the final text, then disposes, so a woken turn would never be emitted.
-  `advisor-wake.md` holds the wake prompt; the custom type is `advisor-wake`.
-  `advisor-wake-short.md` holds the short prompt, without the Revised answer
-  rule. The first wake of a prompt cycle counts the text of the last final
-  answer (`js-tiktoken`, `o200k_base`, loaded on first use, ~125 ms) and sends
-  the short prompt when it is over `REVISED_ANSWER_MAX_TOKENS` (600) or the
-  count fails; later wakes in the cycle reuse that choice, so a brief wake
-  reply is never measured. `js-tiktoken` is the plugin's only runtime
-  dependency; OMP resolves it from the plugin's `node_modules`.
-  `advisor-wake.md` also states the Revised answer rule (GLOSSARY.md). When a fix
-  changes what the latest complete answer told the user, the final reply of
-  the Advisor wake is only that answer, restated in full and in the same form.
-  Nothing comes before or after it. When no fix changes what the user was
-  told, the reply stays short. The rule lives only in the prompt. Do not pin
-  its wording in a test. Check a prompt change with live Advisor wakes. Post
-  the `advisor` card after a final answer with a throwaway command in
-  `extensions/`. The reply varies from run to run. Count the passes over at
-  least 12 fact-fix Advisor wakes, with the wrong fact on the answer's first
-  line in at least 4.
-  Release: on `PICKER_ANSWERED` (emitted on `pi.events` by the Picker path of
-  `flexible-ask.ts` after Submit or a timeout pick, before `execute` returns)
-  it steers the run's deferred concerns as a `customType: "advisor"` card
-  (`deliverAs: "steer"`, `triggerTurn`, `details.releasedBy: "omp-tools"`),
-  the way core steers a blocker; the loop reads it at the boundary after
-  `ask`. Core's deferred list (`AdviseTool#deferredNotes`, OMP 18.10.4) is
-  private and in memory; core flushes it only at the run's terminal boundary.
-  Keep the `advisor` custom type: core keeps such cards on interrupt and leaves
-  them out of the advisor's review input. The handler is synchronous so the
-  steer is queued before `ask` returns. A release is not a wake (check 2
-  skips it); released notes join `woken`, and a later card's concern with the
-  same text does not wake. `agent_start` snapshots the transcript sizes and
-  clears the notes that cards carried in the run (never released) and the
-  release receipts. Receipts live per run, not per prompt cycle: a prompt
-  queued during a run fires `before_agent_start` (agent-core dequeue, then
-  `#prepareAgentStart`) with no `agent_start`, and the run's final card follows.
-- `extensions/deferred-notes.ts`: reads deferred concerns from
-  `<session dir>/__advisor*.jsonl` after a run's start: `advise` tool results
-  whose text is core's `ADVISOR_ACK_DEFERRED` and whose `details` hold the
-  note. Core's recorder appends each advisor message as it finalizes. The
-  format and the acknowledgment text are private to OMP; check them when OMP
-  changes the advisor. Also `formatAdvisories`, a copy of core's
-  `formatAdvisorBatchContent` (not served).
-- `extensions/concern-match.ts`: check 1 for the Advisor wake. `judgeRepeats`
-  builds one judge request (state: `earlier_concerns` and `new_concerns`; one
-  Choice per new concern over the earlier ids plus `none`), and
-  `wordOverlapRepeats` is the fallback.
+  with a stubbed `fetch`, for `parseBtwQuestion`, `AnswerEditor`'s host paste
+  contract, Picker btw `numberImagesByAppearance`, and for the Side question's
+  `seedMessages`, `cacheMissTokens`, and `answerInto`. The tool limit, the
+  thread cycle, the mirror session, and the panel have live smoke only.
 - `package.json`: OMP discovery, scripts, and SDK dependency pins.
 - `tsconfig.json`: strict, no-emit TypeScript configuration for extensions.
 - `README.md` and `CHANGELOG.md`: update when changing user-visible behavior.
@@ -415,31 +325,20 @@ the `"latest"` specifier; `bun.lock` records the resolved version, so update
 through `bun run update` to keep types and the installed omp in step.
 
 Run typechecking and `bun test` after code changes; tests cover
-`generate_image`, `advisor-wake`, `parseBtwQuestion`, `AnswerEditor` paste
-handling, and the Side question's `seedMessages`, `cacheMissTokens`, and
-`answerInto`, and there is
+`generate_image`, `parseBtwQuestion`, `AnswerEditor` paste handling, and the
+Side question's `seedMessages`, `cacheMissTokens`, and `answerInto`, and there is
 no repository CI. Registration, ask, and Side question changes
 require a fresh-session OMP smoke; typechecking alone does not exercise host
-integration or UI. OMP 18.3.1 was used for the latest fresh-session picker and
-rendering smoke; OMP 18.4.4 for the live `generate_image` generate and edit
-smoke; OMP 18.4.8 for the host judge call behind the advisor wake checks; OMP
-18.6.1 for the Picker btw; OMP 18.8.0 for the picker key flow and Submit note;
-OMP 18.8.6 with Tern 0.6.3 for the Tern views; OMP 18.10.4 with Tern 0.8.3 for
-the Picker release (a deferred concern written by hand to the session's
-`__advisor.jsonl` while the Picker was open) and for Side questions (`/btw`
-and Picker btw); OMP 18.11.0 for the Revised answer (RPC mode with
-Claude Haiku 5.5, the linked plugin loaded as for a user, a throwaway extension
-command that posted `advisor` cards, and the core advisor off through
-`--config`; OMP 18.11.1 for the short wake prompt, the same way); OMP 18.11.3
-for the read-only Side question (RPC mode with a throwaway extension in
-`extensions/` that replayed a real session's messages into the main agent and
-ran Picker btw questions through `SideQuestionThread` and `answerInto`, and
-one that read `agent://` of a running subagent; a file outside the plugin
-cannot resolve `@oh-my-pi/*`), and Tern 0.9.2 for a Picker btw during an
-`ask` that a subagent's IRC message started; OMP 18.11.3 with Tern 0.9.2 and
-RPC for the Advisor wake without the "last wake changed files" check and its
-footer status; OMP 18.12.1 with native Tern 0.9.4 for Picker Cmd+C and Cmd+V
-(with a temporary picker extension). A headless Tern window drives
+integration or UI. OMP 18.12.5 with headless Tern 0.9.5 (Tern view and
+`PI_TUI_NATIVE=0`) was used for every surface: the picker (keys, `Other`,
+notes, Submit, pointer, `ask.timeout`), the Picker btw (also during an `ask`
+that a subagent's IRC message started), `/btw`, the `generate_image`
+generate and edit, and the Picker label's computed font (DevTools Console
+`element:style(prop)`); RPC mode for the read-only Side question probes
+(`helpers/side-question-probe.ts`: the five tools, and `read agent://` of a
+running subagent; a file outside the plugin cannot resolve `@oh-my-pi/*`).
+OMP 18.12.1 with native Tern 0.9.4 was used for Picker Cmd+C and Cmd+V (with
+a temporary picker extension). A headless Tern window drives
 the Tern smokes: `tern serve --control <sock>`, then `tern ctl --control <sock>`
 `run`, `type`, `key`, `click '<css selector>'`, and `shot <name>` (PNG plus a
 layout JSON of every element). `PI_TUI_NATIVE=0` in the same window checks the
