@@ -270,10 +270,12 @@ BTW history, and autocomplete is OMP's.
 - Privacy: only you see the answers. Nothing is added to the main session, and
   the agent never sees a side question.
 - Panel: answers show in a panel above the editor, and the editor keeps focus.
-  An answer shows its text and its tool calls in the order they happened; each
-  group of calls folds into one "N tool calls" line. With the editor empty,
-  `t` opens or folds them (a click on a line works in Tern), and Esc cancels a
-  running answer or closes the panel.
+  Each side question shows as your messages do in the main chat: Markdown in
+  a block on the user message background (a user bubble in Tern), in the
+  panel and in the Picker btw. An answer shows its text and its tool calls in
+  the order they happened; each group of calls folds into one "N tool calls"
+  line. With the editor empty, `t` opens or folds them (a click on a line
+  works in Tern), and Esc cancels a running answer or closes the panel.
 - Threads: a later `/btw` follows up in the same thread, also after Esc closed
   the panel. Your next main prompt ends the thread and clears the panel when
   the agent takes it (a prompt queued while the agent works ends it then). If
