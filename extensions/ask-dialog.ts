@@ -65,6 +65,7 @@ import { loadImagePaths, type PasteOutcome, type PastedImage, readClipboardPaste
 import { formatAskAnswers } from "./ask-result";
 import type { AskPickerBtw } from "./picker-btw";
 import { PickerBtwView } from "./picker-btw-view";
+import type { SideQuestionTurn } from "./side-question-view";
 
 const OTHER_OPTION = "Other (type your own)";
 const SUBMIT_OPTION = "Submit";
@@ -122,6 +123,23 @@ export interface MarkdownAskResult {
 	submitNote: SubmitNote | undefined;
 }
 
+/** Esc (or Cancel) closed the Picker; `draft` is what it keeps. */
+export interface MarkdownAskCancel {
+	kind: "cancel";
+	draft: PickerDraft;
+}
+
+/** A Picker draft: what a Picker that Esc closed keeps, so the same questions open where it was left. */
+export interface PickerDraft {
+	states: QuestionState[];
+	activeTab: number;
+	submitNote: Draft | undefined;
+	/** `[Image #N]` labels given so far; new pastes continue after them. */
+	imageCount: number;
+	/** The Picker btw turns shown so far; the caller keeps the thread that answered them. */
+	btwTurns: SideQuestionTurn[];
+}
+
 interface DialogOptions {
 	timeout?: number;
 	/** Resolves relative pasted image paths. */
@@ -134,6 +152,8 @@ interface DialogOptions {
 	fileCommands: ReadonlySet<string>;
 	/** Picker btw side questions; `undefined` when the host has no side turns (`?` is then off). */
 	askBtw: AskPickerBtw | undefined;
+	/** A Picker draft of these questions to open with. */
+	draft?: PickerDraft;
 }
 
 /** Text written in the picker editor, with the images its labels refer to. */
@@ -171,7 +191,7 @@ interface QuestionLayout {
 
 interface DialogCallbacks {
 	onSubmit(result: MarkdownAskResult): void;
-	onCancel(): void;
+	onCancel(draft: PickerDraft): void;
 }
 
 interface PromptRequest {
@@ -238,6 +258,15 @@ function questionRows(question: ExtensionAskDialogQuestion): QuestionRow[] {
 
 function isAnswered(state: QuestionState): boolean {
 	return state.selectedOptions.size > 0 || state.otherPicked;
+}
+
+/** Whether a Picker draft holds anything you entered: a pick, text, a Submit note, or a Picker btw turn. */
+function hasAnswers(draft: PickerDraft): boolean {
+	return (
+		draft.submitNote !== undefined ||
+		draft.btwTurns.length > 0 ||
+		draft.states.some(state => isAnswered(state) || state.other !== undefined || state.notes.size > 0)
+	);
 }
 
 /** Every option note, in option order. */
@@ -471,10 +500,10 @@ class MarkdownAskDialog implements Component, Focusable {
 	#countdownPaused = false;
 	#timeoutPending = false;
 	#closed = false;
-	#pasteNotice: string | undefined;
+	#notice: { text: string; tone: "warning" | "muted" } | undefined;
 	#prompt: AnswerEditor | undefined;
-	/** The Picker btw thread; kept for this ask once `?` opens it. */
 	#btw: PickerBtwView | undefined;
+	readonly #btwTurns: SideQuestionTurn[];
 	#btwOpen = false;
 	/** Rows of the last options render; the Picker btw view is at least this tall. */
 	#optionsHeight = 0;
@@ -518,16 +547,26 @@ class MarkdownAskDialog implements Component, Focusable {
 		this.#callbacks = callbacks;
 		this.#options = options;
 		const timeoutMs = options.timeout;
-		this.#states = questions.map(question => ({
-			selectedOptions: new Set<string>(),
-			other: undefined,
-			otherPicked: false,
-			notes: new Map<number, Draft>(),
-			cursorIndex: clamp(question.recommended ?? 0, 0, Math.max(0, question.options.length - 1)),
-			scrollOffset: 0,
-			followCursor: false,
-			timedOut: false,
-		}));
+		const draft = options.draft;
+		this.#states =
+			draft?.states ??
+			questions.map(question => ({
+				selectedOptions: new Set<string>(),
+				other: undefined,
+				otherPicked: false,
+				notes: new Map<number, Draft>(),
+				cursorIndex: clamp(question.recommended ?? 0, 0, Math.max(0, question.options.length - 1)),
+				scrollOffset: 0,
+				followCursor: false,
+				timedOut: false,
+			}));
+		this.#btwTurns = draft?.btwTurns ?? [];
+		if (draft) {
+			this.#activeTab = draft.activeTab;
+			this.#submitNote = draft.submitNote;
+			this.#imageCount = draft.imageCount;
+			if (hasAnswers(draft)) this.#notice = { text: "Restored your answers", tone: "muted" };
+		}
 		if (this.#hasSubmitTab()) {
 			this.#panel.addChild(this.#header);
 			this.#panel.addChild(new PanelDivider());
@@ -589,7 +628,7 @@ class MarkdownAskDialog implements Component, Focusable {
 
 	#refusePaste(): void {
 		if (this.#closed) return;
-		this.#pasteNotice = "Open a note (n) or Other to paste";
+		this.#notice = { text: "Open a note (n) or Other to paste", tone: "warning" };
 		this.#requestRender();
 	}
 
@@ -608,7 +647,7 @@ class MarkdownAskDialog implements Component, Focusable {
 			return;
 		}
 		const keybindings = getKeybindings();
-		this.#pasteNotice = undefined;
+		this.#notice = undefined;
 		if (keybindings.matches(data, "tui.select.cancel")) {
 			this.#finish(undefined);
 			return;
@@ -634,6 +673,7 @@ class MarkdownAskDialog implements Component, Focusable {
 		this.#countdownPaused = this.#countdown !== undefined;
 		this.#btw ??= new PickerBtwView({
 			tui: this.#tui,
+			turns: this.#btwTurns,
 			ask,
 			cwd: this.#options.cwd,
 			draftAnswers: () => formatAskAnswers(this.#questions, this.#results(), this.#submitNote?.text),
@@ -719,7 +759,7 @@ class MarkdownAskDialog implements Component, Focusable {
 		} else {
 			this.#describeQuestionBody(children, { lines, width }, shownBody);
 		}
-		if (this.#pasteNotice) children.push(text([span(this.#pasteNotice, "warning")], { wrap: "word" }));
+		if (this.#notice) children.push(text([span(this.#notice.text, this.#notice.tone)], { wrap: "word" }));
 		// Inline `min`/`max` widths beat the composer's measure: the picker spans the pane.
 		return col(children, { role: "omp.editor", gap: "sm", min: { w: 1 }, max: { w: 1 } });
 	}
@@ -1046,7 +1086,7 @@ class MarkdownAskDialog implements Component, Focusable {
 	 */
 	handleNativeEvent(event: NativeUiEvent): void {
 		if (this.#closed || this.#prompt || this.#btwOpen) return;
-		this.#pasteNotice = undefined;
+		this.#notice = undefined;
 		this.#countdownPaused = false;
 		this.#countdown?.reset();
 		if (event.type === "select" && leafKey(event.key) === "tabs") {
@@ -1334,7 +1374,7 @@ class MarkdownAskDialog implements Component, Focusable {
 	}
 
 	#footerHint(indicator: string): string {
-		if (this.#pasteNotice) return this.#pasteNotice;
+		if (this.#notice) return this.#notice.text;
 		const cancel = `${cancelKeyLabel()} cancel`;
 		const btw = this.#options.askBtw ? " · ? btw" : "";
 		const scroll = indicator ? ` · ${pageKeysLabel()} ${indicator} scroll` : "";
@@ -1755,29 +1795,39 @@ class MarkdownAskDialog implements Component, Focusable {
 		this.#countdown?.dispose();
 		this.#stopRingTick();
 		if (result) this.#callbacks.onSubmit(result);
-		else this.#callbacks.onCancel();
+		else this.#callbacks.onCancel(this.#pickerDraft());
+	}
+
+	#pickerDraft(): PickerDraft {
+		return {
+			states: this.#states,
+			activeTab: this.#activeTab,
+			submitNote: this.#submitNote,
+			imageCount: this.#imageCount,
+			btwTurns: this.#btwTurns,
+		};
 	}
 }
 
 /**
  * Show the Markdown ask dialog in place of the prompt editor. Resolves
- * `undefined` on cancel; rejects with an `AbortError` when `signal` aborts.
+ * `kind: "cancel"` on Esc; rejects with an `AbortError` when `signal` aborts.
  */
 export function showMarkdownAskDialog(
 	ui: ExtensionUIContext,
 	questions: ExtensionAskDialogQuestion[],
 	options: DialogOptions & { signal?: AbortSignal },
-): Promise<MarkdownAskResult | undefined> {
+): Promise<MarkdownAskResult | MarkdownAskCancel> {
 	// The host's custom-UI options do not declare `timeout`, but the host reads
 	// it: a dialog with a deadline settles by itself, so its time stays the
 	// agent's and the display stays awake, as with native timed ask.
 	const customOptions = { signal: options.signal, timeout: options.timeout };
-	return ui.custom<MarkdownAskResult | undefined>(
+	return ui.custom<MarkdownAskResult | MarkdownAskCancel>(
 		(tui, _theme, _keybindings, done) =>
 			new MarkdownAskDialog(
 				questions,
 				tui,
-				{ onSubmit: result => done(result), onCancel: () => done(undefined) },
+				{ onSubmit: result => done(result), onCancel: draft => done({ kind: "cancel", draft }) },
 				options,
 			),
 		customOptions,

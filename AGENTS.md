@@ -95,10 +95,29 @@ the Picker btw asks the same kind of Side question.
   `picker-btw.md` with the unsubmitted answers from `formatAskAnswers`). It is
   not native `/btw`. Each ask gets one thread (`pickerBtwRunner` in
   `flexible-ask.ts`), opened on the first question, followed up by later ones,
-  and disposed when the dialog closes; a cancelled turn keeps the thread.
+  and disposed when the dialog closes, unless a Picker draft keeps it; a
+  cancelled turn keeps the thread.
   `?` disposes the countdown and the next key in the options restarts it.
   `?` is off when Side questions cannot run. Pasted images in the Picker btw
   go to `SideQuestionThread.ask` as prompt images.
+- Esc (or the Tern Cancel button) resolves the picker with a Picker draft
+  (`kind: "cancel"`): the `QuestionState`s, tab, Submit note, image count, and
+  Picker btw turns. A restored picker shows `Restored your answers` only when
+  the draft holds a pick, text, a Submit note, or a turn, and it keeps the
+  full `ask.timeout` countdown.
+  `flexible-ask.ts` keeps it with the Picker btw runner in a per-load
+  `PickerDraftSlot` (`extensions/picker-draft.ts`) before `ctx.abort()`. F5
+  (`app.retry`) replays a cancelled tool call with its stored id and
+  arguments before any model request (OMP `turn-recovery.ts`), so the same
+  `ask` runs again; no key is bound. `take` hands the draft to a picker whose
+  question ids, text, option labels, and `multi` match, and disposes the
+  thread on any other questions. A main prompt keeps it (a manual retry fires
+  no `before_agent_start`, and a re-ask after "go on" should match).
+  `session_before_switch` and `session_before_branch` drop it and await the
+  thread's disposal: the mirror's files sit in the session's artifacts
+  directory, which `/fork` and a branch copy after those events (OMP
+  `agent-session.ts` `fork`, `#branchIntoNewSession`). `session_tree` and
+  `session_shutdown` drop it too.
 - Tern sends Cmd+V as OSC 5522 enhanced paste. OMP reads it and calls the
   focused component's paste contract: `pasteText`, `beginPaste`,
   `acceptsImages`, and `attachImage`. `AnswerEditor` accepts host text and
@@ -228,6 +247,8 @@ the Picker btw asks the same kind of Side question.
 - `extensions/picker-btw.ts`, `picker-btw.md`, `picker-btw-view.ts`: the
   Picker btw runner (one Side question thread per ask), its prompt, and its
   thread view.
+- `extensions/picker-draft.ts`: `PickerDraftSlot`, the session's one kept
+  Picker draft with its Picker btw runner, and the question key it matches on.
 - `extensions/side-question.ts`: `SideQuestionThread` (the mirror session with
   only the five read-only tools, its `SideQuestionRegistry`, `seedMessages`,
   and the message-start, text, and tool-call callbacks; an already-aborted
@@ -266,9 +287,11 @@ the Picker btw asks the same kind of Side question.
   `codex-image-backend-model.md` (live check of which model serves; inconclusive).
 - `test/`: `bun test` behavior tests for `generate_image` through `execute`
   with a stubbed `fetch`, for `parseBtwQuestion`, `AnswerEditor`'s host paste
-  contract, Picker btw `numberImagesByAppearance`, and for the Side question's
-  `seedMessages`, `cacheMissTokens`, and `answerInto`. The tool limit, the
-  thread cycle, the mirror session, and the panel have live smoke only.
+  contract, Picker btw `numberImagesByAppearance`, the Picker draft (the slot's
+  match rule, and Esc then reopen through `showMarkdownAskDialog` with a stub
+  `ui.custom`), and for the Side question's `seedMessages`,
+  `cacheMissTokens`, and `answerInto`. The tool limit, the thread cycle, the
+  mirror session, the panel, and a kept Picker btw thread have live smoke only.
 - `package.json`: OMP discovery, scripts, and SDK dependency pins.
 - `tsconfig.json`: strict, no-emit TypeScript configuration for extensions.
 - `README.md` and `CHANGELOG.md`: update when changing user-visible behavior.
@@ -328,8 +351,9 @@ the `"latest"` specifier; `bun.lock` records the resolved version, so update
 through `bun run update` to keep types and the installed omp in step.
 
 Run typechecking and `bun test` after code changes; tests cover
-`generate_image`, `parseBtwQuestion`, `AnswerEditor` paste handling, and the
-Side question's `seedMessages`, `cacheMissTokens`, and `answerInto`, and there is
+`generate_image`, `parseBtwQuestion`, `AnswerEditor` paste handling, the Picker
+draft, and the Side question's `seedMessages`, `cacheMissTokens`, and
+`answerInto`, and there is
 no repository CI. Registration, ask, and Side question changes
 require a fresh-session OMP smoke; typechecking alone does not exercise host
 integration or UI. OMP 18.12.5 with headless Tern 0.9.5 (Tern view and

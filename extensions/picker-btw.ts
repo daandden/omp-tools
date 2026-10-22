@@ -15,8 +15,8 @@ export type AskPickerBtw = (request: PickerBtwRequest) => Promise<string>;
 
 export interface PickerBtwRunner {
 	ask: AskPickerBtw;
-	/** Ends the thread; call when the Picker closes. */
-	dispose(): void;
+	/** Ends the thread and settles when its files are removed; call when the Picker closes. */
+	dispose(): Promise<void>;
 }
 
 /** The prompt for a Picker btw question, with the user's unsubmitted answers. */
@@ -61,7 +61,7 @@ export function pickerBtwRunner(ctx: ExtensionContext): PickerBtwRunner | undefi
 		},
 		dispose: () => {
 			disposed = true;
-			thread.dispose();
+			return thread.dispose();
 		},
 	};
 }

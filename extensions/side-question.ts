@@ -353,11 +353,11 @@ export class LazySideQuestionThread {
 		return this.#thread;
 	}
 
-	/** Disposes the thread once it has opened; the next `get` opens a new one. */
-	dispose(): void {
+	/** Disposes the thread once it has opened, and settles when its files are removed; the next `get` opens a new one. */
+	async dispose(): Promise<void> {
 		const thread = this.#thread;
 		this.#thread = undefined;
-		void thread?.then(
+		await thread?.then(
 			open => open.dispose(),
 			() => {},
 		);

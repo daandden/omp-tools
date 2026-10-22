@@ -24,6 +24,10 @@ _Avoid_: custom input, custom answer
 Free text for the whole `ask`, written on the Submit tab and not tied to any question.
 _Avoid_: general note, global note
 
+**Picker draft**:
+The picks, **Notes**, **Other answers**, **Submit note**, and **Picker btw** thread of a **Picker** that Esc closed without submitting, kept until a **Picker** with the same questions opens again.
+_Avoid_: saved state, saved answers, cancelled answers
+
 **Side question**:
 A question about the session that is answered aside from the main conversation, with read-only tools, and that the main agent never sees. The user asks one through **/btw** or **Picker btw**.
 _Avoid_: btw (unqualified), side turn, btw agent
