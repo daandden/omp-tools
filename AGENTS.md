@@ -113,11 +113,12 @@ the Picker btw asks the same kind of Side question.
   question ids, text, option labels, and `multi` match, and disposes the
   thread on any other questions. A main prompt keeps it (a manual retry fires
   no `before_agent_start`, and a re-ask after "go on" should match).
-  `session_before_switch` and `session_before_branch` drop it and await the
-  thread's disposal: the mirror's files sit in the session's artifacts
-  directory, which `/fork` and a branch copy after those events (OMP
-  `agent-session.ts` `fork`, `#branchIntoNewSession`). `session_tree` and
-  `session_shutdown` drop it too.
+  The slot ends every Picker btw thread (`end`): a dropped draft's, a
+  mismatched draft's, and a submitted or failed Picker's. `drop` waits for
+  all of them. `session_before_switch` and `session_before_branch` call it:
+  the mirror's files sit in the session's artifacts directory, which `/fork`
+  and a branch copy after those events (OMP `agent-session.ts` `fork`,
+  `#branchIntoNewSession`). `session_tree` and `session_shutdown` drop it too.
 - Tern sends Cmd+V as OSC 5522 enhanced paste. OMP reads it and calls the
   focused component's paste contract: `pasteText`, `beginPaste`,
   `acceptsImages`, and `attachImage`. `AnswerEditor` accepts host text and
@@ -248,7 +249,8 @@ the Picker btw asks the same kind of Side question.
   Picker btw runner (one Side question thread per ask), its prompt, and its
   thread view.
 - `extensions/picker-draft.ts`: `PickerDraftSlot`, the session's one kept
-  Picker draft with its Picker btw runner, and the question key it matches on.
+  Picker draft with its Picker btw runner, the question key it matches on, and
+  the Picker btw threads still ending.
 - `extensions/side-question.ts`: `SideQuestionThread` (the mirror session with
   only the five read-only tools, its `SideQuestionRegistry`, `seedMessages`,
   and the message-start, text, and tool-call callbacks; an already-aborted

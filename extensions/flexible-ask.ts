@@ -177,7 +177,7 @@ async function askWithMarkdownDialog(
 			draft: restored?.draft,
 		});
 	} catch (error) {
-		pickerBtw?.dispose();
+		drafts.end(pickerBtw);
 		if (error instanceof Error && error.name === "AbortError") throw new ToolAbortError("Ask input was cancelled");
 		throw error;
 	}
@@ -186,7 +186,7 @@ async function askWithMarkdownDialog(
 		ctx.abort();
 		throw new ToolAbortError("Ask tool was cancelled by the user");
 	}
-	pickerBtw?.dispose();
+	drafts.end(pickerBtw);
 
 	const results: QuestionResult[] = questions.map((question, index) => {
 		const answer = dialogResult.results[index];
