@@ -235,7 +235,10 @@ the Picker btw asks the same kind of Side question.
   first use, shared by both callers), and `sideQuestionsAvailable`.
 - `extensions/side-question-view.ts`: what both views share: the turn
   (`SideQuestionTurn` with ordered `parts`, `answerInto`), the interrupt key,
-  and `SideQuestionTurnView`, which draws a turn's text and each group of tool
+  and `SideQuestionTurnView`, which draws the question as the main chat draws
+  the user's message (Markdown on `userMessageBg` padded by a row and a
+  column; in Tern a `card` with role `omp.user`, which Tern's sheet styles
+  as the user bubble anywhere), then the turn's text and each group of tool
   calls as a folded "N tool calls" line, in order (classic lines, or one Tern
   collapsible `section` per group).
 - `extensions/btw.ts`, `btw.md`, `btw-panel.ts`: the `/btw` takeover

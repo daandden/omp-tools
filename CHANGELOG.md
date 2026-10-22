@@ -26,6 +26,10 @@
 
 ### Changed
 
+- A Side question in the `/btw` panel and the Picker btw now shows like your
+  messages in the main chat: Markdown in a padded block on the user message
+  background, a user bubble in Tern. It was one faint line with a `›` marker
+  and was hard to find between answers.
 - Updated the SDK types to OMP 18.12.5.
 - The Verify skill now uses a seeded omp state for isolated Tern starts, so
   native test windows do not show Tern's omp install or update offer.

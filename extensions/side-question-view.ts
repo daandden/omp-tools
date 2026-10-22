@@ -1,4 +1,5 @@
 import {
+	card,
 	getKeybindings,
 	Markdown,
 	matchesKey,
@@ -133,6 +134,7 @@ function cacheMissLabel(tokens: number): string {
 export class SideQuestionTurnView {
 	readonly #runningLabel: string;
 	#markdown = new WeakMap<SideQuestionPart, { source: string; markdown: Markdown }>();
+	#questions = new WeakMap<SideQuestionTurn, Markdown>();
 
 	constructor(runningLabel: string) {
 		this.#runningLabel = runningLabel;
@@ -140,13 +142,12 @@ export class SideQuestionTurnView {
 
 	invalidate(): void {
 		this.#markdown = new WeakMap();
+		this.#questions = new WeakMap();
 	}
 
 	/** Classic lines for one turn: the question, its text and tool-call folds in order, and its status. */
 	lines(turn: SideQuestionTurn, width: number, toolsOpen: boolean): string[] {
-		const lines = wrapTextWithAnsi(replaceTabs(turn.question).trim(), Math.max(1, width - 2)).map(
-			(line, index) => `${theme.fg("accent", index === 0 ? "› " : "  ")}${theme.fg("muted", line)}`,
-		);
+		const lines = [...this.#questionMarkdown(turn).render(width)];
 		for (const part of turn.parts) {
 			if (part.type === "text") {
 				if (part.text.trim()) lines.push(...this.#partMarkdown(part).render(width));
@@ -170,7 +171,7 @@ export class SideQuestionTurnView {
 	/** Tern node for one turn; each group of tool calls is a section the user opens by clicking its head. */
 	describe(turn: SideQuestionTurn, index: number, toolsOpen: boolean): NativeNode {
 		const children: NativeChild[] = [
-			text([span("› ", "accent"), span(replaceTabs(turn.question).trim(), "muted")], { wrap: "word" }),
+			card({ role: "omp.user", tone: "user" }, [md(replaceTabs(turn.question).trim())]),
 		];
 		const lastPart = turn.parts.length - 1;
 		turn.parts.forEach((part, partIndex) => {
@@ -207,6 +208,18 @@ export class SideQuestionTurnView {
 			children.push(text([span(errorText(turn), "error")], { wrap: "word" }));
 		}
 		return node("col", { gap: "xs" }, children, `turn${index}`);
+	}
+
+	#questionMarkdown(turn: SideQuestionTurn): Markdown {
+		const cached = this.#questions.get(turn);
+		if (cached) return cached;
+		const markdown = new Markdown(replaceTabs(turn.question).trim(), 1, 1, getMarkdownTheme(), {
+			bgColor: value => theme.bg("userMessageBg", value),
+			color: value => theme.fgOnBg("userMessageText", "userMessageBg", value),
+		});
+		markdown.setIgnoreTight(true);
+		this.#questions.set(turn, markdown);
+		return markdown;
 	}
 
 	#partMarkdown(part: SideQuestionPart & { type: "text" }): Markdown {
