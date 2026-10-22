@@ -64,18 +64,44 @@ describe("PickerDraftSlot", () => {
 
 	test("drop settles only after the kept thread has ended, so its files are gone first", async () => {
 		const slot = new PickerDraftSlot();
-		let finish: () => void = () => {};
-		const btw = { ask: async () => "", dispose: () => new Promise<void>(resolve => (finish = resolve)) };
-		slot.keep([question()], { draft: draft(), btw });
+		const thread = threadWithDeferredDispose();
+		slot.keep([question()], { draft: draft(), btw: thread.btw });
 
-		let dropped = false;
-		const dropping = Promise.resolve(slot.drop()).then(() => {
-			dropped = true;
-		});
-		await Bun.sleep(0);
-		expect(dropped).toBe(false);
-		finish();
-		await dropping;
-		expect(dropped).toBe(true);
+		await expectDropToWaitFor(slot, thread.finish);
+	});
+
+	test("drop also waits for a thread that other questions started ending", async () => {
+		const slot = new PickerDraftSlot();
+		const thread = threadWithDeferredDispose();
+		slot.keep([question()], { draft: draft(), btw: thread.btw });
+		slot.take([question({ id: "color" })]);
+
+		await expectDropToWaitFor(slot, thread.finish);
+	});
+
+	test("drop also waits for the thread of a Picker that closed without a draft", async () => {
+		const slot = new PickerDraftSlot();
+		const thread = threadWithDeferredDispose();
+		slot.end(thread.btw);
+
+		await expectDropToWaitFor(slot, thread.finish);
 	});
 });
+
+function threadWithDeferredDispose() {
+	let finish: () => void = () => {};
+	const btw: PickerBtwRunner = { ask: async () => "", dispose: () => new Promise<void>(resolve => (finish = resolve)) };
+	return { btw, finish: () => finish() };
+}
+
+async function expectDropToWaitFor(slot: PickerDraftSlot, finish: () => void) {
+	let dropped = false;
+	const dropping = slot.drop().then(() => {
+		dropped = true;
+	});
+	await Bun.sleep(0);
+	expect(dropped).toBe(false);
+	finish();
+	await dropping;
+	expect(dropped).toBe(true);
+}

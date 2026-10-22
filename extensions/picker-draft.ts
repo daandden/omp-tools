@@ -1,4 +1,4 @@
-import type { ExtensionAskDialogQuestion } from "@oh-my-pi/pi-coding-agent";
+import { type ExtensionAskDialogQuestion, logger } from "@oh-my-pi/pi-coding-agent";
 import type { PickerDraft } from "./ask-dialog";
 import type { PickerBtwRunner } from "./picker-btw";
 
@@ -16,9 +16,10 @@ function draftKey(questions: readonly ExtensionAskDialogQuestion[]): string {
 
 export class PickerDraftSlot {
 	#kept: { key: string; picker: KeptPicker } | undefined;
+	readonly #pendingDisposals = new Set<Promise<void>>();
 
 	keep(questions: readonly ExtensionAskDialogQuestion[], picker: KeptPicker): void {
-		this.drop();
+		this.end(this.#kept?.picker.btw);
 		this.#kept = { key: draftKey(questions), picker };
 	}
 
@@ -28,13 +29,23 @@ export class PickerDraftSlot {
 		this.#kept = undefined;
 		if (!kept) return undefined;
 		if (kept.key === draftKey(questions)) return kept.picker;
-		kept.picker.btw?.dispose();
+		this.end(kept.picker.btw);
 		return undefined;
 	}
 
+	/** End a Picker btw thread that no draft keeps. */
+	end(btw: PickerBtwRunner | undefined): void {
+		if (!btw) return;
+		const ending: Promise<void> = btw
+			.dispose()
+			.catch(error => logger.warn("omp-tools: failed to end a Picker btw thread", { error: String(error) }))
+			.finally(() => this.#pendingDisposals.delete(ending));
+		this.#pendingDisposals.add(ending);
+	}
+
 	async drop(): Promise<void> {
-		const btw = this.#kept?.picker.btw;
+		this.end(this.#kept?.picker.btw);
 		this.#kept = undefined;
-		await btw?.dispose();
+		await Promise.all(this.#pendingDisposals);
 	}
 }
