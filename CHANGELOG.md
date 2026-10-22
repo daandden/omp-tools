@@ -9,6 +9,10 @@
   questions. On the option list, the picker pastes nothing and says to open a
   note or `Other`. Text that you select with the mouse in the question or an
   option copies with Cmd+C.
+- Esc no longer loses what you entered in the picker. It keeps your picks,
+  notes, `Other` answers, Submit note, open tab, and Picker btw thread, and
+  F5 (OMP's Retry) opens the cancelled ask with them. Any ask with the same
+  questions gets them, and the picker says `Restored your answers`.
 
 ### Fixed
 

@@ -27,9 +27,10 @@ import { ToolAbortError } from "@oh-my-pi/pi-coding-agent/tools/tool-errors";
 import { type AutocompleteProvider, span, TERMINAL, text } from "@oh-my-pi/pi-tui";
 import type { NativeToolView } from "@oh-my-pi/pi-tui/tools/renderer";
 import { sanitizeCarriageReturns } from "@oh-my-pi/pi-tui/render";
-import { type MarkdownAskResult, showMarkdownAskDialog } from "./ask-dialog";
+import { type MarkdownAskCancel, type MarkdownAskResult, showMarkdownAskDialog } from "./ask-dialog";
 import { formatAskAnswers } from "./ask-result";
 import { pickerBtwRunner } from "./picker-btw";
+import { PickerDraftSlot } from "./picker-draft";
 import flexibleAskDescription from "./flexible-ask.md" with { type: "text" };
 
 /** Labels the native runtime reserves for its own action rows. */
@@ -148,6 +149,7 @@ async function askWithMarkdownDialog(
 	questions: ExtensionAskDialogQuestion[],
 	signal: AbortSignal | undefined,
 	autocomplete: () => AutocompleteProvider | undefined,
+	drafts: PickerDraftSlot,
 ): Promise<AgentToolResult<FlexibleAskDetails>> {
 	const timeoutSeconds = cfgAskTimeout.get(settings);
 	if (cfgAskNotify.get(settings) !== "off") {
@@ -160,8 +162,9 @@ async function askWithMarkdownDialog(
 		});
 	}
 
-	let dialogResult: MarkdownAskResult | undefined;
-	const pickerBtw = pickerBtwRunner(ctx);
+	const restored = drafts.take(questions);
+	const pickerBtw = restored?.btw ?? pickerBtwRunner(ctx);
+	let dialogResult: MarkdownAskResult | MarkdownAskCancel;
 	try {
 		dialogResult = await showMarkdownAskDialog(ctx.ui, questions, {
 			timeout: timeoutSeconds > 0 ? timeoutSeconds * 1000 : undefined,
@@ -171,17 +174,19 @@ async function askWithMarkdownDialog(
 			autocomplete,
 			fileCommands: await loadFileCommandNames(ctx.cwd),
 			askBtw: pickerBtw?.ask,
+			draft: restored?.draft,
 		});
 	} catch (error) {
+		pickerBtw?.dispose();
 		if (error instanceof Error && error.name === "AbortError") throw new ToolAbortError("Ask input was cancelled");
 		throw error;
-	} finally {
-		pickerBtw?.dispose();
 	}
-	if (!dialogResult) {
+	if (dialogResult.kind === "cancel") {
+		drafts.keep(questions, { draft: dialogResult.draft, btw: pickerBtw });
 		ctx.abort();
 		throw new ToolAbortError("Ask tool was cancelled by the user");
 	}
+	pickerBtw?.dispose();
 
 	const results: QuestionResult[] = questions.map((question, index) => {
 		const answer = dialogResult.results[index];
@@ -266,6 +271,14 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 		});
 	});
 
+	const drafts = new PickerDraftSlot();
+	// Before OMP copies the session's artifacts into a fork or branch, which hold the thread's files.
+	const dropDraft = () => drafts.drop();
+	pi.on("session_before_switch", dropDraft);
+	pi.on("session_before_branch", dropDraft);
+	pi.on("session_tree", dropDraft);
+	pi.on("session_shutdown", dropDraft);
+
 	const definition: ToolDefinition<typeof parameters, FlexibleAskDetails> = {
 		name: "ask",
 		label: "Ask",
@@ -283,7 +296,7 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 			if (ctx.mode !== "tui" || !ctx.hasUI || nativeRejects(questions)) {
 				return ctx.invokeTool<AskToolDetails>(params, { signal, onUpdate });
 			}
-			return askWithMarkdownDialog(ctx, questions, signal, () => hostAutocomplete);
+			return askWithMarkdownDialog(ctx, questions, signal, () => hostAutocomplete, drafts);
 		},
 	};
 	// `concurrency` and `mergeCallAndResult` are not part of the extension

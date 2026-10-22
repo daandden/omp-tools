@@ -1,7 +1,3 @@
-// The Picker btw view: `?` in the Picker swaps its options for this thread of
-// side questions (oldest first, scrolling) above a question box. It renders
-// inside the Picker's panel; the Picker owns focus hand-back and the answers.
-// Answers come from ./picker-btw.ts; the thread lives as long as the Picker.
 import type { CustomEditor } from "@oh-my-pi/pi-coding-agent";
 import {
 	type AutocompleteProvider,
@@ -27,6 +23,8 @@ const EMPTY_THREAD = "Ask about this question or the conversation. The agent nev
 
 export interface PickerBtwViewOptions {
 	tui: TUI;
+	/** The thread's turns, oldest first; the view appends each new question. */
+	turns: SideQuestionTurn[];
 	ask: AskPickerBtw;
 	cwd: string;
 	/** The user's unsubmitted answers to the pending ask, as the agent would get them. */
@@ -43,7 +41,7 @@ export interface PickerBtwViewOptions {
 
 export class PickerBtwView {
 	readonly #options: PickerBtwViewOptions;
-	readonly #turns: SideQuestionTurn[] = [];
+	readonly #turns: SideQuestionTurn[];
 	readonly #turnView = new SideQuestionTurnView("Answering… esc cancels");
 	#abort: AbortController | undefined;
 	#editor: AnswerEditor | undefined;
@@ -59,6 +57,7 @@ export class PickerBtwView {
 
 	constructor(options: PickerBtwViewOptions) {
 		this.#options = options;
+		this.#turns = options.turns;
 	}
 
 	/** Show the question box and take focus. */

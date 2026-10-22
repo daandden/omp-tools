@@ -103,8 +103,9 @@ opens with a click in Tern. Esc
 while an answer streams cancels it and keeps the partial text. The next Esc
 returns to the options with your answers untouched, and `?` reopens the
 thread. PgUp/PgDn scroll a long thread. The thread is discarded when the ask
-ends, and the agent never sees it. To tell the agent something, put it in
-`Other` or a note.
+ends, unless Esc keeps it in a Picker draft (see
+[Esc keeps your answers](#esc-keeps-your-answers)). The agent never sees it. To
+tell the agent something, put it in `Other` or a note.
 
 A Picker btw is not OMP's `/btw`: it is not saved to BTW history and cannot be
 branched or copied from a panel. It does not change your main prompt.
@@ -112,6 +113,24 @@ branched or copied from a panel. It does not change your main prompt.
 `Ask (timer paused)`) until your next key in the options, which restarts it in
 full. When side questions cannot run (no saved session, a subagent),
 `? btw` is not offered.
+
+### Esc keeps your answers
+
+Esc (or **Cancel** in Tern) on the options or the Submit tab cancels the ask,
+as in native `ask`. The picker keeps a Picker draft: your picks, notes, `Other`
+answers, the Submit note, the open tab and row, and the Picker btw thread.
+Press F5 (OMP's Retry) to run the cancelled ask again. The picker opens where
+you left it and says `Restored your answers` until your next key. The restore
+sends nothing by itself. With `ask.timeout` set, the countdown starts again in
+full, as for any ask.
+
+The draft opens for any ask with the same questions: the same ids, question
+text, option labels, and single or multi-select. So it also opens when you tell
+the agent to go on and it asks the same questions again. Each session keeps one
+draft. A picker with other questions drops it, and so do a submit, `/new`,
+`/resume`, `/fork`, a branch, a tree jump, and quitting omp. An Esc before you
+answer anything keeps only the tab and row, and the picker reopens there
+without the note.
 
 ### Outside the TUI
 
