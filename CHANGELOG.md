@@ -13,6 +13,11 @@
   notes, `Other` answers, Submit note, open tab, and Picker btw thread, and
   F5 (OMP's Retry) opens the cancelled ask with them. Any ask with the same
   questions gets them, and the picker says `Restored your answers`.
+- Questions that OMP asks directly, such as Ratchet's approvals and an ask
+  answered again from `/tree`, now open in the picker instead of OMP's stock
+  dialog, with notes, `Other`, the Picker btw, and the Picker draft. The
+  feature gets OMP's native answer, so Ratchet still records an approval only
+  when you pick Approve, and Esc answers nothing.
 
 ### Fixed
 

@@ -62,16 +62,14 @@ import { disambiguateDisplayLabels, sanitizeCarriageReturns } from "@oh-my-pi/pi
 import { getMarkdownTheme, highlightCode, theme } from "@oh-my-pi/pi-tui/theme";
 import { AnswerEditor, externalEditorKey, SCROLL_BOX_CSS, scrollBox, withoutSideBorders } from "./ask-editor";
 import { loadImagePaths, type PasteOutcome, type PastedImage, readClipboardPaste } from "./ask-images";
+import { OTHER_OPTION, RESERVED_LABELS } from "./ask-questions";
 import { formatAskAnswers } from "./ask-result";
 import type { AskPickerBtw } from "./picker-btw";
 import { PickerBtwView } from "./picker-btw-view";
 import type { SideQuestionTurn } from "./side-question-view";
 
-const OTHER_OPTION = "Other (type your own)";
 const SUBMIT_OPTION = "Submit";
 const RECOMMENDED_SUFFIX = " (Recommended)";
-/** Native reserved action rows; option labels must disambiguate against them. */
-const RESERVED_LABELS = [OTHER_OPTION, "Chat about this", "Next →"];
 /** Fraction of the terminal the dialog occupies (the native dialog's cap). */
 const DIALOG_HEIGHT_RATIO = 0.7;
 const MIN_DIALOG_ROWS = 12;
@@ -1814,7 +1812,7 @@ class MarkdownAskDialog implements Component, Focusable {
  * `kind: "cancel"` on Esc; rejects with an `AbortError` when `signal` aborts.
  */
 export function showMarkdownAskDialog(
-	ui: ExtensionUIContext,
+	ui: Pick<ExtensionUIContext, "custom">,
 	questions: ExtensionAskDialogQuestion[],
 	options: DialogOptions & { signal?: AbortSignal },
 ): Promise<MarkdownAskResult | MarkdownAskCancel> {

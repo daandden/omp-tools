@@ -4,7 +4,7 @@
 // only in the model's own tool call), `Other` text, every option note with its
 // option and whether it was picked, unanswered questions, and the Submit note.
 import type { ExtensionAskDialogQuestion } from "@oh-my-pi/pi-coding-agent";
-import type { MarkdownAskResultItem } from "./ask-dialog";
+import type { MarkdownAskResultItem, OptionNote } from "./ask-dialog";
 
 /** Longest question title repeated in the result; the full text is in the tool call. */
 const MAX_TITLE_LENGTH = 100;
@@ -57,6 +57,12 @@ function answerLines(question: ExtensionAskDialogQuestion, answer: MarkdownAskRe
 	}
 	if (selected.length === 0 && answer?.customInput === undefined) lines.unshift(`${indent}Unanswered`);
 	return lines;
+}
+
+/** The note text native ask details hold for one question: every note, each after its option. */
+export function joinOptionNotes(notes: readonly OptionNote[]): string | undefined {
+	const text = notes.map(({ option, note, picked }) => `${option}${picked ? "" : " (not picked)"}: ${note}`).join("\n");
+	return text || undefined;
 }
 
 /** Labeled result text for every question, in order, then the Submit note. */

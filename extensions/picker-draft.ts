@@ -1,5 +1,6 @@
-import { type ExtensionAskDialogQuestion, logger } from "@oh-my-pi/pi-coding-agent";
-import type { PickerDraft } from "./ask-dialog";
+import { type ExtensionAskDialogQuestion, type ExtensionUIContext, logger } from "@oh-my-pi/pi-coding-agent";
+import type { AutocompleteProvider } from "@oh-my-pi/pi-tui";
+import { type MarkdownAskResult, type PickerDraft, showMarkdownAskDialog } from "./ask-dialog";
 import type { PickerBtwRunner } from "./picker-btw";
 
 export interface KeptPicker {
@@ -48,4 +49,47 @@ export class PickerDraftSlot {
 		this.#kept = undefined;
 		await Promise.all(this.#pendingDisposals);
 	}
+}
+
+/** What every picker of a session shares. */
+export interface PickerSession {
+	cwd: string;
+	drafts: PickerDraftSlot;
+	btw(): PickerBtwRunner | undefined;
+	autocomplete(): AutocompleteProvider | undefined;
+	fileCommands(): Promise<ReadonlySet<string>>;
+}
+
+/**
+ * Show `questions` in the picker, opened with the kept draft that matches them. Esc keeps the draft
+ * with its Picker btw thread and resolves `undefined`; a submit or a failure ends the thread.
+ */
+export async function openPicker(
+	ui: Pick<ExtensionUIContext, "custom">,
+	questions: ExtensionAskDialogQuestion[],
+	session: PickerSession,
+	options: { timeout: number | undefined; signal: AbortSignal | undefined; notify(message: string): void },
+): Promise<MarkdownAskResult | undefined> {
+	const restored = session.drafts.take(questions);
+	const btw = restored?.btw ?? session.btw();
+	let result: Awaited<ReturnType<typeof showMarkdownAskDialog>>;
+	try {
+		result = await showMarkdownAskDialog(ui, questions, {
+			...options,
+			cwd: session.cwd,
+			autocomplete: session.autocomplete,
+			fileCommands: await session.fileCommands(),
+			askBtw: btw?.ask,
+			draft: restored?.draft,
+		});
+	} catch (error) {
+		session.drafts.end(btw);
+		throw error;
+	}
+	if (result.kind === "cancel") {
+		session.drafts.keep(questions, { draft: result.draft, btw });
+		return undefined;
+	}
+	session.drafts.end(btw);
+	return result;
 }

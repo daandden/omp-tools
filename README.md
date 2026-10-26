@@ -132,6 +132,20 @@ draft. A picker with other questions drops it, and so do a submit, `/new`,
 answer anything keeps only the tab and row, and the picker reopens there
 without the note.
 
+### Questions from OMP itself
+
+Some OMP features ask you directly instead of through the `ask` tool, such as
+Ratchet's approvals and an ask answered again from `/tree`. In the interactive
+TUI these questions open in the same picker, with notes, `Other`, the Picker
+btw, and the Picker draft. The feature gets the answer in its native form: your
+picks and `Other` text, and one note per question that lists each note after
+its option, with the Submit note last. Esc answers nothing, as in the native
+dialog, and keeps a Picker draft: the same question opens with it again and
+waits for Enter. A timeout counts down only when the feature sets one;
+`ask.timeout` and `ask.notify` apply to the `ask` tool only. Questions that the
+native dialog would refuse (a reserved label, or a repeated id or label) open
+the native dialog. Collaboration guests cannot answer these questions.
+
 ### Outside the TUI
 
 Outside the TUI (RPC/ACP/print, subagents), and for inputs native `ask` rejects,

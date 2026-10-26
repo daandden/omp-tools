@@ -26,15 +26,13 @@ import { cfgAskNotify, cfgAskTimeout } from "@oh-my-pi/pi-coding-agent/modes/set
 import { ToolAbortError } from "@oh-my-pi/pi-coding-agent/tools/tool-errors";
 import { type AutocompleteProvider, span, TERMINAL, text } from "@oh-my-pi/pi-tui";
 import type { NativeToolView } from "@oh-my-pi/pi-tui/tools/renderer";
-import { sanitizeCarriageReturns } from "@oh-my-pi/pi-tui/render";
-import { type MarkdownAskCancel, type MarkdownAskResult, showMarkdownAskDialog } from "./ask-dialog";
-import { formatAskAnswers } from "./ask-result";
+import type { MarkdownAskResult } from "./ask-dialog";
+import { nativeRejects, sanitizeQuestions } from "./ask-questions";
+import { formatAskAnswers, joinOptionNotes } from "./ask-result";
+import { askInPicker, routeHostAskDialog } from "./host-ask-dialog";
 import { pickerBtwRunner } from "./picker-btw";
-import { PickerDraftSlot } from "./picker-draft";
+import { openPicker, PickerDraftSlot, type PickerSession } from "./picker-draft";
 import flexibleAskDescription from "./flexible-ask.md" with { type: "text" };
-
-/** Labels the native runtime reserves for its own action rows. */
-const RESERVED_OPTION_LABELS = new Set(["Other (type your own)", "Chat about this", "Next →"]);
 
 /** Native ask details plus the Submit note, which only the picker writes. */
 type FlexibleAskDetails = AskToolDetails & {
@@ -88,46 +86,6 @@ function describeAskResult(
 	return described;
 }
 
-interface AskQuestionParams {
-	id: string;
-	question: string;
-	header?: string;
-	options: Array<{ label: string; description?: string; preview?: string }>;
-	multi?: boolean;
-	recommended?: number;
-}
-
-/** Strip model-injected `\r` runs before display and before answers echo back (native parity). */
-function sanitizeQuestions(questions: readonly AskQuestionParams[]): ExtensionAskDialogQuestion[] {
-	return questions.map(question => ({
-		id: sanitizeCarriageReturns(question.id),
-		question: sanitizeCarriageReturns(question.question),
-		...(question.header?.trim() ? { header: sanitizeCarriageReturns(question.header) } : {}),
-		options: question.options.map(option => ({
-			label: sanitizeCarriageReturns(option.label),
-			...(option.description?.trim() ? { description: sanitizeCarriageReturns(option.description).trim() } : {}),
-			...(option.preview?.trim() ? { preview: sanitizeCarriageReturns(option.preview) } : {}),
-		})),
-		...(question.multi !== undefined ? { multi: question.multi } : {}),
-		...(question.recommended !== undefined ? { recommended: question.recommended } : {}),
-	}));
-}
-
-/** Inputs the native tool answers with an error result instead of a dialog. */
-function nativeRejects(questions: readonly ExtensionAskDialogQuestion[]): boolean {
-	const ids = new Set<string>();
-	for (const question of questions) {
-		if (ids.has(question.id)) return true;
-		ids.add(question.id);
-		const labels = new Set<string>();
-		for (const option of question.options) {
-			if (RESERVED_OPTION_LABELS.has(option.label) || labels.has(option.label)) return true;
-			labels.add(option.label);
-		}
-	}
-	return false;
-}
-
 /**
  * Names of commands defined as files (`~/.agents/commands`, `~/.omp/commands`,
  * project command folders), the only `/` suggestions in the answer box. Bundled
@@ -148,8 +106,7 @@ async function askWithMarkdownDialog(
 	ctx: ExtensionContext,
 	questions: ExtensionAskDialogQuestion[],
 	signal: AbortSignal | undefined,
-	autocomplete: () => AutocompleteProvider | undefined,
-	drafts: PickerDraftSlot,
+	session: PickerSession,
 ): Promise<AgentToolResult<FlexibleAskDetails>> {
 	const timeoutSeconds = cfgAskTimeout.get(settings);
 	if (cfgAskNotify.get(settings) !== "off") {
@@ -162,38 +119,26 @@ async function askWithMarkdownDialog(
 		});
 	}
 
-	const restored = drafts.take(questions);
-	const pickerBtw = restored?.btw ?? pickerBtwRunner(ctx);
-	let dialogResult: MarkdownAskResult | MarkdownAskCancel;
+	let picked: MarkdownAskResult | undefined;
 	try {
-		dialogResult = await showMarkdownAskDialog(ctx.ui, questions, {
+		picked = await openPicker(ctx.ui, questions, session, {
 			timeout: timeoutSeconds > 0 ? timeoutSeconds * 1000 : undefined,
 			signal,
-			cwd: ctx.cwd,
 			notify: message => ctx.ui.notify(message, "warning"),
-			autocomplete,
-			fileCommands: await loadFileCommandNames(ctx.cwd),
-			askBtw: pickerBtw?.ask,
-			draft: restored?.draft,
 		});
 	} catch (error) {
-		drafts.end(pickerBtw);
 		if (error instanceof Error && error.name === "AbortError") throw new ToolAbortError("Ask input was cancelled");
 		throw error;
 	}
-	if (dialogResult.kind === "cancel") {
-		drafts.keep(questions, { draft: dialogResult.draft, btw: pickerBtw });
+	if (!picked) {
 		ctx.abort();
 		throw new ToolAbortError("Ask tool was cancelled by the user");
 	}
-	drafts.end(pickerBtw);
+	const dialogResult = picked;
 
 	const results: QuestionResult[] = questions.map((question, index) => {
 		const answer = dialogResult.results[index];
-		// Native details hold one note string per question.
-		const note = answer?.notes
-			.map(({ option, note, picked }) => `${option}${picked ? "" : " (not picked)"}: ${note}`)
-			.join("\n");
+		const note = joinOptionNotes(answer?.notes ?? []);
 		return {
 			id: question.id,
 			question: question.question,
@@ -201,7 +146,7 @@ async function askWithMarkdownDialog(
 			multi: question.multi ?? false,
 			selectedOptions: answer?.selectedOptions ?? [],
 			customInput: answer?.customInput,
-			note: note || undefined,
+			note,
 			timedOut: answer?.timedOut,
 		};
 	});
@@ -256,28 +201,51 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 			.atLeastLength(1),
 	});
 
-	// Borrow the main prompt's suggestion provider for the answer editor. omp
-	// calls this factory with the current provider every time it rebuilds it
-	// (commands, templates, other extensions), so the copy stays fresh. Register
-	// once per load; session switches emit session_start again.
-	let hostAutocomplete: AutocompleteProvider | undefined;
-	let autocompleteRegistered = false;
-	pi.on("session_start", (_event, ctx) => {
-		if (autocompleteRegistered || ctx.mode !== "tui" || !ctx.hasUI) return;
-		autocompleteRegistered = true;
-		ctx.ui.addAutocompleteProvider(provider => {
-			hostAutocomplete = provider;
-			return provider;
-		});
-	});
-
 	const drafts = new PickerDraftSlot();
-	// Before OMP copies the session's artifacts into a fork or branch, which hold the thread's files.
 	const dropDraft = () => drafts.drop();
 	pi.on("session_before_switch", dropDraft);
 	pi.on("session_before_branch", dropDraft);
 	pi.on("session_tree", dropDraft);
-	pi.on("session_shutdown", dropDraft);
+
+	// Borrow the main prompt's suggestion provider for the answer editor. omp
+	// calls this factory with the current provider every time it rebuilds it
+	// (commands, templates, other extensions), so the copy stays fresh.
+	let hostAutocomplete: AutocompleteProvider | undefined;
+	let autocompleteRegistered = false;
+	let hostCtx: ExtensionContext | undefined;
+	let endHostRoute: (() => void) | undefined;
+	const pickerSession = (ctx: ExtensionContext): PickerSession => ({
+		cwd: ctx.cwd,
+		drafts,
+		btw: () => pickerBtwRunner(ctx),
+		autocomplete: () => hostAutocomplete,
+		fileCommands: () => loadFileCommandNames(ctx.cwd),
+	});
+	pi.on("session_start", (_event, ctx) => {
+		if (ctx.mode !== "tui" || !ctx.hasUI) return;
+		if (!autocompleteRegistered) {
+			autocompleteRegistered = true;
+			ctx.ui.addAutocompleteProvider(provider => {
+				hostAutocomplete = provider;
+				return provider;
+			});
+		}
+		if (endHostRoute) return;
+		hostCtx = ctx;
+		endHostRoute = routeHostAskDialog(ctx.ui, (questions, options, host) =>
+			askInPicker(questions, options, host, pickerSession(hostCtx ?? ctx)),
+		);
+	});
+	const followSession = (_event: unknown, ctx: ExtensionContext) => {
+		if (endHostRoute) hostCtx = ctx;
+	};
+	pi.on("session_switch", followSession);
+	pi.on("session_branch", followSession);
+	pi.on("session_shutdown", () => {
+		endHostRoute?.();
+		endHostRoute = undefined;
+		return drafts.drop();
+	});
 
 	const definition: ToolDefinition<typeof parameters, FlexibleAskDetails> = {
 		name: "ask",
@@ -296,7 +264,7 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 			if (ctx.mode !== "tui" || !ctx.hasUI || nativeRejects(questions)) {
 				return ctx.invokeTool<AskToolDetails>(params, { signal, onUpdate });
 			}
-			return askWithMarkdownDialog(ctx, questions, signal, () => hostAutocomplete, drafts);
+			return askWithMarkdownDialog(ctx, questions, signal, pickerSession(ctx));
 		},
 	};
 	// `concurrency` and `mergeCallAndResult` are not part of the extension
