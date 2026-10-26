@@ -25,6 +25,33 @@ the Picker btw asks the same kind of Side question.
   (reserved or duplicate labels, duplicate ids), it delegates to
   `ctx.invokeTool(params, { signal, onUpdate })` so native errors and fallbacks
   apply unchanged.
+- Host dialogs (`extensions/host-ask-dialog.ts`): OMP code that asks without
+  the `ask` tool calls the shared UI context's `askDialog` (Ratchet approvals
+  in `ratchet/prelude-definition.ts`, the `/tree` ask re-answer). In the TUI,
+  `session_start` routes that method to the picker: it replaces `askDialog`
+  on the context object itself, which the runner hands to extensions and the
+  tool context store wraps (`trackUserWaits`), both proxies with only a `get`
+  trap, so a write through `ctx.ui` lands on the object and the tool context
+  and every handler run started later read it (a handler run already in
+  flight keeps the method its proxy captured). The native `askDialog`,
+  `custom`, and `notify` are read through property descriptors, because the
+  runner's `get` returns per-handler wrappers bound to that handler's
+  signal. This is undocumented OMP internals, proved live with OMP 18.12.6.
+  The object keeps one wrapper under
+  `Symbol.for("omp-tools.host-ask-dialog")`, shared by every module load;
+  further routes stack in its list, not as wrappers, and the last one to end
+  puts the native method back (`session_shutdown`). `askInPicker` opens the
+  picker through `openPicker`, the same draft and Picker btw steps as `ask`,
+  and answers in the native `ExtensionAskDialogResult` shape: the caller's
+  own ids, question text, and labels (the picker shows them without `\r`),
+  picks, `Other` text, one note (each option note after its option, then the
+  Submit note), and images split by whether `customInput` names their label.
+  Esc and an aborted signal give `undefined`; Esc keeps a Picker draft in the
+  same `PickerDraftSlot` as `ask`. Only the caller's `timeout` counts down;
+  no notification is sent. Malformed questions (which the native method
+  coerces) and questions `nativeRejects` go to the native method. Collab
+  guests cannot answer, since the native method's guest race is skipped (an
+  accepted limit: no extension API reports a guest).
 - A Side question (`extensions/side-question.ts`) is a full agent run in a
   mirror session built the way OMP's `/tan` builds one
   (`tan-command-controller.ts`): `SessionManager.forkFrom` the main transcript
@@ -220,7 +247,10 @@ the Picker btw asks the same kind of Side question.
 - `extensions/flexible-ask.ts`: tool registration, TUI/native routing, and
   native-shaped result `details`.
 - `extensions/ask-result.ts`: the labeled model-facing answer text (the model
-  sees only this text, never `details`).
+  sees only this text, never `details`) and `joinOptionNotes`, the one note
+  string native details hold per question.
+- `extensions/ask-questions.ts`: the reserved labels, `sanitizeQuestions`,
+  and `nativeRejects`, shared by `ask` and host dialogs.
 - `extensions/ask-dialog.ts`: Markdown picker with the native pi-tui
   `AskDialogComponent` structure (tabs, Submit review, multi-select, Other,
   timeout) but its own key flow, one meaning per key in every picker: j/k or
@@ -248,9 +278,14 @@ the Picker btw asks the same kind of Side question.
 - `extensions/picker-btw.ts`, `picker-btw.md`, `picker-btw-view.ts`: the
   Picker btw runner (one Side question thread per ask), its prompt, and its
   thread view.
+- `extensions/host-ask-dialog.ts`: `routeHostAskDialog` (the host
+  `askDialog` route) and `askInPicker` (the picker answering in the native
+  result shape).
 - `extensions/picker-draft.ts`: `PickerDraftSlot`, the session's one kept
   Picker draft with its Picker btw runner, the question key it matches on, and
-  the Picker btw threads still ending.
+  the Picker btw threads still ending; `openPicker`, which shows a picker
+  with its matching draft and keeps or ends the draft and thread, for `ask`
+  and host dialogs alike.
 - `extensions/side-question.ts`: `SideQuestionThread` (the mirror session with
   only the five read-only tools, its `SideQuestionRegistry`, `seedMessages`,
   and the message-start, text, and tool-call callbacks; an already-aborted
@@ -291,7 +326,9 @@ the Picker btw asks the same kind of Side question.
   with a stubbed `fetch`, for `parseBtwQuestion`, `AnswerEditor`'s host paste
   contract, Picker btw `numberImagesByAppearance`, the Picker draft (the slot's
   match rule, and Esc then reopen through `showMarkdownAskDialog` with a stub
-  `ui.custom`), and for the Side question's `seedMessages`,
+  `ui.custom`), host `askDialog` through the route (picks, notes, Esc and
+  draft, abort, native fallback for reserved labels and malformed input,
+  caller ids echoed, no stacking), and for the Side question's `seedMessages`,
   `cacheMissTokens`, and `answerInto`. The tool limit, the thread cycle, the
   mirror session, the panel, and a kept Picker btw thread have live smoke only.
 - `package.json`: OMP discovery, scripts, and SDK dependency pins.
@@ -354,7 +391,7 @@ through `bun run update` to keep types and the installed omp in step.
 
 Run typechecking and `bun test` after code changes; tests cover
 `generate_image`, `parseBtwQuestion`, `AnswerEditor` paste handling, the Picker
-draft, and the Side question's `seedMessages`, `cacheMissTokens`, and
+draft, the host `askDialog` route, and the Side question's `seedMessages`, `cacheMissTokens`, and
 `answerInto`, and there is
 no repository CI. Registration, ask, and Side question changes
 require a fresh-session OMP smoke; typechecking alone does not exercise host
