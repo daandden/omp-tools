@@ -47,8 +47,9 @@ the Picker btw asks the same kind of Side question.
   picks, `Other` text, one note (each option note after its option, then the
   Submit note), and images split by whether `customInput` names their label.
   Esc and an aborted signal give `undefined`; Esc keeps a Picker draft in the
-  same `PickerDraftSlot` as `ask`. Only the caller's `timeout` counts down;
-  no notification is sent. Malformed questions (which the native method
+  same `PickerDraftSlot` as `ask`. Only the caller's `timeout` counts down,
+  and its `onTimeout` is called once on expiry before answers are picked, as
+  native does; no notification is sent. Malformed questions (which the native method
   coerces) and questions `nativeRejects` go to the native method. Collab
   guests cannot answer, since the native method's guest race is skipped (an
   accepted limit: no extension API reports a guest).
@@ -328,7 +329,7 @@ the Picker btw asks the same kind of Side question.
   match rule, and Esc then reopen through `showMarkdownAskDialog` with a stub
   `ui.custom`), host `askDialog` through the route (picks, notes, Esc and
   draft, abort, native fallback for reserved labels and malformed input,
-  caller ids echoed, no stacking), and for the Side question's `seedMessages`,
+  caller ids echoed, `onTimeout`, no stacking), and for the Side question's `seedMessages`,
   `cacheMissTokens`, and `answerInto`. The tool limit, the thread cycle, the
   mirror session, the panel, and a kept Picker btw thread have live smoke only.
 - `package.json`: OMP discovery, scripts, and SDK dependency pins.

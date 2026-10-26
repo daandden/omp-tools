@@ -139,6 +139,7 @@ export async function askInPicker(
 	try {
 		result = await openPicker(host.ui, shown, session, {
 			timeout: options?.timeout,
+			onTimeout: options?.onTimeout,
 			signal: options?.signal,
 			notify: message => host.ui.notify(message, "warning"),
 		});
