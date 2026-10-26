@@ -145,6 +145,15 @@ describe("host askDialog in the picker", () => {
 		expect(await answer).toBeUndefined();
 	});
 
+	test("a caller's timeout tells its onTimeout once when it expires, and the answer says it timed out", async () => {
+		const host = routedHost();
+		let timeouts = 0;
+		const result = await host.ask(approval, { timeout: 1000, onTimeout: () => timeouts++ });
+		expect(timeouts).toBe(1);
+		if (result?.kind !== "submit") throw new Error("the timed picker did not submit");
+		expect(result.results[0]).toMatchObject({ selectedOptions: ["Approve"], timedOut: true });
+	});
+
 	test("questions the native dialog must judge (a reserved label) go to the host's own dialog", async () => {
 		const host = routedHost();
 		const reserved: ExtensionAskDialogQuestion[] = [

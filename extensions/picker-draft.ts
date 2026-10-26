@@ -68,7 +68,12 @@ export async function openPicker(
 	ui: Pick<ExtensionUIContext, "custom">,
 	questions: ExtensionAskDialogQuestion[],
 	session: PickerSession,
-	options: { timeout: number | undefined; signal: AbortSignal | undefined; notify(message: string): void },
+	options: {
+		timeout: number | undefined;
+		onTimeout?: () => void;
+		signal: AbortSignal | undefined;
+		notify(message: string): void;
+	},
 ): Promise<MarkdownAskResult | undefined> {
 	const restored = session.drafts.take(questions);
 	const btw = restored?.btw ?? session.btw();

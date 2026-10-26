@@ -140,6 +140,8 @@ export interface PickerDraft {
 
 interface DialogOptions {
 	timeout?: number;
+	/** Called once when the timeout expires, before it picks answers (native `onTimeout`). */
+	onTimeout?: () => void;
 	/** Resolves relative pasted image paths. */
 	cwd: string;
 	/** Surfaces paste failures (unsupported format, missing file, empty clipboard). */
@@ -1747,6 +1749,7 @@ class MarkdownAskDialog implements Component, Focusable {
 			this.#timeoutPending = true;
 			return;
 		}
+		this.#options.onTimeout?.();
 		for (let index = 0; index < this.#questions.length; index++) {
 			const question = this.#questions[index];
 			const state = this.#states[index];
