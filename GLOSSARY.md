@@ -32,8 +32,12 @@ _Avoid_: saved state, saved answers, cancelled answers
 A question about the session that is answered aside from the main conversation, with read-only tools, and that the main agent never sees. The user asks one through **/btw** or **Picker btw**.
 _Avoid_: btw (unqualified), side turn, btw agent
 
+**Side question thread**:
+One **Side question** and the follow-ups asked after it, each answered with the earlier questions and answers of the thread in view. A new thread starts with none of them.
+_Avoid_: btw session, new session (for one follow-up)
+
 **/btw**:
-The editor command that asks a **Side question**. Typing it runs this plugin's version, not **Native /btw**. Later `/btw` questions follow up in the same thread until the user's next main prompt ends it.
+The editor command that asks a **Side question**. Typing it runs this plugin's version, not **Native /btw**. Later `/btw` questions follow up in the same **Side question thread** until the user's next main prompt ends it.
 _Avoid_: btw (unqualified)
 
 **Native /btw**:

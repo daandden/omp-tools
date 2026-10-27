@@ -35,6 +35,16 @@
 
 ### Changed
 
+- Side questions on Codex now reuse the prompt cache across threads. A
+  later `/btw` or Picker btw in the same session reads the earlier one's
+  cached conversation instead of sending it all uncached: about 90% lower
+  API-equivalent cost for that first request in a measured run. Side
+  question requests go over SSE with their own cache key. The first side
+  question in a session still cannot reuse the main agent's cache.
+- Side question token usage, including its background cache warms and
+  judge calls, now counts in the main session's usage and cost. It was lost
+  when the thread closed. The thread's copy of the transcript now sits in a
+  temporary folder, so `omp stats` and the agent list never see it.
 - A Side question in the `/btw` panel and the Picker btw now shows like your
   messages in the main chat: Markdown in a padded block on the user message
   background, a user bubble in Tern. It was one faint line with a `›` marker

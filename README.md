@@ -293,15 +293,20 @@ BTW history, and autocomplete is OMP's.
   so far, copied from the live session when the thread starts, with OMP's
   default system prompt for those five tools. A call the main agent still
   waits on (a pending `ask`, or a tool still running) shows to the side
-  question as still open, not as failed. The first request of a thread does
-  not reuse the main agent's prompt cache; later ones reuse the thread's.
+  question as still open, not as failed. The first side question in a main
+  session does not reuse the main agent's prompt cache. Its follow-ups, and
+  later side questions in the same session, reuse the side question cache:
+  on Codex they go over SSE with their own cache key, since a new websocket
+  missed it.
 - Cache misses: with OMP's Cache Miss Marker setting on
-  (`display.cacheMissMarker`), a follow-up whose requests had to write the
-  thread's cached prompt again shows `⊘ cache miss · N tokens` under it, in
-  the panel and in the Picker btw. Like OMP's marker, it shows only for
-  providers that report cache writes (Anthropic), not for Codex.
-- Privacy: only you see the answers. Nothing is added to the main session, and
-  the agent never sees a side question.
+  (`display.cacheMissMarker`), an answer whose requests had to write the
+  cached prompt again shows `⊘ cache miss · N tokens` under it, in the panel
+  and in the Picker btw. Like OMP's marker, it shows only for providers that
+  report cache writes (Anthropic), not for Codex.
+- Privacy: only you see the answers, and the agent never sees a side question.
+  Each side question request's token usage, and that of its background calls
+  such as cache warms, is recorded in the main session's usage, so the
+  session's cost includes it; no message is added.
 - Panel: answers show in a panel above the editor, and the editor keeps focus.
   Each side question shows as your messages do in the main chat: Markdown in
   a block on the user message background (a user bubble in Tern), in the
@@ -319,7 +324,7 @@ BTW history, and autocomplete is OMP's.
   subagent view, RPC, ACP, or print mode, `/btw` stays OMP's.
 
 A side question runs as a separate agent session (a copy of the main
-transcript in the session folder, deleted when the thread ends), so it costs
+transcript in a temporary folder, deleted when the thread ends), so it costs
 tokens like a short agent turn.
 
 ## Install

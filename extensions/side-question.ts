@@ -1,7 +1,8 @@
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import type { ImageContent } from "@oh-my-pi/pi-ai";
-import type { AgentSession, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import type { AgentSession, CreateAgentSessionOptions, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { AgentRegistry, createAgentSession, createSubagentSettings, SessionManager } from "@oh-my-pi/pi-coding-agent";
 import { cfgDisplayCacheMissMarker } from "@oh-my-pi/pi-coding-agent/modes/settings";
 
@@ -41,10 +42,9 @@ interface PromptUsage {
 
 /**
  * Tokens a request wrote to the cache again instead of reading them, when
- * that is more than OMP's 2048-token floor. `expectedPrompt` is the thread's
- * previous request; a thread's first request has none, because its tools and
- * system prompt differ from the main session's. Providers that write no cache
- * (implicit caching, Codex) never count, as in OMP's marker.
+ * that is more than OMP's 2048-token floor. `expectedPrompt` is the prompt the
+ * request should find cached. Providers that write no cache (implicit
+ * caching, Codex) never count, as in OMP's marker.
  */
 export function cacheMissTokens(expectedPrompt: number | undefined, usage: PromptUsage): number | undefined {
 	if (expectedPrompt === undefined || expectedPrompt < MIN_CACHE_FOOTPRINT || usage.cacheWrite <= 0) return undefined;
@@ -62,6 +62,99 @@ function requestPrompt(message: unknown): number | undefined {
 	if (role !== "assistant" || !usage || stopReason === "aborted" || stopReason === "error") return undefined;
 	const tokens = promptTokens(usage);
 	return tokens > 0 ? tokens : undefined;
+}
+
+/** A Side question thread's first request, which the next thread's first one should find cached. */
+interface ThreadStart {
+	/** The main messages the thread was seeded from. */
+	messages: readonly unknown[];
+	prompt: number;
+}
+
+/**
+ * The prompt a new thread's first request should find cached: the earlier
+ * thread's first one, while the main messages still start with the ones that
+ * thread saw. Compaction and a branch change replace them, so nothing is expected.
+ */
+export function sharedPrefixPrompt(earlier: ThreadStart | undefined, messages: readonly unknown[]): number | undefined {
+	if (!earlier || earlier.messages.length > messages.length) return undefined;
+	return earlier.messages.every((message, i) => message === messages[i]) ? earlier.prompt : undefined;
+}
+
+/** Each finished request's cache miss in one thread, measured against the request before it. */
+class CacheMissTracker {
+	#expectedPrompt: number | undefined;
+	#onFirstPrompt: ((prompt: number) => void) | undefined;
+
+	constructor(expectedPrompt: number | undefined, onFirstPrompt: (prompt: number) => void) {
+		this.#expectedPrompt = expectedPrompt;
+		this.#onFirstPrompt = onFirstPrompt;
+	}
+
+	/** The tokens a finished request missed; a cut-off one changes nothing. */
+	observe(message: unknown): number | undefined {
+		const prompt = requestPrompt(message);
+		if (prompt === undefined) return undefined;
+		const missed = cacheMissTokens(this.#expectedPrompt, (message as { usage: PromptUsage }).usage);
+		this.#expectedPrompt = prompt;
+		this.#onFirstPrompt?.(prompt);
+		this.#onFirstPrompt = undefined;
+		return missed;
+	}
+}
+
+/** One main session's Side question cache expectations: the latest thread start, and a tracker per thread. */
+export class SideQuestionCache {
+	#latest: ThreadStart | undefined;
+
+	/** A tracker for a new thread seeded from these main messages. */
+	thread(messages: readonly unknown[]): CacheMissTracker {
+		return new CacheMissTracker(sharedPrefixPrompt(this.#latest, messages), prompt => {
+			this.#latest = { messages, prompt };
+		});
+	}
+}
+
+const caches = new WeakMap<AgentSession, SideQuestionCache>();
+
+function cacheOf(main: AgentSession): SideQuestionCache {
+	let cache = caches.get(main);
+	if (!cache) caches.set(main, (cache = new SideQuestionCache()));
+	return cache;
+}
+
+type ModelUsage = Parameters<SessionManager["appendModelUsage"]>[0];
+type UsageMessage = { role?: string } & Partial<Omit<ModelUsage, "purpose" | "role">>;
+
+/**
+ * Records a mirror request's usage in the main session's ledger, as OMP does
+ * for cache warms and judge calls, so Side question cost is counted and
+ * outlives the deleted fork. A ledger entry is not a message; the main agent
+ * never sees it. Dropped once the main session manager is on another transcript.
+ */
+export function recordSideQuestionUsage(ledger: SessionManager, sessionId: string, message: unknown): void {
+	const { role, api, provider, model, usage, stopReason, errorMessage } = message as UsageMessage;
+	if (role !== "assistant" || !usage || !api || !provider || !model || !stopReason) return;
+	ledger.appendModelUsage(
+		{ purpose: "side-question", api, provider, model, usage, stopReason, errorMessage },
+		{ sessionId, parentId: ledger.getLeafId() },
+	);
+}
+
+/**
+ * Copies each usage entry the mirror records off its own transcript (cache
+ * warms, judge calls) to the main ledger as `side-question:<purpose>`; the
+ * fork that holds the original is deleted on dispose.
+ */
+export function forwardSideQuestionUsage(fork: SessionManager, ledger: SessionManager, sessionId: string): void {
+	const append = fork.appendModelUsage.bind(fork);
+	fork.appendModelUsage = (usage, owner) => {
+		ledger.appendModelUsage(
+			{ ...usage, purpose: `side-question:${usage.purpose}` },
+			{ sessionId, parentId: ledger.getLeafId() },
+		);
+		return append(usage, owner);
+	};
 }
 
 interface ToolCallBlock {
@@ -155,22 +248,92 @@ export function sideQuestionsAvailable(ctx: ExtensionContext): boolean {
 	return ctx.agent.kind === "main" && !!ctx.sessionManager.getSessionFile() && !!liveSession(ctx)?.model;
 }
 
+declare const sideQuestionKey: unique symbol;
+/** The prompt cache key every Side question thread of one main session shares. */
+export type SideQuestionCacheKey = string & { readonly [sideQuestionKey]: true };
+
+export function sideQuestionCacheKey(mainSessionId: string): SideQuestionCacheKey {
+	return `${mainSessionId}:side-question:v1` as SideQuestionCacheKey;
+}
+
+type StreamOptions = Parameters<AgentSession["agent"]["streamFn"]>[2];
+
+/**
+ * Options for every mirror request. Codex routes on `parentSessionId`, and a
+ * later thread read the earlier one's cached prefix only over SSE: 10 of 10
+ * runs, against 0 of 5 on a new websocket with the same key.
+ */
+export function sideQuestionStreamOptions(
+	key: SideQuestionCacheKey,
+	options: StreamOptions,
+): NonNullable<StreamOptions> & { preferWebsockets: false; parentSessionId: SideQuestionCacheKey } {
+	return { ...options, preferWebsockets: false, parentSessionId: key };
+}
+
+/** No system prompt or tool list: copying the main ones let a Side question call `ask`, `bash`, and `write`. */
+type MirrorSessionInput = Pick<
+	CreateAgentSessionOptions,
+	| "cwd"
+	| "sessionManager"
+	| "model"
+	| "thinkingLevel"
+	| "providerSessionId"
+	| "modelRegistry"
+	| "authStorage"
+	| "settings"
+	| "agentId"
+	| "parentAgentId"
+	| "localProtocolOptions"
+	| "preloadedPreparedExtensions"
+	| "preloadedExtensionPaths"
+	| "extensionRoots"
+> & { agentId: string; cacheKey: SideQuestionCacheKey };
+
+async function createMirrorSession({ cacheKey, ...input }: MirrorSessionInput): Promise<AgentSession> {
+	const { session } = await createAgentSession({
+		...input,
+		toolNames: SIDE_QUESTION_TOOLS,
+		restrictToolNames: true,
+		providerPromptCacheKey: cacheKey,
+		hasUI: false,
+		agentDisplayName: "side question",
+		// A child session: binds no process-wide state and keeps the shared
+		// `local://` mapping to itself instead of installing a global override.
+		parentTaskPrefix: input.agentId,
+		agentRegistry: new SideQuestionRegistry(),
+		disableExtensionDiscovery: true,
+	});
+	const stream = session.agent.streamFn;
+	session.agent.streamFn = (model, context, options) =>
+		stream(model, context, sideQuestionStreamOptions(cacheKey, options));
+	return session;
+}
+
 /** One thread of Side questions: a mirror session that keeps its own history until disposed. */
 export class SideQuestionThread {
 	readonly #session: AgentSession;
 	readonly #file: string;
-	readonly #mainSettings: AgentSession["settings"];
-	/** The thread's last request, which the next one should find cached. */
-	#expectedPrompt: number | undefined;
+	readonly #main: AgentSession;
+	/** The main transcript whose ledger gets this thread's usage. */
+	readonly #ledgerSessionId: string;
+	readonly #cache: CacheMissTracker;
 	#running = false;
 	#disposed = false;
 	/** The last question was cancelled; its prompt stays in the history, so the next one says so. */
 	#lastCancelled = false;
 
-	private constructor(session: AgentSession, file: string, mainSettings: AgentSession["settings"]) {
+	private constructor(
+		session: AgentSession,
+		file: string,
+		main: AgentSession,
+		ledgerSessionId: string,
+		seededFrom: readonly unknown[],
+	) {
 		this.#session = session;
 		this.#file = file;
-		this.#mainSettings = mainSettings;
+		this.#main = main;
+		this.#ledgerSessionId = ledgerSessionId;
+		this.#cache = cacheOf(main).thread(seededFrom);
 	}
 
 	static async open(ctx: ExtensionContext): Promise<SideQuestionThread> {
@@ -182,60 +345,58 @@ export class SideQuestionThread {
 		await main.sessionManager.flush();
 
 		const id = `SideQuestion-${crypto.randomUUID()}`;
-		const sessionDir = parentFile.slice(0, -".jsonl".length);
+		// Outside the sessions tree: omp-stats and the Agent Hub scan it, and
+		// would count the mirror's usage again on top of the main ledger copy.
+		const sessionDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-side-question-"));
 		const file = path.join(sessionDir, `${id}.jsonl`);
 		// The mirror reads the main session's `local://` files (pasted images,
 		// large pastes) in place, as OMP's `/tan` does: a snapshot of the main
 		// mapping, since the main session manager can switch transcripts.
 		const parentArtifactsDir = main.sessionManager.getArtifactsDir();
 		const parentLocalSessionId = main.sessionManager.getSessionId();
-		const fork = await SessionManager.forkFrom(parentFile, ctx.cwd, sessionDir, undefined, {
-			copyArtifacts: false,
-			suppressBreadcrumb: true,
-			sessionFile: file,
-			resetInheritedCost: true,
-			repairInterruptedTail: true,
-		});
+		let fork: SessionManager;
+		try {
+			fork = await SessionManager.forkFrom(parentFile, ctx.cwd, sessionDir, undefined, {
+				copyArtifacts: false,
+				suppressBreadcrumb: true,
+				sessionFile: file,
+				resetInheritedCost: true,
+				repairInterruptedTail: true,
+			});
+		} catch (error) {
+			await removeFork(file);
+			throw error;
+		}
+		forwardSideQuestionUsage(fork, main.sessionManager, parentLocalSessionId);
 
 		let mirror: AgentSession | undefined;
 		const parentPreparedExtensions = main.preparedExtensions;
 		const parentExtensionPaths = main.extensionPaths;
 		const parentExtensionRoots = main.effectiveExtensionRoots;
+		const seededFrom = [...main.agent.state.messages];
 		try {
-			// Only the read-only tools are offered, with OMP's default system
-			// prompt for them; restricted, the session also starts no MCP, LSP,
-			// or IRC. Its first request cannot reuse the main prompt cache.
-			const created = await createAgentSession({
+			mirror = await createMirrorSession({
 				cwd: ctx.cwd,
 				sessionManager: fork,
 				model,
 				thinkingLevel: main.configuredThinkingLevel(),
-				toolNames: SIDE_QUESTION_TOOLS,
-				restrictToolNames: true,
 				providerSessionId: `${main.sessionId}:side-question:${id}`,
+				cacheKey: sideQuestionCacheKey(main.sessionId),
 				modelRegistry: main.modelRegistry,
 				authStorage: main.modelRegistry.authStorage,
 				settings: createSubagentSettings(main.settings),
-				hasUI: false,
 				agentId: id,
-				agentDisplayName: "side question",
 				parentAgentId: ctx.agent.id,
-				// A child session: binds no process-wide state and keeps the shared
-				// `local://` mapping to itself instead of installing a global override.
-				parentTaskPrefix: id,
 				localProtocolOptions: {
 					getArtifactsDir: () => parentArtifactsDir,
 					getSessionId: () => parentLocalSessionId,
 				},
-				agentRegistry: new SideQuestionRegistry(),
-				disableExtensionDiscovery: true,
 				// The parent's extensions re-register its providers on the shared model registry.
 				preloadedPreparedExtensions: parentPreparedExtensions?.length ? parentPreparedExtensions : undefined,
 				preloadedExtensionPaths: parentExtensionPaths?.length ? [...parentExtensionPaths] : undefined,
 				extensionRoots: () => parentExtensionRoots,
 			});
-			mirror = created.session;
-			mirror.agent.replaceMessages(seedMessages(main.agent.state.messages));
+			mirror.agent.replaceMessages(seedMessages(seededFrom));
 		} catch (error) {
 			try {
 				await mirror?.dispose();
@@ -244,7 +405,7 @@ export class SideQuestionThread {
 			}
 			throw error;
 		}
-		return new SideQuestionThread(mirror, file, main.settings);
+		return new SideQuestionThread(mirror, file, main, parentLocalSessionId, seededFrom);
 	}
 
 	/** Run one question to its answer; follow-ups see the earlier questions, answers, and tool results. */
@@ -269,12 +430,9 @@ export class SideQuestionThread {
 					}
 					break;
 				case "message_end": {
-					const prompt = requestPrompt(event.message);
-					if (prompt === undefined) break;
-					const usage = (event.message as { usage: PromptUsage }).usage;
-					const missed = cacheMissTokens(this.#expectedPrompt, usage);
-					this.#expectedPrompt = prompt;
-					if (missed !== undefined && cfgDisplayCacheMissMarker.get(this.#mainSettings)) callbacks.onCacheMiss(missed);
+					recordSideQuestionUsage(this.#main.sessionManager, this.#ledgerSessionId, event.message);
+					const missed = this.#cache.observe(event.message);
+					if (missed !== undefined && cfgDisplayCacheMissMarker.get(this.#main.settings)) callbacks.onCacheMiss(missed);
 					break;
 				}
 				case "message_update":
@@ -321,6 +479,11 @@ export class SideQuestionThread {
 		}
 	}
 
+	/** The tools the mirror's requests offer, for verification. */
+	get toolNames(): string[] {
+		return this.#session.agent.state.tools.map(tool => tool.name);
+	}
+
 	async dispose(): Promise<void> {
 		if (this.#disposed) return;
 		this.#disposed = true;
@@ -364,9 +527,7 @@ export class LazySideQuestionThread {
 	}
 }
 
+/** Removes the fork's temporary directory: the thread file and its artifacts. */
 async function removeFork(file: string): Promise<void> {
-	await Promise.allSettled([
-		fs.rm(file, { force: true }),
-		fs.rm(file.slice(0, -".jsonl".length), { recursive: true, force: true }),
-	]);
+	await fs.rm(path.dirname(file), { recursive: true, force: true });
 }

@@ -23,7 +23,7 @@ printf 'advisor:\n  enabled: false\n' > "$VERIFY_RUN_DIR/smoke-config.yml"
 
 `smoke-config.yml` turns the core advisor off for every session this run starts. The user's own config can turn it on, and then its cards and the turns OMP continues for them land in the middle of other drives.
 
-Shots, notes, and copied session lines go at the top level of `$VERIFY_RUN_DIR`. OMP session dirs go in `$VERIFY_RUN_DIR/data/`. A session dir holds one `<timestamp>_<id>.jsonl` transcript per session, and a folder of the same name beside it holds that session's `SideQuestion-*.jsonl` files.
+Shots, notes, and copied session lines go at the top level of `$VERIFY_RUN_DIR`. OMP session dirs go in `$VERIFY_RUN_DIR/data/`. A session dir holds one `<timestamp>_<id>.jsonl` transcript per session. A Side question thread's file lives outside it, at `$TMPDIR/omp-side-question-*/SideQuestion-*.jsonl`, while the thread lives; `ls "${TMPDIR:-/tmp}"/omp-side-question-*/` lists them. Another OMP session on the machine can add its own, so take that listing before the drive and compare.
 
 ## Doctor
 
@@ -99,7 +99,7 @@ RPC drive for checks without a screen: spawn `omp --mode rpc --model <m> --confi
 
 ## Helpers
 
-- `helpers/side-question-probe.ts` is the throwaway extension for the `btw-tools` and `btw-agent` checks in `features/side-question-btw.md`. Copy it to `<checkout>/extensions/verify-side-question-probe.ts`, because a file outside the plugin cannot import `@oh-my-pi/*`. Run it with the RPC drive plus `--no-extensions -e <checkout>/extensions/verify-side-question-probe.ts`, with `VERIFY_PROBE=tools` or `VERIFY_PROBE=agent` and `VERIFY_PROBE_LOG=$VERIFY_RUN_DIR/<check>.json` in the environment. Delete the copy after the drive.
+- `helpers/side-question-probe.ts` is the throwaway extension for the `btw-tools`, `btw-usage`, and `btw-agent` checks in `features/side-question-btw.md`. Copy it to `<checkout>/extensions/verify-side-question-probe.ts`, because a file outside the plugin cannot import `@oh-my-pi/*`. Run it with the RPC drive plus `--no-extensions -e <checkout>/extensions/verify-side-question-probe.ts`, with `VERIFY_PROBE=tools`, `VERIFY_PROBE=usage`, or `VERIFY_PROBE=agent` and `VERIFY_PROBE_LOG=$VERIFY_RUN_DIR/<check>.json` in the environment. Delete the copy after the drive.
 
 ## Evidence
 

@@ -1,9 +1,24 @@
 import { describe, expect, test } from "bun:test";
+import { SessionManager } from "@oh-my-pi/pi-coding-agent";
 
-const { cacheMissTokens, seedMessages } = await import("../extensions/side-question");
+const {
+	cacheMissTokens,
+	forwardSideQuestionUsage,
+	recordSideQuestionUsage,
+	seedMessages,
+	sharedPrefixPrompt,
+	SideQuestionCache,
+	sideQuestionCacheKey,
+	sideQuestionStreamOptions,
+} = await import("../extensions/side-question");
 const { answerInto, newTurn } = await import("../extensions/side-question-view");
 
 const usage = (cacheRead: number, cacheWrite: number, input = 4) => ({ input, cacheRead, cacheWrite });
+const reply = (cacheRead: number, cacheWrite: number, stopReason = "stop") => ({
+	role: "assistant",
+	stopReason,
+	usage: usage(cacheRead, cacheWrite),
+});
 
 describe("cacheMissTokens", () => {
 	test("reports the prefix a request had to write again instead of reading", () => {
@@ -23,11 +38,147 @@ describe("cacheMissTokens", () => {
 
 	test("never reports on providers that write no cache, as OMP's marker does", () => {
 		expect(cacheMissTokens(13_370, usage(0, 0, 13_370))).toBeUndefined();
+		expect(cacheMissTokens(13_370, usage(0, 13_370, 0))).toBe(13_370);
 	});
 
-	test("needs an expected prefix worth caching; a thread's first request has none", () => {
+	test("needs an expected prefix worth caching", () => {
 		expect(cacheMissTokens(undefined, usage(0, 30_000))).toBeUndefined();
 		expect(cacheMissTokens(2_000, usage(0, 2_000))).toBeUndefined();
+		expect(cacheMissTokens(4_000, usage(0, 4_000))).toBe(4_000);
+	});
+});
+
+describe("SideQuestionCache", () => {
+	const a = { role: "user" };
+	const b = { role: "assistant" };
+
+	test("a first thread's first request reports nothing, and a short follow-up reports a miss", () => {
+		const tracker = new SideQuestionCache().thread([a, b]);
+		expect(tracker.observe(reply(0, 30_000))).toBeUndefined();
+		expect(tracker.observe(reply(15_000, 15_004))).toBe(15_004);
+	});
+
+	test("a cut-off request changes nothing", () => {
+		const tracker = new SideQuestionCache().thread([a, b]);
+		tracker.observe(reply(0, 30_000));
+		expect(tracker.observe(reply(0, 2_000, "aborted"))).toBeUndefined();
+		expect(tracker.observe(reply(0, 30_004))).toBe(30_004);
+	});
+
+	test("a later thread's first request is checked against the earlier thread's first prompt", () => {
+		// The first thread's first request: 4 input + 27,640 written = a 27,644-token prompt.
+		const opened = () => {
+			const cache = new SideQuestionCache();
+			const first = cache.thread([a, b]);
+			first.observe(reply(0, 27_640));
+			first.observe(reply(27_640, 200));
+			return cache;
+		};
+		expect(opened().thread([a, b, { role: "user" }]).observe(reply(27_520, 124))).toBeUndefined();
+		expect(opened().thread([a, b, { role: "user" }]).observe(reply(10_624, 17_020))).toBe(17_020);
+		expect(opened().thread([{ role: "user" }, b]).observe(reply(10_624, 17_020))).toBeUndefined();
+	});
+
+	test("a thread opened before the earlier one's first request finished expects nothing", () => {
+		const cache = new SideQuestionCache();
+		const first = cache.thread([a, b]);
+		const early = cache.thread([a, b]);
+		first.observe(reply(0, 27_640));
+		expect(early.observe(reply(0, 27_640))).toBeUndefined();
+		expect(cache.thread([a, b]).observe(reply(0, 27_640))).toBe(27_644);
+	});
+});
+
+describe("sharedPrefixPrompt", () => {
+	const a = { role: "user" };
+	const b = { role: "assistant" };
+	const earlier = { messages: [a, b], prompt: 27_644 };
+
+	test("expects the earlier first prompt while the main messages still start with the ones it saw", () => {
+		expect(sharedPrefixPrompt(earlier, [a, b, { role: "user" }, { role: "assistant" }])).toBe(27_644);
+	});
+
+	test("expects nothing after compaction or a branch change, or with no earlier thread", () => {
+		expect(sharedPrefixPrompt(earlier, [{ role: "user" }, b])).toBeUndefined();
+		expect(sharedPrefixPrompt(earlier, [a])).toBeUndefined();
+		expect(sharedPrefixPrompt(undefined, [a, b])).toBeUndefined();
+		expect(sharedPrefixPrompt(earlier, [a, b])).toBe(27_644);
+	});
+});
+
+describe("recordSideQuestionUsage", () => {
+	const answered = {
+		role: "assistant",
+		api: "openai-codex-responses",
+		provider: "openai-codex",
+		model: "gpt-5.6-luna",
+		stopReason: "stop",
+		usage: {
+			input: 120,
+			output: 6,
+			cacheRead: 27_520,
+			cacheWrite: 0,
+			totalTokens: 27_646,
+			cost: { input: 0.000024, output: 0.0000072, cacheRead: 0.0005504, cacheWrite: 0, total: 0.0005816 },
+		},
+	};
+	const sideEntries = (ledger: SessionManager) =>
+		ledger.getEntries().filter(entry => entry.type === "model_usage" && entry.purpose === "side-question");
+
+	test("each Side question request leaves one side-question entry in the main session's ledger", () => {
+		const ledger = SessionManager.inMemory();
+		recordSideQuestionUsage(ledger, ledger.getSessionId(), answered);
+		recordSideQuestionUsage(ledger, ledger.getSessionId(), { ...answered, stopReason: "aborted" });
+		const entries = sideEntries(ledger);
+		expect(entries).toHaveLength(2);
+		expect(entries[0]).toMatchObject({ provider: "openai-codex", model: "gpt-5.6-luna", usage: answered.usage });
+		expect(entries[1]).toMatchObject({ stopReason: "aborted" });
+	});
+
+	test("leaves nothing for a message without usage, or after the main session switched transcripts", () => {
+		const ledger = SessionManager.inMemory();
+		recordSideQuestionUsage(ledger, ledger.getSessionId(), { role: "user", content: [] });
+		recordSideQuestionUsage(ledger, ledger.getSessionId(), { ...answered, usage: undefined });
+		recordSideQuestionUsage(ledger, "another-session", answered);
+		expect(sideEntries(ledger)).toHaveLength(0);
+		recordSideQuestionUsage(ledger, ledger.getSessionId(), answered);
+		expect(sideEntries(ledger)).toHaveLength(1);
+	});
+
+	test("usage the mirror records off its transcript, such as a cache warm, also reaches the main ledger", () => {
+		const ledger = SessionManager.inMemory();
+		const fork = SessionManager.inMemory();
+		forwardSideQuestionUsage(fork, ledger, ledger.getSessionId());
+		const { role: _role, ...usage } = answered;
+		fork.appendModelUsage(
+			{ ...usage, stopReason: "stop", purpose: "cache-warm" },
+			{ sessionId: fork.getSessionId(), parentId: null },
+		);
+		const forwarded = ledger.getEntries().filter(entry => entry.type === "model_usage");
+		expect(forwarded).toHaveLength(1);
+		expect(forwarded[0]).toMatchObject({ purpose: "side-question:cache-warm", usage: answered.usage });
+		expect(fork.getEntries().filter(entry => entry.type === "model_usage")).toHaveLength(1);
+	});
+});
+
+describe("sideQuestionCacheKey", () => {
+	test("every thread of one main session shares a key that is not the main session's own", () => {
+		expect(sideQuestionCacheKey("main-1")).toBe(sideQuestionCacheKey("main-1"));
+		expect(sideQuestionCacheKey("main-1")).not.toBe("main-1");
+		expect(sideQuestionCacheKey("main-1")).not.toBe(sideQuestionCacheKey("main-2"));
+	});
+});
+
+describe("sideQuestionStreamOptions", () => {
+	test("routes every request to the Side key over SSE and keeps the other options", () => {
+		const key = sideQuestionCacheKey("main-1");
+		const options = sideQuestionStreamOptions(key, { sessionId: "thread-a", preferWebsockets: true, maxTokens: 64 });
+		expect(options).toEqual({ sessionId: "thread-a", preferWebsockets: false, maxTokens: 64, parentSessionId: key });
+	});
+
+	test("works when the agent passes no options", () => {
+		const key = sideQuestionCacheKey("main-1");
+		expect(sideQuestionStreamOptions(key, undefined)).toEqual({ preferWebsockets: false, parentSessionId: key });
 	});
 });
 

@@ -57,17 +57,23 @@ the Picker btw asks the same kind of Side question.
   mirror session built the way OMP's `/tan` builds one
   (`tan-command-controller.ts`): `SessionManager.forkFrom` the main transcript
   (with `repairInterruptedTail`, since the main agent may be mid-turn) into
-  `<session dir>/SideQuestion-<uuid>.jsonl`, then `createAgentSession` with the
-  main session's model and thinking level, `toolNames` read, grep, glob, find,
-  and web_search, and `restrictToolNames` (which also turns off MCP, LSP, IRC,
-  and ambient extension tools). No `systemPrompt` is passed, so OMP renders
-  its default prompt for those five tools. Offering only these is the read-only
-  limit; there is no call-time gate. The mirror once copied the main system
-  prompt and tool list so its first request read the main prompt cache, and
-  refused other tools at call time. With `ask`, `bash`, and `write` offered,
-  a Picker btw during a pending `ask` from a subagent's IRC message called
-  them in 3 of 15 replays of a real session (0 of 15 now); the first request
-  is a cache miss by design. The mirror gets subagent settings, the parent's
+  `$TMPDIR/omp-side-question-<random>/SideQuestion-<uuid>.jsonl`, outside the
+  sessions tree: omp-stats and the Agent Hub scan that tree and counted the
+  fork's usage again on top of the main ledger copy. Then
+  `createMirrorSession`, the one way to build the mirror. Its input type
+  takes no `systemPrompt`, tool list, or plain-string cache key, so the old
+  wiring fails typecheck. It offers only read, grep, glob, find, and
+  web_search with `restrictToolNames`
+  (also no MCP, LSP, IRC, or ambient extension tools) and OMP's default prompt
+  for them; there is no call-time gate. Copying the main prompt and tools to
+  reuse the main prompt cache let a Picker btw call `ask`, `bash`, and `write`
+  (3 of 15 replays, 0 of 15 now), so a thread's first request cannot reuse
+  the main cache. Every thread of one main session shares a Side-only key
+  (`sideQuestionCacheKey`) sent as `providerPromptCacheKey` and Codex
+  `parentSessionId`, over SSE (`preferWebsockets: false`): a later thread's
+  first request then read the earlier thread's prefix in 10 of 10 Codex runs,
+  against 0 of 5 on a new websocket with the same key; Anthropic reused it
+  either way. The mirror gets subagent settings, the parent's
   prepared extensions, and a `SideQuestionRegistry`: its own `AgentRegistry`
   (out of the Agent Hub, so nothing can message or list it) whose `get` and
   `list` fall back to `AgentRegistry.global()`. `read agent://<id>` resolves
@@ -87,12 +93,24 @@ the Picker btw asks the same kind of Side question.
   branch, which the file does not record, and it holds messages the live
   session adds that the file lacks (the `eval-state-context` message after a
   `/tree` jump, #15933). The fork file still holds the mirror's own turns.
-  `cacheMissTokens` flags a follow-up request that reads more than 2048
-  tokens less than the thread's previous one, only when it wrote cache
-  (`cacheWrite > 0`, so never on Codex) and only while
-  `display.cacheMissMarker` is on (`/modes/settings`); the answer then shows
-  OMP's `⊘ cache miss · N tokens` label. The thread reports each assistant
-  message's start (`onMessageStart`), its streamed text, and tool calls;
+  A `SideQuestionCache` per main session hands each thread a tracker that
+  flags a request reading more than 2048 tokens less than expected: the
+  thread's previous request, or for a thread's first one the earlier thread's
+  first request (which that tracker records) while the main messages still
+  start with the ones that thread saw (`sharedPrefixPrompt`). It counts only
+  when the request wrote cache (`cacheWrite > 0`, so never on Codex) and shows
+  OMP's `⊘ cache miss · N tokens` label only while `display.cacheMissMarker`
+  is on (`/modes/settings`). Each mirror request's usage goes to the main
+  session's ledger as a `model_usage` entry with purpose `side-question`
+  (`recordSideQuestionUsage`), and every entry the mirror records off its own
+  transcript (cache warms, judge calls) is copied there as
+  `side-question:<purpose>` (`forwardSideQuestionUsage` wraps the fork's
+  `appendModelUsage`), so session cost counts them after the fork file is
+  deleted; none is a message. The mirror keeps OMP's cache warming: an idle
+  panel on a 5-minute cache tier is warmed like the main session (1-hour
+  entries outlive the 30-minute idle window, so they are not). The thread
+  reports each assistant message's start (`onMessageStart`), its streamed
+  text, and tool calls;
   `answerInto` keeps them as ordered parts (text, then a group of calls), so
   a later message never replaces earlier text. `ask` returns the last
   assistant message's text; the fork file is deleted on dispose. A Side
@@ -143,10 +161,9 @@ the Picker btw asks the same kind of Side question.
   no `before_agent_start`, and a re-ask after "go on" should match).
   The slot ends every Picker btw thread (`end`): a dropped draft's, a
   mismatched draft's, and a submitted or failed Picker's. `drop` waits for
-  all of them. `session_before_switch` and `session_before_branch` call it:
-  the mirror's files sit in the session's artifacts directory, which `/fork`
-  and a branch copy after those events (OMP `agent-session.ts` `fork`,
-  `#branchIntoNewSession`). `session_tree` and `session_shutdown` drop it too.
+  all of them. `session_before_switch`, `session_before_branch`,
+  `session_tree`, and `session_shutdown` drop it, so no thread outlives the
+  session it answers about.
 - Tern sends Cmd+V as OSC 5522 enhanced paste. OMP reads it and calls the
   focused component's paste contract: `pasteText`, `beginPaste`,
   `acceptsImages`, and `attachImage`. `AnswerEditor` accepts host text and
@@ -290,8 +307,11 @@ the Picker btw asks the same kind of Side question.
 - `extensions/side-question.ts`: `SideQuestionThread` (the mirror session with
   only the five read-only tools, its `SideQuestionRegistry`, `seedMessages`,
   and the message-start, text, and tool-call callbacks; an already-aborted
-  signal is rejected before any request), `LazySideQuestionThread` (opened on
-  first use, shared by both callers), and `sideQuestionsAvailable`.
+  signal is rejected before any request), `createMirrorSession` with the
+  Side cache key and stream options, `SideQuestionCache`, the usage ledger
+  (`recordSideQuestionUsage`, `forwardSideQuestionUsage`),
+  `LazySideQuestionThread` (opened on first use,
+  shared by both callers), and `sideQuestionsAvailable`.
 - `extensions/side-question-view.ts`: what both views share: the turn
   (`SideQuestionTurn` with ordered `parts`, `answerInto`), the interrupt key,
   and `SideQuestionTurnView`, which draws the question as the main chat draws
@@ -329,8 +349,10 @@ the Picker btw asks the same kind of Side question.
   match rule, and Esc then reopen through `showMarkdownAskDialog` with a stub
   `ui.custom`), host `askDialog` through the route (picks, notes, Esc and
   draft, abort, native fallback for reserved labels and malformed input,
-  caller ids echoed, `onTimeout`, no stacking), and for the Side question's `seedMessages`,
-  `cacheMissTokens`, and `answerInto`. The tool limit, the thread cycle, the
+  caller ids echoed, `onTimeout`, no stacking), and for the Side question's
+  `seedMessages`, cache key and stream options, `cacheMissTokens`,
+  `SideQuestionCache`, `sharedPrefixPrompt`, the usage ledger and its
+  forwarding, and `answerInto`. The tool limit, the thread cycle, the
   mirror session, the panel, and a kept Picker btw thread have live smoke only.
 - `package.json`: OMP discovery, scripts, and SDK dependency pins.
 - `tsconfig.json`: strict, no-emit TypeScript configuration for extensions.
@@ -392,7 +414,8 @@ through `bun run update` to keep types and the installed omp in step.
 
 Run typechecking and `bun test` after code changes; tests cover
 `generate_image`, `parseBtwQuestion`, `AnswerEditor` paste handling, the Picker
-draft, the host `askDialog` route, and the Side question's `seedMessages`, `cacheMissTokens`, and
+draft, the host `askDialog` route, and the Side question's `seedMessages`,
+cache key and stream options, cache-miss tracking, usage ledger, and
 `answerInto`, and there is
 no repository CI. Registration, ask, and Side question changes
 require a fresh-session OMP smoke; typechecking alone does not exercise host
