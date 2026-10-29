@@ -410,18 +410,8 @@ function labelSpans(label: string, style: string | undefined): Span[] {
 
 /** Name of the picker's Tern stylesheet (`s` verb, one per surface; resending replaces it in place). */
 const NATIVE_SHEET_NAME = "omp-tools-ask";
-/**
- * The option rows in Tern's own look, as Tern draws native ask's items: the UI
- * font, primary label and muted description, a neutral fill on the
- * highlighted row and a hover fill. Colors are Tern's theme variables, so the
- * rows follow its theme (and the program palette where Tern applies it).
- *
- * The rows sit on the terminal grid to stay compact: their text takes the
- * terminal's font size and row height (`--sf-fs`, `--sf-lh`), one row per
- * line, 2px of padding above and below for the highlight fill, and no gap
- * between rows. A program sheet only reaches strict descendants of its
- * region, so it cannot copy them onto `.sf-region` itself.
- */
+// Tern program sheets reach only strict descendants of a region. Read
+// --sf-fs/--sf-lh on the row; assigning them on .sf-region cannot apply.
 const NATIVE_SHEET = `
 ${SCROLL_BOX_CSS}
 .sf-list[data-role='omp-tools.ask-body'] > .sf-list-scroll > .sf-list-slot > .sf-col { gap: 0; }

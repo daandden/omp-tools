@@ -8,6 +8,7 @@ import type { ImageContent } from "@oh-my-pi/pi-ai";
 import { extractImagePathFromText, settings } from "@oh-my-pi/pi-coding-agent";
 import { cfgImagesAutoResize } from "@oh-my-pi/pi-coding-agent/modes/settings";
 import {
+	isClipboardTerminalLocal,
 	readImageFromClipboard,
 	readMacFileUrlsFromClipboard,
 	readTextFromClipboard,
@@ -52,6 +53,11 @@ export async function loadImagePaths(paths: readonly string[], cwd: string): Pro
  * copied files); a clipboard holding only text pastes that text.
  */
 export async function readClipboardPaste(cwd: string): Promise<PasteOutcome> {
+	if (!isClipboardTerminalLocal()) {
+		return {
+			error: "Clipboard here belongs to the SSH host — use your terminal's paste shortcut to paste from your machine",
+		};
+	}
 	try {
 		const fileUrls = await readMacFileUrlsFromClipboard();
 		const filePaths = fileUrls.flatMap(url => extractImagePathFromText(url) ?? []);

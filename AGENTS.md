@@ -93,10 +93,20 @@ the Picker btw asks the same kind of Side question.
   branch, which the file does not record, and it holds messages the live
   session adds that the file lacks (the `eval-state-context` message after a
   `/tree` jump, #15933). The fork file still holds the mirror's own turns.
+  `sideQuestionModel` in the plugin's `omp.settings` selects the primary model
+  for both callers, default `@smol`; an empty value keeps the main model.
+  `side-question-model.ts` reads it per thread with `getPluginSettings` and
+  resolves the role and thinking level with `resolveModelOverride`. The fork
+  records the selected role so shared-model roles retain their own fallback
+  chains. An unresolved selector warns and keeps the main model. The mirror's
+  tokenizer checks the live history with prompt and tool overhead before the
+  first request; a known context window too small uses the main model instead.
+  OMP still owns overflow recovery if that model also cannot fit. The mirror
+  shares `main.costGate`, as `/tan` does.
   A `SideQuestionCache` per main session hands each thread a tracker that
   flags a request reading more than 2048 tokens less than expected: the
-  thread's previous request, or for a thread's first one the earlier thread's
-  first request (which that tracker records) while the main messages still
+  thread's previous request on that provider and model, or for a thread's first
+  one the earlier thread's first request on that route, while the main messages still
   start with the ones that thread saw (`sharedPrefixPrompt`). It counts only
   when the request wrote cache (`cacheWrite > 0`, so never on Codex) and shows
   OMP's `⊘ cache miss · N tokens` label only while `display.cacheMissMarker`
@@ -110,18 +120,22 @@ the Picker btw asks the same kind of Side question.
   panel on a 5-minute cache tier is warmed like the main session (1-hour
   entries outlive the 30-minute idle window, so they are not). The thread
   reports each assistant message's start (`onMessageStart`), its streamed
-  text, and tool calls;
-  `answerInto` keeps them as ordered parts (text, then a group of calls), so
+  text, tool calls, and native retry/fallback events (`onRecovery`).
+  `answerInto` keeps them as ordered parts, with a live retry countdown, so
   a later message never replaces earlier text. `ask` returns the last
   assistant message's text; the fork file is deleted on dispose. A Side
   question needs a live main session (`AgentRegistry.global()`) and a session
   file; without them `/btw` falls through to native and Picker btw is off.
+  Transport retries precede TurnRecovery events. Native fallback chains can
+  revisit models and renew their retry budgets. Preserve that policy and
+  cancellation rather than adding Side-only retry rules.
 - `/btw <question>` (`extensions/btw.ts`): OMP skips extension commands named
   like built-ins, so the plugin catches the text in the `input` event, which
   runs before built-in dispatch (docs/adr/0001), and returns `{ handled: true }`
-  only for `source: "interactive"` in the TUI. Bare `/btw` (the history),
-  autocomplete, the focused-subagent path (it skips `input` handlers), and RPC
-  `btw` stay native. One `BtwCycle` per session holds the thread: a later
+  only for `source: "interactive"` in the TUI. Attached images go to the thread.
+  Bare `/btw` (the history), autocomplete, `side: true` file commands, the
+  focused-subagent path (it skips `input` handlers), and RPC `btw` stay native.
+  One `BtwCycle` per session holds the thread: a later
   `/btw` follows up on the same mirror; `before_agent_start` (a main prompt)
   ends it, or, while an answer runs, marks it closed so the answer finishes,
   shows, and the thread is disposed afterwards. Session switch, branch, tree,
@@ -239,8 +253,9 @@ the Picker btw asks the same kind of Side question.
   (no references) or `/edits` with Codex's exact body and headers, using the
   `openai-codex` credential from `ctx.modelRegistry.getApiKeyForProvider`; no
   other provider, no fallback to native. Native `generate_image` is
-  settings-gated and installed after extensions, skipping taken names, so the
-  plugin tool wins even when `generate_image.enabled` is true. The schema stays
+  settings-gated. Eager extension registration makes native skip the taken name;
+  deferred extension registration replaces native through the host's late
+  tool-registration path. The plugin wins in either case. The schema stays
   open because OMP's argument validator deletes unknown keys from closed
   schemas (`pi-ai` `coerceArgsFromIssues`); `execute` rejects them instead.
 - Keep the request guards: 64 MB body cap (larger bodies get false
@@ -397,13 +412,13 @@ Use Bun and `bun.lock`. The private package is ESM with ESNext/Preserve modules
 and Bundler resolution. SDK packages supply development types. Runtime value
 imports of `@oh-my-pi/*` resolve to the host's in-process modules through OMP's
 extension specifier shim; in compiled binaries only exported subpaths are served
-(`@oh-my-pi/pi-tui`, `/chrome`, `/render`, `/theme`,
+(`@oh-my-pi/pi-tui`, `/chrome`, `/render`, `/theme`, `/thinking`,
 `@oh-my-pi/pi-coding-agent`, `/judgment`, `/modes/*`, `/tools/*`, `/utils/*`,
-and the `@oh-my-pi/pi-utils` root; `/judgment` was checked in OMP 18.4.8,
-`/tools/approval` in OMP 18.10.4). The root `./*`
-wildcard is not served, so never import files such as
-`@oh-my-pi/pi-tui/overlays/*`, `/keybinding-matchers`, `/chrome/form-theme`, or
-`/prompt/*`; they load a second copy from node_modules and fail. The
+and the `@oh-my-pi/pi-utils` root). Compiled OMP 18.13.3 also loaded the exact
+`pi-coding-agent` subpaths `/config/model-resolver`,
+`/extensibility/plugins/loader`, and `/session/settings` in a live import
+probe. Do not assume other wildcard subpaths work: unserved paths such as
+`@oh-my-pi/pi-tui/overlays/*` can load a second SDK copy and fail.
 `@oh-my-pi/pi-tui` root exports the describe builders (`node`, `col`, `md`,
 `span`, `text`, `kbd`); `actionButton` and `hintsRow` from `/native/overlay`,
 which is not on the checked list, are mirrored in `ask-dialog.ts` and
@@ -414,12 +429,18 @@ through `bun run update` to keep types and the installed omp in step.
 
 Run typechecking and `bun test` after code changes; tests cover
 `generate_image`, `parseBtwQuestion`, `AnswerEditor` paste handling, the Picker
-draft, the host `askDialog` route, and the Side question's `seedMessages`,
-cache key and stream options, cache-miss tracking, usage ledger, and
-`answerInto`, and there is
+draft, the host `askDialog` route, the real Side question session's model,
+thinking, context boundary, images, fallback and cost cap, cache-miss tracking,
+usage ledger, and recovery rendering. There is
 no repository CI. Registration, ask, and Side question changes
 require a fresh-session OMP smoke; typechecking alone does not exercise host
-integration or UI. OMP 18.12.5 with headless Tern 0.9.5 (Tern view and
+integration or UI. OMP 18.13.3 with Tern 0.9.7 proved both renderers' primary
+model selection, role thinking, retry countdowns, fallback switches, terminal
+failure and Esc in `/btw` and Picker btw; host `askDialog` picks, notes,
+Other, draft and timeout; eager and deferred tool precedence; and compiled RPC
+Side question images, five-tool restriction, privacy and shared cost gate.
+The isolated headless helper was proved from a bash launcher.
+OMP 18.12.5 with headless Tern 0.9.5 (Tern view and
 `PI_TUI_NATIVE=0`) was used for every surface: the picker (keys, `Other`,
 notes, Submit, pointer, `ask.timeout`), the Picker btw (also during an `ask`
 that a subagent's IRC message started), `/btw`, the `generate_image`

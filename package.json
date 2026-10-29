@@ -21,6 +21,13 @@
 			"./extensions/flexible-ask.ts",
 			"./extensions/generate-image.ts",
 			"./extensions/btw.ts"
-		]
+		],
+		"settings": {
+			"sideQuestionModel": {
+				"type": "string",
+				"default": "@smol",
+				"description": "Model for /btw and Picker btw. Use a role such as @smol or provider/model:level. Empty uses the main model."
+			}
+		}
 	}
 }

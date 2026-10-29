@@ -4,6 +4,13 @@
 
 ### Added
 
+- Added `sideQuestionModel` to the plugin settings, default `@smol`, for both
+  `/btw` and Picker btw. It honors the role's thinking level and fallback chain.
+  An unavailable selector uses the main model with a warning; a history that
+  exceeds the selected context window uses the main model.
+- Side questions show OMP retry countdowns, fallback model switches, and final
+  retry errors instead of silently waiting through session recovery.
+
 - Cmd+V in Tern now pastes text and copied images into the picker's `Other`,
   option-note, and Submit note editors, and pasted images go with Picker btw
   questions. On the option list, the picker pastes nothing and says to open a
@@ -21,6 +28,13 @@
 
 ### Fixed
 
+- `/btw` now sends attached images and keeps them for follow-up questions.
+- Side questions share the main session's spending cap rather than starting a
+  separate cap for each thread.
+- A model switch no longer produces a false Side question cache-miss marker.
+- Picker clipboard paste over SSH no longer reads the remote system clipboard.
+  Use the terminal's paste shortcut instead.
+
 - A Side question (`/btw` or Picker btw) can now read the main session's
   `local://` files, such as a pasted image's `local://pasted-image-*.png`.
   It read its own empty folder and returned `Local file not found`.
@@ -34,6 +48,11 @@
   timeout to OMP.
 
 ### Changed
+
+- Updated the SDK types to OMP 18.13.3 and synchronized the `ask` description
+  with upstream's instruction to show decision context before blocking.
+- The isolated Tern helper exports its shell for headless starts, where Tern
+  ignores the `shell` setting. Launching it from bash now finds `omp`.
 
 - Side questions on Codex now reuse the prompt cache across threads. A
   later `/btw` or Picker btw in the same session reads the earlier one's

@@ -2,9 +2,8 @@
 // Codex Images endpoint, the way the official Codex CLI does. Codex OAuth only
 // (`openai-codex` login), no system instructions, and Codex's exact arguments.
 //
-// Native `generate_image` is settings-gated and installed after extensions,
-// skipping taken names, so this registration wins either way; users disable
-// native anyway (README).
+// This registration wins whether loaded before native tools or deferred until
+// after startup. Deferred extension tools replace the same-name native tool.
 //
 // OMP's argument validator deletes unknown keys from closed schemas before
 // `execute` runs, so the schema stays open and `execute` rejects them itself.

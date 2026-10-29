@@ -16,6 +16,8 @@ const { answerInto, newTurn } = await import("../extensions/side-question-view")
 const usage = (cacheRead: number, cacheWrite: number, input = 4) => ({ input, cacheRead, cacheWrite });
 const reply = (cacheRead: number, cacheWrite: number, stopReason = "stop") => ({
 	role: "assistant",
+	provider: "fixture",
+	model: "primary",
 	stopReason,
 	usage: usage(cacheRead, cacheWrite),
 });
@@ -86,6 +88,23 @@ describe("SideQuestionCache", () => {
 		first.observe(reply(0, 27_640));
 		expect(early.observe(reply(0, 27_640))).toBeUndefined();
 		expect(cache.thread([a, b]).observe(reply(0, 27_640))).toBe(27_644);
+	});
+
+	test("model and provider changes start fresh expectations while repeated models remain checked", () => {
+		const cache = new SideQuestionCache();
+		const tracker = cache.thread([a, b]);
+		const modelReply = (provider: string, model: string, cacheRead = 0) => ({
+			...reply(cacheRead, 30_000),
+			provider,
+			model,
+		});
+		expect(tracker.observe(modelReply("one", "primary"))).toBeUndefined();
+		expect(tracker.observe(modelReply("one", "backup"))).toBeUndefined();
+		expect(tracker.observe(modelReply("two", "backup"))).toBeUndefined();
+		expect(tracker.observe(modelReply("one", "backup"))).toBe(30_004);
+		expect(tracker.observe(modelReply("one", "primary"))).toBe(30_004);
+		expect(cache.thread([a, b]).observe(modelReply("three", "backup"))).toBeUndefined();
+		expect(cache.thread([a, b]).observe(modelReply("one", "backup"))).toBe(30_004);
 	});
 });
 

@@ -42,7 +42,7 @@ export default function sideQuestionProbe(pi: ExtensionAPI): void {
 				const tools = thread.toolNames;
 				const answer = await thread.ask(
 					question,
-					{ onMessageStart() {}, onText() {}, onToolCall: call => calls.set(call.id, { ...call }), onCacheMiss() {} },
+					{ onMessageStart() {}, onText() {}, onToolCall: call => calls.set(call.id, { ...call }), onCacheMiss() {}, onRecovery() {} },
 					new AbortController().signal,
 				);
 				threads.push({ tools, answer });

@@ -5,6 +5,8 @@ import type { ImageContent } from "@oh-my-pi/pi-ai";
 import type { AgentSession, CreateAgentSessionOptions, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { AgentRegistry, createAgentSession, createSubagentSettings, SessionManager } from "@oh-my-pi/pi-coding-agent";
 import { cfgDisplayCacheMissMarker } from "@oh-my-pi/pi-coding-agent/modes/settings";
+import type { SideQuestionRecovery } from "./side-question-recovery";
+import { sideQuestionModel } from "./side-question-model";
 
 /** The only tools a Side question is offered. */
 const SIDE_QUESTION_TOOLS = ["read", "grep", "glob", "find", "web_search"];
@@ -81,36 +83,41 @@ export function sharedPrefixPrompt(earlier: ThreadStart | undefined, messages: r
 	return earlier.messages.every((message, i) => message === messages[i]) ? earlier.prompt : undefined;
 }
 
-/** Each finished request's cache miss in one thread, measured against the request before it. */
 class CacheMissTracker {
-	#expectedPrompt: number | undefined;
-	#onFirstPrompt: ((prompt: number) => void) | undefined;
+	readonly #expected: Map<string, number | undefined>;
+	readonly #observed = new Set<string>();
+	readonly #onFirstPrompt: (route: string, prompt: number) => void;
 
-	constructor(expectedPrompt: number | undefined, onFirstPrompt: (prompt: number) => void) {
-		this.#expectedPrompt = expectedPrompt;
+	constructor(expected: Map<string, number | undefined>, onFirstPrompt: (route: string, prompt: number) => void) {
+		this.#expected = expected;
 		this.#onFirstPrompt = onFirstPrompt;
 	}
 
-	/** The tokens a finished request missed; a cut-off one changes nothing. */
 	observe(message: unknown): number | undefined {
 		const prompt = requestPrompt(message);
 		if (prompt === undefined) return undefined;
-		const missed = cacheMissTokens(this.#expectedPrompt, (message as { usage: PromptUsage }).usage);
-		this.#expectedPrompt = prompt;
-		this.#onFirstPrompt?.(prompt);
-		this.#onFirstPrompt = undefined;
+		const { provider, model, usage } = message as { provider?: string; model?: string; usage: PromptUsage };
+		if (!provider || !model) return undefined;
+		const route = `${provider}\0${model}`;
+		const missed = cacheMissTokens(this.#expected.get(route), usage);
+		this.#expected.set(route, prompt);
+		if (!this.#observed.has(route)) {
+			this.#observed.add(route);
+			this.#onFirstPrompt(route, prompt);
+		}
 		return missed;
 	}
 }
 
-/** One main session's Side question cache expectations: the latest thread start, and a tracker per thread. */
 export class SideQuestionCache {
-	#latest: ThreadStart | undefined;
+	readonly #latest = new Map<string, ThreadStart>();
 
-	/** A tracker for a new thread seeded from these main messages. */
 	thread(messages: readonly unknown[]): CacheMissTracker {
-		return new CacheMissTracker(sharedPrefixPrompt(this.#latest, messages), prompt => {
-			this.#latest = { messages, prompt };
+		const snapshotAtOpen = new Map(
+			Array.from(this.#latest, ([route, earlier]) => [route, sharedPrefixPrompt(earlier, messages)]),
+		);
+		return new CacheMissTracker(snapshotAtOpen, (route, prompt) => {
+			this.#latest.set(route, { messages, prompt });
 		});
 	}
 }
@@ -215,6 +222,7 @@ export interface SideQuestionCallbacks {
 	/** Text so far of the assistant message being streamed. */
 	onText(text: string): void;
 	onToolCall(call: SideQuestionToolCall): void;
+	onRecovery(event: SideQuestionRecovery): void;
 	/** A request missed the cache by this many tokens; only while OMP's Cache Miss Marker setting is on. */
 	onCacheMiss(tokens: number): void;
 }
@@ -274,6 +282,7 @@ export function sideQuestionStreamOptions(
 type MirrorSessionInput = Pick<
 	CreateAgentSessionOptions,
 	| "cwd"
+	| "costGate"
 	| "sessionManager"
 	| "model"
 	| "thinkingLevel"
@@ -309,6 +318,12 @@ async function createMirrorSession({ cacheKey, ...input }: MirrorSessionInput): 
 	return session;
 }
 
+interface ContextFallback {
+	model: NonNullable<AgentSession["model"]>;
+	thinkingLevel: ReturnType<AgentSession["configuredThinkingLevel"]>;
+	role: string;
+}
+
 /** One thread of Side questions: a mirror session that keeps its own history until disposed. */
 export class SideQuestionThread {
 	readonly #session: AgentSession;
@@ -317,6 +332,7 @@ export class SideQuestionThread {
 	/** The main transcript whose ledger gets this thread's usage. */
 	readonly #ledgerSessionId: string;
 	readonly #cache: CacheMissTracker;
+	#contextFallback: ContextFallback | undefined;
 	#running = false;
 	#disposed = false;
 	/** The last question was cancelled; its prompt stays in the history, so the next one says so. */
@@ -328,12 +344,14 @@ export class SideQuestionThread {
 		main: AgentSession,
 		ledgerSessionId: string,
 		seededFrom: readonly unknown[],
+		contextFallback: ContextFallback | undefined,
 	) {
 		this.#session = session;
 		this.#file = file;
 		this.#main = main;
 		this.#ledgerSessionId = ledgerSessionId;
 		this.#cache = cacheOf(main).thread(seededFrom);
+		this.#contextFallback = contextFallback;
 	}
 
 	static async open(ctx: ExtensionContext): Promise<SideQuestionThread> {
@@ -341,6 +359,15 @@ export class SideQuestionThread {
 		const parentFile = ctx.sessionManager.getSessionFile();
 		const model = main?.model;
 		if (!main || !parentFile || !model) throw new Error("Side questions need a saved main session.");
+		const selected = await sideQuestionModel(main, ctx.cwd);
+		if (selected?.warning) ctx.ui.notify(selected.warning, "warning");
+		const contextFallback = selected?.model && (selected.model.provider !== model.provider || selected.model.id !== model.id)
+			? {
+					model,
+					thinkingLevel: main.configuredThinkingLevel(),
+					role: main.sessionManager.getLastModelChangeRole({ skipEphemeral: true }) ?? "default",
+				}
+			: undefined;
 		await main.sessionManager.ensureOnDisk();
 		await main.sessionManager.flush();
 
@@ -375,11 +402,13 @@ export class SideQuestionThread {
 		const parentExtensionRoots = main.effectiveExtensionRoots;
 		const seededFrom = [...main.agent.state.messages];
 		try {
+			if (selected?.model) fork.appendModelChange(`${selected.model.provider}/${selected.model.id}`, selected.role);
 			mirror = await createMirrorSession({
 				cwd: ctx.cwd,
+				costGate: main.costGate,
 				sessionManager: fork,
-				model,
-				thinkingLevel: main.configuredThinkingLevel(),
+				model: selected?.model ?? model,
+				thinkingLevel: selected?.model ? selected.thinkingLevel : main.configuredThinkingLevel(),
 				providerSessionId: `${main.sessionId}:side-question:${id}`,
 				cacheKey: sideQuestionCacheKey(main.sessionId),
 				modelRegistry: main.modelRegistry,
@@ -396,6 +425,7 @@ export class SideQuestionThread {
 				preloadedExtensionPaths: parentExtensionPaths?.length ? [...parentExtensionPaths] : undefined,
 				extensionRoots: () => parentExtensionRoots,
 			});
+			if (selected?.model) mirror.setThinkingLevel(selected.thinkingLevel);
 			mirror.agent.replaceMessages(seedMessages(seededFrom));
 		} catch (error) {
 			try {
@@ -405,7 +435,7 @@ export class SideQuestionThread {
 			}
 			throw error;
 		}
-		return new SideQuestionThread(mirror, file, main, parentLocalSessionId, seededFrom);
+		return new SideQuestionThread(mirror, file, main, parentLocalSessionId, seededFrom, contextFallback);
 	}
 
 	/** Run one question to its answer; follow-ups see the earlier questions, answers, and tool results. */
@@ -423,6 +453,11 @@ export class SideQuestionThread {
 		let text = "";
 		const unsubscribe = this.#session.subscribe(event => {
 			switch (event.type) {
+				case "auto_retry_start":
+				case "auto_retry_end":
+				case "retry_fallback_applied":
+					callbacks.onRecovery(event);
+					break;
 				case "message_start":
 					if (event.message.role === "assistant") {
 						text = "";
@@ -465,10 +500,32 @@ export class SideQuestionThread {
 		signal.addEventListener("abort", abort, { once: true });
 		try {
 			const message = this.#lastCancelled ? `${CANCELLED_NOTE}\n${promptText}` : promptText;
+			const fallback = this.#contextFallback;
+			const window = this.#session.model?.contextWindow;
+			if (fallback && window != null && window > 0) {
+				const context = this.#session.getContextBreakdown();
+				const tokenizer = this.#session.agent.tokenizer;
+				const overhead = context
+					? context.systemPromptTokens + context.systemToolsTokens + context.systemContextTokens + context.skillsTokens
+					: tokenizer.countTokens(this.#session.systemPrompt);
+				const pending = tokenizer.countMessages([{
+					role: "user",
+					content: [{ type: "text", text: message }, ...(images ?? [])],
+					timestamp: Date.now(),
+				}]);
+				const tokens = overhead + tokenizer.countMessages(this.#session.agent.state.messages) + pending;
+				if (tokens >= window) {
+					await this.#session.setModel(fallback.model, fallback.role);
+					this.#session.setThinkingLevel(fallback.thinkingLevel);
+				}
+			}
+			this.#contextFallback = undefined;
+			if (signal.aborted) throw new DOMException("Side question cancelled", "AbortError");
 			await this.#session.prompt(message, { attribution: "user", images });
 			await this.#session.waitForIdle();
 			const last = this.#session.getLastAssistantMessage();
 			if (signal.aborted) throw new DOMException("Side question cancelled", "AbortError");
+			if (this.#session.costCapRefusal) throw new Error(this.#session.costCapRefusal.message);
 			if (last?.stopReason === "error") throw new Error(last.errorMessage || "The side question failed.");
 			return assistantText(last);
 		} finally {

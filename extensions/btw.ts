@@ -1,3 +1,4 @@
+import type { ImageContent } from "@oh-my-pi/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import type { TUI } from "@oh-my-pi/pi-tui";
 import { prompt } from "@oh-my-pi/pi-utils";
@@ -33,7 +34,7 @@ class BtwCycle {
 		this.#stopKeys = ctx.ui.onTerminalInput(data => this.#handleKey(data));
 	}
 
-	ask(question: string): void {
+	ask(question: string, images?: ImageContent[]): void {
 		if (this.#running()) {
 			this.#ctx.ui.notify("Wait for the side question's answer, or press Esc to cancel it.", "warning");
 			return;
@@ -47,7 +48,7 @@ class BtwCycle {
 		void answerInto(
 			turn,
 			async callbacks =>
-				(await this.#thread.get()).ask(prompt.render(btwPrompt, { question }), callbacks, abort.signal),
+				(await this.#thread.get()).ask(prompt.render(btwPrompt, { question }), callbacks, abort.signal, images),
 			() => this.#render(),
 		).then(() => {
 			if (this.#abort === abort) this.#abort = undefined;
@@ -150,9 +151,8 @@ export default function btw(pi: ExtensionAPI) {
 		if (event.source !== "interactive" || ctx.mode !== "tui" || !ctx.hasUI) return undefined;
 		const question = parseBtwQuestion(event.text);
 		if (question === undefined || !sideQuestionsAvailable(ctx)) return undefined;
-		if (event.images?.length) ctx.ui.notify("Images are not sent with a side question.", "warning");
 		cycle ??= new BtwCycle(ctx);
-		cycle.ask(question);
+		cycle.ask(question, event.images);
 		return { handled: true };
 	});
 	pi.on("before_agent_start", () => {
