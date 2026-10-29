@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { setImmediate } from "node:timers/promises";
 import {
 	argumentNames,
 	codexToken,
@@ -451,6 +453,52 @@ describe("errors", () => {
 			expect(savedImageFiles()).toEqual(before);
 		} finally {
 			writeSpy.mockRestore();
+		}
+	});
+
+	test("a failed write waits for every write, removes every image, and keeps the first failure", async () => {
+		const before = savedImageFiles();
+		const write = Bun.write;
+		const rm = fsp.rm;
+		const gate = Promise.withResolvers<void>();
+		const held = Promise.withResolvers<void>();
+		let writes = 0;
+		let pending = 0;
+		let removals = 0;
+		let removedWhilePending = false;
+		const writeSpy = spyOn(Bun, "write").mockImplementation((async (...args: Parameters<typeof Bun.write>) => {
+			const index = writes++;
+			if (index === 1) throw new Error("disk full");
+			pending += 1;
+			if (pending === 2) held.resolve();
+			try {
+				await gate.promise;
+				if (index === 0) throw new Error("later failure");
+				return await write(...args);
+			} finally {
+				pending -= 1;
+			}
+		}) as typeof Bun.write);
+		const rmSpy = spyOn(fsp, "rm").mockImplementation((async (...args: Parameters<typeof fsp.rm>) => {
+			if (pending > 0) removedWhilePending = true;
+			if (removals++ === 0) throw new Error("cannot remove");
+			return rm(...args);
+		}) as typeof fsp.rm);
+		const pngs = [2, 3, 4].map(width => encodePng(width, 2, () => [0, 0, 0, 255]));
+		respond = () => imagesResponse({ data: pngs.map(png => ({ b64_json: Buffer.from(png).toString("base64") })) });
+		try {
+			const call = failure((await openaiTool()).execute("c", { prompt: "x", n: 3 }, undefined, undefined, openaiContext()));
+			await held.promise;
+			await setImmediate();
+			gate.resolve();
+			const error = await call;
+
+			expect(removedWhilePending).toBe(false);
+			expect(savedImageFiles()).toEqual(before);
+			expect(error.message).toBe("disk full");
+		} finally {
+			writeSpy.mockRestore();
+			rmSpy.mockRestore();
 		}
 	});
 });
