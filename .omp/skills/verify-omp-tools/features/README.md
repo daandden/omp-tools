@@ -33,4 +33,4 @@ Each feature file starts with an H1 title and one paragraph of user-visible beha
 - [Side question with /btw](./side-question-btw.md): answer with read-only tools, the tool-call fold, follow-ups, cancel, and the thread ending at the next main prompt.
 - [Picker btw](./picker-btw.md): a Side question from inside the ask picker, while `ask` waits.
 - [Ask picker](./ask-picker.md): Markdown questions, keys, Other and notes, Submit, and the answer the agent gets.
-- [generate_image](./generate-image.md): a generation and an edit through Codex Images, and the tool card.
+- [generate_image](./generate-image.md): each Image generation mode's schema, generations and edits (OpenAI mode also `n`, formats, streaming, and masks), and the tool card.

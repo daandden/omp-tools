@@ -7,7 +7,9 @@ description: Generate and edit images with the `generate_image` tool. Read befor
 
 Use `generate_image` for new images, for edits of attached, pasted, or earlier generated images, and for style changes. Generate right away, without asking the user to confirm.
 
-The prompt is used exactly as written, and the model sees nothing else: no conversation, no earlier prompts. Size and quality can't be set; the shape follows the prompt. Before every call, check the prompt against the criteria below: all of **Every prompt**, plus each section whose trigger applies.
+The prompt is used exactly as written, and the model sees nothing else: no conversation, no earlier prompts. Before every call, check the prompt against the criteria below: all of **Every prompt**, plus each section whose trigger applies.
+
+The tool's arguments show its Image generation mode. With `transparent_background`, it is Codex mode: size, quality, and model can't be set, so the shape follows the prompt. With `model`, `size`, and `quality`, it is OpenAI mode (GPT Image 2.5 Sunburst): set `size` when the user needs an exact shape or resolution, `quality` when they ask for drafts or the best rendering, and `n` when they want alternatives. Each image costs the user's API credits, so leave `n`, `quality`, and previews at their defaults unless the user asks.
 
 ## Every prompt
 
@@ -53,7 +55,13 @@ The prompt is used exactly as written, and the model sees nothing else: no conve
 References:
 - `referenced_image_paths` when every image you need has a file, including earlier generated images (use the saved path). Paths must be absolute. The image being edited goes first.
 - `num_last_images_to_include` only for images without a path. Use the smallest N. Image 1 is the oldest of the N.
-- Use one or the other, never both. Send as few references as the task needs.
+- OpenAI mode also takes `images`: `{ image_url }` (an https or data URL) or `{ file_id }`, for images that live online or in OpenAI's file store.
+- Use one source per call, never two. Send as few references as the task needs. Codex mode takes up to 5; OpenAI mode up to 16.
+
+Masks and markup (OpenAI mode):
+- `mask` limits an edit to the mask's transparent area. It needs an alpha channel and the format and size of the first reference. Name the masked region and its new content in the prompt as well.
+- `markup` is a transparent PNG with drawn instructions (arrows, circles, notes) over the first reference, at that image's size. The prompt says what the marks mean.
+- Use one or the other. Both take `{ path }`, `{ image_url }`, or `{ file_id }`.
 
 Every edit prompt:
 - **Roles first**: each image's number and role are declared before the instruction. When images are combined, say which one is the base that sets the framing. References used only for style make a new image, so describe the new subject in full.
@@ -81,9 +89,9 @@ Follow-up edits:
 
 ## Transparency
 
-- When the user asks for a transparent background, a cutout, or background removal, set `transparent_background: true` and describe an isolated subject on a fully transparent background, with no backdrop, checkerboard, or shadow. Any backdrop the prompt describes overrides the flag.
+- When the user asks for a transparent background, a cutout, or background removal, request transparency (`transparent_background: true` in Codex mode; `background: "transparent"` in OpenAI mode, with the default format, `png`, or `webp`, never `jpeg`) and describe an isolated subject on a fully transparent background, with no backdrop, checkerboard, or shadow. Any backdrop the prompt describes overrides it.
 - For charts and icons, name the regions that stay transparent.
-- On every later edit, set the flag again and ask to preserve the transparent background.
+- On every later edit, request transparency again and ask to preserve the transparent background.
 - Check the saved file's alpha channel with a local tool, including fine edges (hair, glass, shadows). A painted checkerboard or a file with no alpha channel means transparency was lost: retry and restate it.
 
 ## Review and iterate
@@ -93,10 +101,10 @@ Check the result against every requirement in the prompt: coverage, text spellin
 - Rewrite a new-image prompt as one integrated description, not the old one with a patch added. If quality is `low`, add scene-level detail (lighting, materials, setting), not more elements.
 - Fix an edit one thing per call: send the result back as image 1 with the change and the full keep list.
 - If one part regressed, send the original and the draft with roles, and say which parts to take from each.
-- For regions that must stay pixel-identical, paste them back from the original with local tools. For an exact aspect ratio, crop.
-- Tell the user about anything the tool can't deliver: vector output, exact pixel sizes, a chosen image model or version (such as GPT Image 2.5 Flare or Sunburst), an exact match to official logo artwork.
-- Don't tell the user which image model made a result. The tool doesn't report it, and the server picks the model.
+- For regions that must stay pixel-identical, paste them back from the original with local tools. For an exact aspect ratio, set `size` in OpenAI mode; in Codex mode, crop.
+- Tell the user about anything the tool can't deliver: vector output, an exact match to official logo artwork, and in Codex mode exact pixel sizes or a chosen image model or version (such as GPT Image 2.5 Flare or Sunburst).
+- Don't tell the user which image model made a result. The tool doesn't report it: in Codex mode the server picks the model, and in OpenAI mode the result only shows what was requested.
 
 ## Files
 
-Results are saved under `$TMPDIR`, which may be cleaned. When the project needs an image, copy it into the project and leave the original in place. The image is already shown to the user, so don't embed it in the reply.
+Results are saved under `$TMPDIR` as `.webp`, or as the `output_format` asked for in OpenAI mode, and `$TMPDIR` may be cleaned. When the project needs an image, copy it into the project and leave the original in place. The image is already shown to the user, so don't embed it in the reply.

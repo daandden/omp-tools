@@ -1,0 +1,1 @@
+Generate or edit images with GPT Image 2.5 Sunburst through the OpenAI Images API, billed to the user's OpenAI API organization. Any Reference image (one source: paths, recent conversation images, or images) makes the call an edit. Every final image is returned and saved.

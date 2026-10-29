@@ -1,28 +1,82 @@
-// Test fixtures for the generate_image tool: a fake extension host, Codex
-// tokens, and a minimal RGBA PNG encoder/decoder (Bun.Image exposes no
-// pixels, so alpha checks decode PNG by hand).
 import { type } from "@oh-my-pi/omptype";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI, ExtensionContext, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { deflateSync, inflateSync } from "node:zlib";
 import generateImage from "../extensions/generate-image";
 
-export function loadTool(): ToolDefinition {
+export function writePluginSettings(dir: string, settings: Record<string, unknown>): void {
+	fs.mkdirSync(path.join(dir, ".omp"), { recursive: true });
+	fs.writeFileSync(
+		path.join(dir, ".omp", "plugin-overrides.json"),
+		JSON.stringify({ settings: { "omp-tools": settings } }),
+	);
+}
+
+export interface LoadedSession {
+	/** The `generate_image` definition registered most recently. */
+	tool(): ToolDefinition;
+	/** Runs the extension's handlers for a host event, as OMP does. */
+	emit(event: string, ctx: Partial<ExtensionContext>): Promise<void>;
+}
+
+/** Loads the extension as OMP does at startup, from a project whose plugin settings are `settings`. */
+export async function loadSession(settings: Record<string, unknown>, dir: string): Promise<LoadedSession> {
+	writePluginSettings(dir, settings);
 	let registered: ToolDefinition | undefined;
+	const handlers = new Map<string, ((event: unknown, ctx: unknown) => unknown)[]>();
 	const pi = {
 		arktype: type,
 		registerTool: (definition: ToolDefinition) => {
 			registered = definition;
 		},
+		on: (event: string, handler: (event: unknown, ctx: unknown) => unknown) => {
+			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+		},
 	};
-	generateImage(pi as unknown as ExtensionAPI);
-	if (!registered) throw new Error("generate_image was not registered");
-	return registered;
+	const cwd = process.cwd();
+	process.chdir(dir);
+	try {
+		await generateImage(pi as unknown as ExtensionAPI);
+	} finally {
+		process.chdir(cwd);
+	}
+	return {
+		tool: () => {
+			if (!registered) throw new Error("generate_image was not registered");
+			return registered;
+		},
+		emit: async (event, ctx) => {
+			for (const handler of handlers.get(event) ?? []) await handler({ type: event }, ctx);
+		},
+	};
+}
+
+/** Loads generate_image as a new OMP process would, from a project whose plugin settings are `settings`. */
+export async function loadTool(
+	settings: Record<string, unknown> = { imageGenerationMode: "codex" },
+	dir?: string,
+): Promise<ToolDefinition> {
+	const project = dir ?? fs.mkdtempSync(path.join(os.tmpdir(), "generate-image-project-"));
+	try {
+		return (await loadSession(settings, project)).tool();
+	} finally {
+		if (!dir) fs.rmSync(project, { recursive: true, force: true });
+	}
+}
+
+export function argumentNames(tool: ToolDefinition): string[] {
+	const schema = (tool.parameters as unknown as { toJsonSchema(): { properties?: object } }).toJsonSchema();
+	return Object.keys(schema.properties ?? {}).sort();
 }
 
 export interface FakeContextOptions {
 	/** Credential per provider; openai-codex defaults to a valid token. */
 	credentials?: Record<string, string | undefined>;
 	branch?: unknown[];
+	openaiBaseUrl?: string;
+	openaiHeaders?: Record<string, string>;
 }
 
 export function fakeContext(options: FakeContextOptions = {}): ExtensionContext {
@@ -30,12 +84,38 @@ export function fakeContext(options: FakeContextOptions = {}): ExtensionContext 
 	return {
 		modelRegistry: {
 			getApiKeyForProvider: async (provider: string) => credentials[provider],
+			getProviderBaseUrl: (provider: string) =>
+				provider === "openai" ? ("openaiBaseUrl" in options ? options.openaiBaseUrl : "https://api.openai.com/v1") : undefined,
+			getProviderHeaders: async (provider: string) => (provider === "openai" ? options.openaiHeaders : undefined),
 		},
 		sessionManager: {
 			getSessionId: () => "session-1",
 			getBranch: () => options.branch ?? [],
 		},
 	} as unknown as ExtensionContext;
+}
+
+type Result = Pick<AgentToolResult<unknown>, "content" | "details">;
+
+export function textOf(result: Result): string {
+	return result.content
+		.flatMap(block => (block.type === "text" ? [block.text] : []))
+		.join("\n");
+}
+
+export function imagesOf(result: Result): { bytes: Buffer; mimeType: string }[] {
+	return result.content.flatMap(block =>
+		block.type === "image" ? [{ bytes: Buffer.from(block.data, "base64"), mimeType: block.mimeType }] : [],
+	);
+}
+
+export function outputPathsOf(result: Result): string[] {
+	const outputs = (result.details as { outputs?: { path: string }[] } | undefined)?.outputs ?? [];
+	return outputs.map(output => output.path);
+}
+
+export function savedImageFiles(): string[] {
+	return fs.readdirSync(os.tmpdir()).filter(name => name.startsWith("omp-image-"));
 }
 
 export function codexToken(claims: Record<string, unknown> = { chatgpt_account_id: "acct-123" }): string {
@@ -53,22 +133,24 @@ function pngChunk(kind: string, data: Uint8Array): Uint8Array {
 	return out;
 }
 
-/** RGBA PNG whose pixel (x, y) is `pixel(x, y)`. */
+/** PNG whose pixel (x, y) is `pixel(x, y)`: RGBA, or RGB with no alpha channel when `alpha` is false. */
 export function encodePng(
 	width: number,
 	height: number,
 	pixel: (x: number, y: number) => [number, number, number, number],
+	{ alpha = true }: { alpha?: boolean } = {},
 ): Uint8Array {
-	const stride = 1 + width * 4;
+	const bpp = alpha ? 4 : 3;
+	const stride = 1 + width * bpp;
 	const raw = new Uint8Array(height * stride);
 	for (let y = 0; y < height; y++) {
-		for (let x = 0; x < width; x++) raw.set(pixel(x, y), y * stride + 1 + x * 4);
+		for (let x = 0; x < width; x++) raw.set(pixel(x, y).slice(0, bpp), y * stride + 1 + x * bpp);
 	}
 	const header = new Uint8Array(13);
 	const view = new DataView(header.buffer);
 	view.setUint32(0, width);
 	view.setUint32(4, height);
-	header.set([8, 6, 0, 0, 0], 8);
+	header.set([8, alpha ? 6 : 2, 0, 0, 0], 8);
 	return Buffer.concat([
 		Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
 		pngChunk("IHDR", header),
@@ -77,8 +159,16 @@ export function encodePng(
 	]);
 }
 
-/** Alpha values of every pixel of an image, decoded through an RGBA PNG. */
-export async function alphaValues(image: Uint8Array): Promise<number[]> {
+export async function jpegWithOrientation(png: Uint8Array, orientation: number): Promise<Uint8Array> {
+	const jpeg = await new Bun.Image(png).jpeg().bytes();
+	const tiff = Buffer.from([0x4d, 0x4d, 0x00, 0x2a, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, orientation, 0, 0, 0, 0, 0, 0]);
+	const payload = Buffer.concat([Buffer.from("Exif\0\0", "latin1"), tiff]);
+	const segment = Buffer.concat([Buffer.from([0xff, 0xe1, (payload.length + 2) >> 8, (payload.length + 2) & 0xff]), payload]);
+	return Buffer.concat([jpeg.subarray(0, 2), segment, jpeg.subarray(2)]);
+}
+
+/** Every pixel of an image as RGBA, decoded by hand from a PNG, since Bun.Image exposes no pixels. */
+export async function rgbaPixels(image: Uint8Array): Promise<{ width: number; height: number; rgba: Uint8Array }> {
 	const png = await new Bun.Image(image).png().bytes();
 	const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
 	let offset = 8;
@@ -99,8 +189,8 @@ export async function alphaValues(image: Uint8Array): Promise<number[]> {
 		if (kind === "IDAT") idat.push(data);
 		offset += 12 + length;
 	}
-	if (colorType !== 6) return new Array(width * height).fill(255);
-	const bpp = 4;
+	if (colorType !== 6 && colorType !== 2) throw new Error(`fixture decoder handles RGB and RGBA PNG only (was ${colorType})`);
+	const bpp = colorType === 6 ? 4 : 3;
 	const stride = width * bpp;
 	const raw = inflateSync(Buffer.concat(idat));
 	const pixels = new Uint8Array(height * stride);
@@ -123,8 +213,20 @@ export async function alphaValues(image: Uint8Array): Promise<number[]> {
 			pixels[y * stride + i] = (value + predictor) & 0xff;
 		}
 	}
+	if (bpp === 4) return { width, height, rgba: pixels };
+	const rgba = new Uint8Array(width * height * 4);
+	for (let pixel = 0; pixel < width * height; pixel++) {
+		rgba.set(pixels.subarray(pixel * 3, pixel * 3 + 3), pixel * 4);
+		rgba[pixel * 4 + 3] = 255;
+	}
+	return { width, height, rgba };
+}
+
+/** Alpha values of every pixel of an image. */
+export async function alphaValues(image: Uint8Array): Promise<number[]> {
+	const { rgba } = await rgbaPixels(image);
 	const alpha: number[] = [];
-	for (let i = 3; i < pixels.length; i += 4) alpha.push(pixels[i] ?? 0);
+	for (let i = 3; i < rgba.length; i += 4) alpha.push(rgba[i] ?? 0);
 	return alpha;
 }
 
