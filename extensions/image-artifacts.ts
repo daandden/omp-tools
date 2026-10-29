@@ -54,12 +54,20 @@ export async function saveImages(
 			quality: image.quality,
 		},
 	}));
-	try {
-		await Promise.all(files.map(file => Bun.write(file.saved.path, file.bytes)));
+	// Every write settles before cleanup, so none lands after its file is removed. The first failure
+	// is rethrown, and a failed removal never replaces it.
+	let failure: { error: unknown } | undefined;
+	await Promise.all(
+		files.map(file =>
+			Bun.write(file.saved.path, file.bytes).catch((error: unknown) => {
+				failure ??= { error };
+			}),
+		),
+	);
+	if (failure || signal?.aborted) {
+		await Promise.allSettled(files.map(file => fs.rm(file.saved.path, { force: true })));
+		if (failure) throw failure.error;
 		throwIfAborted(signal);
-	} catch (error) {
-		await Promise.all(files.map(file => fs.rm(file.saved.path, { force: true })));
-		throw error;
 	}
 	return files.map(file => file.saved);
 }
