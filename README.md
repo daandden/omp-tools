@@ -289,9 +289,12 @@ BTW history, and autocomplete is OMP's.
   or message or stop agents. Each tool keeps its own size limits, and there is
   no cap on rounds. `read agent://<id>` reads the main session's agents, also
   one still running that has no output yet.
-- Model and context: the main agent's model, thinking level, and conversation
-  so far, copied from the live session when the thread starts, with OMP's
-  default system prompt for those five tools. A call the main agent still
+- Model and context: `/btw` and Picker btw use the `sideQuestionModel` plugin
+  setting, default `@smol`, with that role's thinking level. Each thread copies
+  the live conversation and uses OMP's default system prompt for its five tools.
+  An empty setting uses the main model. An unresolvable selector uses the main
+  model with a warning. If the history exceeds the selected model's context
+  window, the thread uses the main model instead. A call the main agent still
   waits on (a pending `ask`, or a tool still running) shows to the side
   question as still open, not as failed. The first side question in a main
   session does not reuse the main agent's prompt cache. Its follow-ups, and
@@ -302,11 +305,13 @@ BTW history, and autocomplete is OMP's.
   (`display.cacheMissMarker`), an answer whose requests had to write the
   cached prompt again shows `⊘ cache miss · N tokens` under it, in the panel
   and in the Picker btw. Like OMP's marker, it shows only for providers that
-  report cache writes (Anthropic), not for Codex.
+  report cache writes (Anthropic), not for Codex. Expectations are separate
+  for each provider and model, so a model switch is not counted as a miss.
 - Privacy: only you see the answers, and the agent never sees a side question.
   Each side question request's token usage, and that of its background calls
   such as cache warms, is recorded in the main session's usage, so the
-  session's cost includes it; no message is added.
+  session's cost includes it; no message is added. Side questions also share
+  the main session's spending cap, including background cache warms.
 - Panel: answers show in a panel above the editor, and the editor keeps focus.
   Each side question shows as your messages do in the main chat: Markdown in
   a block on the user message background (a user bubble in Tern), in the
@@ -314,18 +319,48 @@ BTW history, and autocomplete is OMP's.
   the order they happened; each group of calls folds into one "N tool calls"
   line. With the editor empty, `t` opens or folds them (a click on a line
   works in Tern), and Esc cancels a running answer or closes the panel.
+- Recovery: Side questions use OMP's configured retry and fallback chains,
+  including the selected model role's chain. Both views show retry countdowns,
+  model switches, and the final retry error. Provider transport retries happen
+  before OMP emits these events and can still leave the panel showing
+  `Answering…`. Esc cancels either kind of wait.
 - Threads: a later `/btw` follows up in the same thread, also after Esc closed
   the panel. Your next main prompt ends the thread and clears the panel when
   the agent takes it (a prompt queued while the agent works ends it then). If
   an answer is still running at that point, it finishes and shows, but takes no
   follow-up; the next `/btw` starts a new thread.
-- Images attached to `/btw` are not sent.
+- Images attached to `/btw` go with the question and remain in the thread for
+  follow-ups, as pasted images do in Picker btw.
 - Where it applies: the interactive TUI with a saved session. In a focused
-  subagent view, RPC, ACP, or print mode, `/btw` stays OMP's.
+  subagent view, RPC, ACP, or print mode, `/btw` stays OMP's. File commands with
+  `side: true` also use native `/btw`.
 
 A side question runs as a separate agent session (a copy of the main
 transcript in a temporary folder, deleted when the thread ends), so it costs
 tokens like a short agent turn.
+
+Choose the model in **Settings > Plugins > omp-tools**, or with:
+
+```sh
+omp plugin config set omp-tools sideQuestionModel '@smol'
+```
+
+The value accepts OMP model selectors such as `@smol:low` or
+`provider/model:high`. A change applies when the next thread opens, not during
+an existing thread.
+
+OMP's fallback chains can inherit the default chain and revisit an earlier
+model. If every route fails, that can keep running until Esc. Side questions
+preserve OMP's policy. To make a backup terminal, give its exact model an empty
+chain in OMP's configuration. For example:
+
+```yaml
+retry:
+  fallbackChains:
+    smol:
+      - provider/backup:low
+    provider/backup: []
+```
 
 ## Install
 

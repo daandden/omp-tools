@@ -36,6 +36,10 @@ _Avoid_: btw (unqualified), side turn, btw agent
 One **Side question** and the follow-ups asked after it, each answered with the earlier questions and answers of the thread in view. A new thread starts with none of them.
 _Avoid_: btw session, new session (for one follow-up)
 
+**Side question model**:
+The model chosen to answer every **Side question**, independently of the main conversation's model.
+_Avoid_: btw model, side model
+
 **/btw**:
 The editor command that asks a **Side question**. Typing it runs this plugin's version, not **Native /btw**. Later `/btw` questions follow up in the same **Side question thread** until the user's next main prompt ends it.
 _Avoid_: btw (unqualified)

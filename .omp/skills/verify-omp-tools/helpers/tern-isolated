@@ -38,7 +38,8 @@ sockDir() {
 iso() {
 	sockets=$(sockDir)
 	env -u TERN_PANE -u TERN_PANE_SOCKET -u TERN_WINDOW_KEY -u TERN_WINDOW_SOCKET \
-		TERN_CONFIG_DIR="$cfg" TERN_DAEMON_SOCKET="$sockets/daemon.sock" "$@"
+		-u TERN_IDENTITY -u TERN_EXE -u TERN_BLOB_DIR -u TERN_LENSES -u TERN_COMPLETE \
+		TERN_CONFIG_DIR="$cfg" TERN_DAEMON_SOCKET="$sockets/daemon.sock" SHELL=/opt/homebrew/bin/fish "$@"
 }
 
 ctl() {

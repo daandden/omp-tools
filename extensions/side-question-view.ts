@@ -14,21 +14,23 @@ import {
 	wrapTextWithAnsi,
 } from "@oh-my-pi/pi-tui";
 import { getMarkdownTheme, theme } from "@oh-my-pi/pi-tui/theme";
-import { formatNumber } from "@oh-my-pi/pi-utils";
+import { formatDuration, formatNumber } from "@oh-my-pi/pi-utils";
 import type { SideQuestionCallbacks, SideQuestionToolCall } from "./side-question";
 
-/** Text from one assistant message, or the tool calls made between two messages. */
-export type SideQuestionPart = { type: "text"; text: string } | { type: "tools"; calls: SideQuestionToolCall[] };
+export type SideQuestionPart =
+	| { type: "text"; text: string }
+	| { type: "tools"; calls: SideQuestionToolCall[] }
+	| { type: "notice"; text: string };
 
 /** One question and its answer, as the /btw panel and the Picker btw view show it. */
 export interface SideQuestionTurn {
 	question: string;
-	/** The answer's text and tool calls, in the order they happened. */
 	parts: SideQuestionPart[];
 	status: "running" | "complete" | "cancelled" | "error";
 	error?: string;
 	/** Tokens this answer's requests wrote to the cache again instead of reading them. */
 	cacheMissTokens?: number;
+	retry?: { attempt: number; maxAttempts: number; retryAt: number };
 }
 
 export function newTurn(question: string): SideQuestionTurn {
@@ -50,10 +52,18 @@ export async function answerInto(
 ): Promise<void> {
 	// A new message's text goes in a new part, so it never replaces an earlier message's text.
 	let newMessage = true;
+	let retryTimer: ReturnType<typeof setInterval> | undefined;
+	const clearRetry = () => {
+		clearInterval(retryTimer);
+		retryTimer = undefined;
+		delete turn.retry;
+	};
 	try {
 		const answer = await run({
 			onMessageStart: () => {
 				newMessage = true;
+				clearRetry();
+				changed();
 			},
 			onText: text => {
 				if (turn.status !== "running") return;
@@ -82,6 +92,35 @@ export async function answerInto(
 				turn.cacheMissTokens = (turn.cacheMissTokens ?? 0) + tokens;
 				changed();
 			},
+			onRecovery: event => {
+				if (turn.status !== "running") return;
+				switch (event.type) {
+					case "auto_retry_start":
+						clearRetry();
+						turn.retry = {
+							attempt: event.attempt,
+							maxAttempts: event.maxAttempts,
+							retryAt: Date.now() + event.delayMs,
+						};
+						retryTimer = setInterval(changed, 250);
+						retryTimer.unref();
+						break;
+					case "auto_retry_end":
+						clearRetry();
+						if (!event.success) {
+							turn.error = `Retry failed after ${event.attempt} attempts: ${event.finalError || "Unknown error"}`;
+						}
+						break;
+					case "retry_fallback_applied":
+						turn.parts.push({
+							type: "notice",
+							text: `Fallback: ${event.from} -> ${event.to}${event.reason ? `\n${event.reason}` : ""}`,
+						});
+						newMessage = true;
+						break;
+				}
+				changed();
+			},
 		});
 		if (turn.status === "running") {
 			// The final message's text shows even when the provider streamed none of it.
@@ -92,8 +131,10 @@ export async function answerInto(
 	} catch (error) {
 		if (turn.status === "running") {
 			turn.status = "error";
-			turn.error = error instanceof Error ? error.message : String(error);
+			turn.error ??= error instanceof Error ? error.message : String(error);
 		}
+	} finally {
+		clearRetry();
 	}
 	changed();
 }
@@ -130,6 +171,12 @@ function cacheMissLabel(tokens: number): string {
 	return `${icon ? `${icon} ` : ""}cache miss ${theme.sep.dot.trim()} ${formatNumber(tokens)} tokens`;
 }
 
+function runningLabel(turn: SideQuestionTurn, fallback: string): string {
+	const retry = turn.retry;
+	if (!retry) return fallback;
+	return `Retrying (${retry.attempt}/${retry.maxAttempts}) in ${formatDuration(Math.max(0, retry.retryAt - Date.now()))}…`;
+}
+
 /** Draws turns in both renderers; `runningLabel` is the line under an answer still running. */
 export class SideQuestionTurnView {
 	readonly #runningLabel: string;
@@ -153,6 +200,10 @@ export class SideQuestionTurnView {
 				if (part.text.trim()) lines.push(...this.#partMarkdown(part).render(width));
 				continue;
 			}
+			if (part.type === "notice") {
+				lines.push(...wrapTextWithAnsi(theme.fg("warning", part.text), width));
+				continue;
+			}
 			lines.push(theme.fg("dim", truncateToWidth(`${toolsOpen ? "▾" : "▸"} ${summary(part.calls)}`, width)));
 			if (toolsOpen) {
 				for (const call of part.calls) lines.push(theme.fg("dim", truncateToWidth(`  ${callLine(call)}`, width)));
@@ -162,7 +213,7 @@ export class SideQuestionTurnView {
 			const label = cacheMissLabel(turn.cacheMissTokens);
 			lines.push(truncateToWidth(`${theme.fg("dim", "─".repeat(10))} ${theme.fg("muted", label)}`, width));
 		}
-		if (turn.status === "running") lines.push(theme.fg("dim", this.#runningLabel));
+		if (turn.status === "running") lines.push(theme.fg("dim", runningLabel(turn, this.#runningLabel)));
 		else if (turn.status === "cancelled") lines.push(theme.fg("warning", "Cancelled"));
 		else if (turn.status === "error") lines.push(...wrapTextWithAnsi(theme.fg("error", errorText(turn)), width));
 		return lines;
@@ -179,6 +230,10 @@ export class SideQuestionTurnView {
 				if (part.text.trim()) {
 					children.push(md(part.text, { stream: turn.status === "running" && partIndex === lastPart }));
 				}
+				return;
+			}
+			if (part.type === "notice") {
+				children.push(text([span(part.text, "warning")], { wrap: "word" }));
 				return;
 			}
 			children.push(
@@ -201,7 +256,7 @@ export class SideQuestionTurnView {
 		});
 		if (turn.cacheMissTokens) children.push(text([span(cacheMissLabel(turn.cacheMissTokens), "muted")]));
 		if (turn.status === "running") {
-			children.push(node("spinner", { style: "dots", label: [span(this.#runningLabel, "dim")] }));
+			children.push(node("spinner", { style: "dots", label: [span(runningLabel(turn, this.#runningLabel), "dim")] }));
 		} else if (turn.status === "cancelled") {
 			children.push(text([span("Cancelled", "warning")]));
 		} else if (turn.status === "error") {

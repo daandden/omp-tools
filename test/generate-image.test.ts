@@ -16,6 +16,7 @@ interface CapturedRequest {
 let requests: CapturedRequest[];
 let respond: (request: CapturedRequest, signal: AbortSignal | undefined) => Response | Promise<Response>;
 let savedFiles: string[];
+let fetchSpy: ReturnType<typeof spyOn> | undefined;
 
 const OPAQUE_PNG = encodePng(8, 6, (x, y) => [x * 30, y * 40, 200, 255]);
 
@@ -57,7 +58,7 @@ beforeEach(() => {
 	requests = [];
 	savedFiles = [];
 	respond = () => imageResponse();
-	spyOn(globalThis, "fetch").mockImplementation((async (input: RequestInfo | URL, init?: RequestInit) => {
+	fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: RequestInfo | URL, init?: RequestInit) => {
 		const request = { url: String(input), headers: new Headers(init?.headers), body: String(init?.body) };
 		requests.push(request);
 		return respond(request, init?.signal ?? undefined);
@@ -65,6 +66,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	fetchSpy?.mockRestore();
 	for (const file of savedFiles) fs.rmSync(file, { force: true });
 });
 
