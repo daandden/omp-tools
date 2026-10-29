@@ -5,8 +5,10 @@
 `omp-tools` is an Oh My Pi (OMP) plugin. It shadows the native `ask` tool to
 drop the model-facing option count and show questions
 as full Markdown in the interactive picker; outside the TUI it delegates to
-native `ask`. It replaces native `generate_image` with a tool that calls the Codex
-Images endpoint directly with Codex OAuth. It takes
+native `ask`. It replaces native `generate_image` with a tool that has two
+Image generation modes: OpenAI mode (GPT Image 2.5 Sunburst through the public
+Images API, the default) and Codex mode (the Codex Images endpoint with Codex
+OAuth). It takes
 over `/btw <question>` with a Side question that may use read-only tools, and
 the Picker btw asks the same kind of Side question.
 
@@ -249,31 +251,60 @@ the Picker btw asks the same kind of Side question.
   `timeout`, as native timed ask does.
 - Keep native `ask` enabled. Replace legacy `omp-ask` installations rather than
   loading duplicate wrappers.
-- `generate_image` posts to `chatgpt.com/backend-api/codex/images/generations`
-  (no references) or `/edits` with Codex's exact body and headers, using the
-  `openai-codex` credential from `ctx.modelRegistry.getApiKeyForProvider`; no
-  other provider, no fallback to native. Native `generate_image` is
-  settings-gated. Eager extension registration makes native skip the taken name;
-  deferred extension registration replaces native through the host's late
-  tool-registration path. The plugin wins in either case. The schema stays
-  open because OMP's argument validator deletes unknown keys from closed
-  schemas (`pi-ai` `coerceArgsFromIssues`); `execute` rejects them instead.
-- Keep the request guards: 64 MB body cap (larger bodies get false
-  `moderation_blocked` or silently dropped references), the 0-image-token
-  dropped-references check on edits, and the 5-minute timeout combined with the
-  tool signal. The result is lossless WebP in `content` only, never
-  `details.images` (the TUI would show it twice). The Images endpoint returns
-  PNG with a signed C2PA manifest whatever `output_format` is sent (checked
-  2026-10-08), so the local re-encode drops that manifest. Only the hosted
-  `/codex/responses` image tool returns WebP (lossless, manifest kept), but it
-  puts a chat model in the loop and drew on the weekly `premium` limit rather
-  than the daily `imagegen_premium` one.
-- `details` keeps `x-codex-imagegen-request-id`, `generation_id`, and
-  `usage.output_tokens` for tracing; errors append the request id. Success text
-  warns at 80% of a limit window. The Images endpoint reports its image window
-  as `x-codex-primary-*` under `x-codex-active-limit: imagegen_premium`, so
-  limit-named headers are tried first and `x-codex-*` is the fallback;
-  zero-minute windows are skipped.
+- `generate_image` composes the selected Image generation mode
+  (`extensions/image-modes.ts`: description, schema, card facts, and `run`)
+  with the shared artifact step (`extensions/image-artifacts.ts`), so a mode is
+  an entry, not a branch. The async initializer reads `imageGenerationMode`
+  with `getPluginSettings("omp-tools", process.cwd())` (absent or null is
+  `openai`). OMP runs it once per process, so `session_switch` (`/new`,
+  `/resume`, `/fork`) reads it again from `ctx.cwd` and registers the tool
+  anew; the host refreshes a re-registered name, and a running call keeps the
+  definition it started with. An invalid value, `""` included, registers a
+  tool whose every call fails with the fix. No mode falls back to another
+  (ADR 0002).
+  Native `generate_image` is settings-gated. Eager extension registration makes
+  native skip the taken name; deferred extension registration replaces native
+  through the host's late tool-registration path. The plugin wins in either
+  case. The schema stays open because OMP's argument validator deletes unknown
+  keys from closed schemas (`pi-ai` `coerceArgsFromIssues`); `execute` rejects
+  them and checks the schema itself.
+- Final images go in `content` only, never `details.images` (the TUI would show
+  them twice); `details.outputs` lists each saved path, MIME type, size, and
+  quality. Policy `lossless-webp` re-encodes (Bun's WebP encoder drops the
+  color under alpha 0; visible pixels and alpha are kept); `as-returned` keeps
+  the provider's bytes. Streamed previews go through `onUpdate` with
+  `details.stage: "preview"` and are never saved.
+- Codex mode posts to `chatgpt.com/backend-api/codex/images/generations` (no
+  references) or `/edits` with Codex's exact body and headers, using the
+  `openai-codex` credential. Keep its request guards: 64 MB body cap (larger
+  bodies get false `moderation_blocked` or silently dropped references), the
+  0-image-token dropped-references check on edits, and the 5-minute timeout
+  combined with the tool signal. The Images endpoint returns PNG with a signed
+  C2PA manifest whatever `output_format` is sent (checked 2026-10-08), so the
+  local re-encode drops that manifest. Only the hosted `/codex/responses` image
+  tool returns WebP (lossless, manifest kept), but it puts a chat model in the
+  loop and drew on the weekly `premium` limit rather than the daily
+  `imagegen_premium` one. `details` keeps `x-codex-imagegen-request-id`,
+  `generation_id`, and `usage.output_tokens` for tracing; errors append the
+  request id. Success text warns at 80% of a limit window. The Images endpoint
+  reports its image window as `x-codex-primary-*` under `x-codex-active-limit:
+  imagegen_premium`, so limit-named headers are tried first and `x-codex-*` is
+  the fallback; zero-minute windows are skipped.
+- OpenAI mode (`extensions/openai-mode.ts`) uses the `openai` key from
+  `getApiKeyForProvider`, only for `https://api.openai.com/v1`: a different
+  `getProviderBaseUrl("openai")` (or `OPENAI_BASE_URL` when OMP reports none)
+  fails the call. `OpenAI-Organization` and `OpenAI-Project` come from
+  `getProviderHeaders("openai")`, else `OPENAI_ORG_ID` and `OPENAI_PROJECT_ID`.
+  `extensions/sunburst-images.ts` sends one JSON request (no retries), decodes
+  JSON or SSE (`*.partial_image`, `*.completed`, `error`; a stream needs `n`
+  completions), and keeps `x-request-id`. The 5-minute timeout covers the
+  stream. Omitted `output_format` requests PNG and saves lossless WebP; an
+  explicit one keeps the API's bytes. Mask and markup bytes go out unchanged;
+  local files and data URLs are checked first (`extensions/image-checks.ts`:
+  alpha from the file header, transparency from decoded pixels, sizes from
+  `Bun.Image` metadata, which applies EXIF orientation). No Codex guard
+  applies. `details.requested` holds the sent settings (never the identifiers)
+  and `details.reported` what the API reported.
 
 ## Important Files
 
@@ -341,25 +372,42 @@ the Picker btw asks the same kind of Side question.
   with upstream `packages/coding-agent/src/prompts/tools/ask.md` except the
   option count (the plugin states no number instead of 2–5).
 - `extensions/assets.d.ts`: ambient typing for the static Markdown import.
-- `extensions/generate-image.ts`: `generate_image` registration, argument
-  checks, result text, and saving to `$TMPDIR/omp-image-<id>.webp`.
-- `extensions/generate-image.md`: static model-facing tool description.
+- `extensions/generate-image.ts`: `generate_image` registration (the mode
+  setting, the invalid-setting tool), the argument check, result content, and
+  the Tern card for previews, saved images, and errors.
+- `extensions/image-modes.ts`: the `ImageMode` entry type and Codex mode.
+- `extensions/openai-mode.ts`: OpenAI mode: schema, argument rules (sizes,
+  formats, reference sources, mask and markup), access, and request body.
+- `extensions/generate-image.md`, `generate-image-openai.md`: the static
+  model-facing description of each mode.
+- `extensions/image-artifacts.ts`: saving final images by policy and the
+  model-facing saved-path text.
+- `extensions/image-codecs.ts`: format sniffing, MIME types, lossless WebP.
+- `extensions/image-checks.ts`: alpha channel, transparent pixels, and
+  oriented size, for local masks and markups.
 - `extensions/codex-images.ts`: Codex Images request body, headers (account id
   and residency from the token's JWT claims, reimplemented because
   `@oh-my-pi/pi-catalog` is not served), guards, and error text.
+- `extensions/sunburst-images.ts`: the public Images API client (JSON and SSE
+  decoding, error text, timeout, cancellation).
 - `extensions/reference-images.ts`: reference images from absolute paths or the
-  active branch (`getBranch()`, including native `details.images`); JPEG and
-  WebP unchanged, everything else lossless WebP.
+  active branch (`getBranch()`, including native `details.images`). Codex mode
+  keeps JPEG and WebP and sends the rest as lossless WebP; OpenAI mode keeps
+  PNG, JPEG, and WebP and sends the rest as PNG.
 - `skills/generate-image/SKILL.md`: the pre-send criteria for prompts and edits,
-  plus reference, transparency, and retry rules. It is generic and has no
-  examples; the cited research behind it is in
+  plus reference, mask, markup, transparency, and retry rules for each mode.
+  It is generic and has no examples; the cited research behind it is in
   `docs/research/image-prompting-*.md`, `image-prompt-criteria-*.md`,
   `image-prompt-format.md` (prose vs labeled lines vs JSON),
-  `gpt-image-2.5-*.md` (rules checked against Images 2.5; the endpoint accepts
-  any `model` with no visible effect, so rules stay model-agnostic), and
-  `codex-image-backend-model.md` (live check of which model serves; inconclusive).
-- `test/`: `bun test` behavior tests for `generate_image` through `execute`
-  with a stubbed `fetch`, for `parseBtwQuestion`, `AnswerEditor`'s host paste
+  `gpt-image-2.5-*.md` (rules checked against Images 2.5; the Codex endpoint
+  accepts any `model` with no visible effect, so rules stay model-agnostic),
+  `codex-image-backend-model.md` (live check of which model serves;
+  inconclusive), and `codex-api-credit-images.md` (the public Sunburst
+  contract and API credit billing).
+- `test/`: `bun test` behavior tests for `generate_image` in both modes through
+  `execute` (settings from a real project `.omp/plugin-overrides.json`; a
+  `mock.module` would leak into other test files) with a stubbed `fetch`,
+  including split-chunk SSE, for `parseBtwQuestion`, `AnswerEditor`'s host paste
   contract, Picker btw `numberImagesByAppearance`, the Picker draft (the slot's
   match rule, and Esc then reopen through `showMarkdownAskDialog` with a stub
   `ui.custom`), host `askDialog` through the route (picks, notes, Esc and
@@ -439,7 +487,10 @@ model selection, role thinking, retry countdowns, fallback switches, terminal
 failure and Esc in `/btw` and Picker btw; host `askDialog` picks, notes,
 Other, draft and timeout; eager and deferred tool precedence; and compiled RPC
 Side question images, five-tool restriction, privacy and shared cost gate.
-The isolated headless helper was proved from a bash launcher.
+The isolated headless helper was proved from a bash launcher. The same
+versions proved each `generate_image` mode's schema, a live Codex generation
+card, and OpenAI error cards; live OpenAI requests are unproven because no
+valid `openai` key was available.
 OMP 18.12.5 with headless Tern 0.9.5 (Tern view and
 `PI_TUI_NATIVE=0`) was used for every surface: the picker (keys, `Other`,
 notes, Submit, pointer, `ask.timeout`), the Picker btw (also during an `ask`

@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { USER_AGENT } from "@oh-my-pi/pi-utils";
-import { alphaValues, codexToken, encodePng, fakeContext, isLosslessWebp, loadTool } from "./support";
+import { alphaValues, codexToken, encodePng, fakeContext, isLosslessWebp, loadTool, outputPathsOf, textOf } from "./support";
 
 const GENERATIONS_URL = "https://chatgpt.com/backend-api/codex/images/generations";
 
@@ -40,18 +40,17 @@ function imageResponse(
 	);
 }
 
-function textOf(result: { content: { type: string; text?: string }[] }): string {
-	return result.content
-		.filter(block => block.type === "text")
-		.map(block => block.text)
-		.join("\n");
+function savedPathsOf(result: Parameters<typeof outputPathsOf>[0]): string[] {
+	const paths = outputPathsOf(result);
+	savedFiles.push(...paths);
+	for (const saved of paths) expect(textOf(result)).toContain(saved);
+	return paths;
 }
 
-function savedPathOf(result: { content: { type: string; text?: string }[] }): string {
-	const match = / as (\S+\.webp) by default/.exec(textOf(result));
-	if (!match?.[1]) throw new Error(`no saved path in: ${textOf(result)}`);
-	savedFiles.push(match[1]);
-	return match[1];
+function savedPathOf(result: Parameters<typeof outputPathsOf>[0]): string {
+	const [only, ...rest] = savedPathsOf(result);
+	if (!only || rest.length > 0) throw new Error(`expected one saved image in: ${textOf(result)}`);
+	return only;
 }
 
 beforeEach(() => {
@@ -72,7 +71,7 @@ afterEach(() => {
 
 describe("generate", () => {
 	test("posts Codex's generation body and headers and returns a lossless WebP with the hint", async () => {
-		const tool = loadTool();
+		const tool = await loadTool();
 		const token = codexToken({ chatgpt_account_id: "acct-123", chatgpt_data_residency: " us " });
 
 		const result = await tool.execute(
@@ -109,14 +108,12 @@ describe("generate", () => {
 		expect(path.dirname(saved)).toBe(os.tmpdir());
 		expect(path.basename(saved)).toMatch(/^omp-image-.+\.webp$/);
 		expect(Buffer.from(await Bun.file(saved).bytes()).toString("base64")).toBe(image.data);
-		expect(textOf(result)).toBe(
-			`Generated images are saved to ${os.tmpdir()} as ${saved} by default. If you need to use a generated image at another path, copy it and leave the original in place unless the user explicitly asks you to delete it. The generated image is already displayed to the user. There is no need to render it in the final response as a Markdown image or file link.\n1370x1148, quality low`,
-		);
+		expect(textOf(result)).toContain("1370x1148, quality low");
 		expect((result.details as { images?: unknown } | undefined)?.images).toBeUndefined();
 	});
 
 	test("omits account and residency headers for a malformed token", async () => {
-		const tool = loadTool();
+		const tool = await loadTool();
 
 		await tool.execute("call-1", { prompt: "x" }, undefined, undefined, fakeContext({ credentials: { "openai-codex": "not-a-jwt" } }));
 
@@ -129,7 +126,7 @@ describe("generate", () => {
 
 describe("arguments", () => {
 	test("rejects unknown arguments before any request", async () => {
-		const tool = loadTool();
+		const tool = await loadTool();
 
 		const call = tool.execute("c", { prompt: "x", size: "1024x1024" }, undefined, undefined, fakeContext());
 
@@ -138,7 +135,7 @@ describe("arguments", () => {
 	});
 
 	test("rejects referenced_image_paths combined with num_last_images_to_include", async () => {
-		const tool = loadTool();
+		const tool = await loadTool();
 		const params = { prompt: "x", referenced_image_paths: ["/tmp/a.png"], num_last_images_to_include: 1 };
 
 		await expect(tool.execute("c", params, undefined, undefined, fakeContext())).rejects.toThrow(
@@ -148,7 +145,7 @@ describe("arguments", () => {
 	});
 
 	test("rejects relative reference paths", async () => {
-		const tool = loadTool();
+		const tool = await loadTool();
 		const params = { prompt: "x", referenced_image_paths: ["images/a.png"] };
 
 		await expect(tool.execute("c", params, undefined, undefined, fakeContext())).rejects.toThrow(
@@ -167,7 +164,7 @@ describe("edit via referenced_image_paths", () => {
 	});
 
 	test("sends PNG as lossless WebP and JPEG and lossy WebP byte-identical to /images/edits", async () => {
-		const tool = loadTool();
+		const tool = await loadTool();
 		const png = encodePng(5, 3, () => [10, 200, 30, 255]);
 		const jpeg = await new Bun.Image(png).jpeg().bytes();
 		const lossyWebp = await new Bun.Image(png).webp({ quality: 70 }).bytes();
@@ -199,7 +196,7 @@ describe("edit via referenced_image_paths", () => {
 	});
 
 	test("reports a missing reference file", async () => {
-		const tool = loadTool();
+		const tool = await loadTool();
 		const missing = path.join(dir, "missing.png");
 
 		await expect(
@@ -240,7 +237,7 @@ describe("edit via num_last_images_to_include", () => {
 
 	async function sentImages(count: number): Promise<{ url: string; width: number }[]> {
 		respond = () => imageResponse({ usage: { input_tokens_details: { image_tokens: 500 } } });
-		const result = await loadTool().execute(
+		const result = await (await loadTool()).execute(
 			"c",
 			{ prompt: "combine", num_last_images_to_include: count },
 			undefined,
@@ -273,7 +270,7 @@ describe("edit via num_last_images_to_include", () => {
 	});
 
 	test("errors when the conversation has fewer images than requested", async () => {
-		const call = loadTool().execute("c", { prompt: "x", num_last_images_to_include: 5 }, undefined, undefined, fakeContext({ branch }));
+		const call = (await loadTool()).execute("c", { prompt: "x", num_last_images_to_include: 5 }, undefined, undefined, fakeContext({ branch }));
 
 		await expect(call).rejects.toThrow("num_last_images_to_include is 5, but the conversation has only 4 images.");
 		expect(requests).toHaveLength(0);
@@ -296,7 +293,7 @@ describe("guards", () => {
 		bytes.set([0xff, 0xd8, 0xff]);
 		await Bun.write(big, bytes);
 
-		const call = loadTool().execute("c", { prompt: "x", referenced_image_paths: [big] }, undefined, undefined, fakeContext());
+		const call = (await loadTool()).execute("c", { prompt: "x", referenced_image_paths: [big] }, undefined, undefined, fakeContext());
 
 		await expect(call).rejects.toThrow("over the 64.0 MB limit");
 		expect(requests).toHaveLength(0);
@@ -308,7 +305,7 @@ describe("guards", () => {
 		const savedBefore = fs.readdirSync(os.tmpdir()).filter(name => name.startsWith("omp-image-"));
 		respond = () => imageResponse({ usage: { input_tokens_details: { image_tokens: 0, text_tokens: 12 } } });
 
-		const call = loadTool().execute("c", { prompt: "x", referenced_image_paths: [reference] }, undefined, undefined, fakeContext());
+		const call = (await loadTool()).execute("c", { prompt: "x", referenced_image_paths: [reference] }, undefined, undefined, fakeContext());
 
 		await expect(call).rejects.toThrow("dropped the reference images");
 		const savedAfter = fs.readdirSync(os.tmpdir()).filter(name => name.startsWith("omp-image-"));
@@ -323,7 +320,7 @@ describe("guards", () => {
 				controller.abort();
 			});
 
-		const call = loadTool().execute("c", { prompt: "x" }, controller.signal, undefined, fakeContext());
+		const call = (await loadTool()).execute("c", { prompt: "x" }, controller.signal, undefined, fakeContext());
 
 		await expect(call).rejects.toMatchObject({ name: "ToolAbortError" });
 	});
@@ -333,7 +330,7 @@ describe("errors", () => {
 	test("asks for an openai-codex login and never falls back to another provider", async () => {
 		const context = fakeContext({ credentials: { "openai-codex": undefined, openai: "sk-test" } });
 
-		const call = loadTool().execute("c", { prompt: "x" }, undefined, undefined, context);
+		const call = (await loadTool()).execute("c", { prompt: "x" }, undefined, undefined, context);
 
 		await expect(call).rejects.toThrow("Log in to openai-codex with /login");
 		expect(requests).toHaveLength(0);
@@ -347,7 +344,7 @@ describe("errors", () => {
 				headers: { "x-codex-active-limit": "image_gen", "x-codex-primary-reset-after-seconds": "7980" },
 			});
 
-		const call = loadTool().execute("c", { prompt: "x" }, undefined, undefined, fakeContext());
+		const call = (await loadTool()).execute("c", { prompt: "x" }, undefined, undefined, fakeContext());
 
 		const error = (await call.catch(caught => caught)) as Error;
 		expect(error.message).toStartWith("Codex usage limit reached (limit: image_gen, plan: plus). It resets at ");
@@ -362,7 +359,7 @@ describe("errors", () => {
 				{ status: 429, headers: { "x-codex-active-limit": "codex", "x-codex-primary-reset-at": String(resetAt) } },
 			);
 
-		const error = (await loadTool()
+		const error = (await (await loadTool())
 			.execute("c", { prompt: "x" }, undefined, undefined, fakeContext())
 			.catch(caught => caught)) as Error;
 
@@ -383,7 +380,7 @@ describe("errors", () => {
 				},
 			);
 
-		const error = (await loadTool()
+		const error = (await (await loadTool())
 			.execute("c", { prompt: "x" }, undefined, undefined, fakeContext())
 			.catch(caught => caught)) as Error;
 
@@ -393,7 +390,7 @@ describe("errors", () => {
 	test("reports status, message and code for other HTTP errors", async () => {
 		respond = () => Response.json({ error: { message: "upstream exploded", code: "server_error" } }, { status: 502 });
 
-		const call = loadTool().execute("c", { prompt: "x" }, undefined, undefined, fakeContext());
+		const call = (await loadTool()).execute("c", { prompt: "x" }, undefined, undefined, fakeContext());
 
 		await expect(call).rejects.toThrow("Codex Images endpoint returned HTTP 502: upstream exploded (code: server_error)");
 	});
@@ -403,7 +400,7 @@ describe("errors", () => {
 		respond = () =>
 			Response.json({ error: { message, code: "moderation_blocked", type: "image_generation_user_error" } }, { status: 400 });
 
-		const error = (await loadTool()
+		const error = (await (await loadTool())
 			.execute("c", { prompt: "x" }, undefined, undefined, fakeContext())
 			.catch(caught => caught)) as Error;
 
@@ -416,7 +413,7 @@ describe("transparency", () => {
 		respond = () =>
 			imageResponse({ background: "transparent" }, encodePng(6, 4, x => [255, 0, 0, x === 0 ? 0 : 128]));
 
-		const result = await loadTool().execute(
+		const result = await (await loadTool()).execute(
 			"c",
 			{ prompt: "a sticker", transparent_background: true },
 			undefined,
@@ -451,7 +448,7 @@ describe("tracing and quota", () => {
 				{ "x-codex-imagegen-request-id": "req-1" },
 			);
 
-		const result = await loadTool().execute("c", { prompt: "x" }, undefined, undefined, fakeContext());
+		const result = await (await loadTool()).execute("c", { prompt: "x" }, undefined, undefined, fakeContext());
 		savedPathOf(result);
 
 		expect(result.details).toMatchObject({ requestId: "req-1", generationId: "gen-1", outputTokens: 515 });
@@ -465,7 +462,7 @@ describe("tracing and quota", () => {
 				{ status: 502, headers: { "x-codex-imagegen-request-id": "req-2" } },
 			);
 
-		const call = loadTool().execute("c", { prompt: "x" }, undefined, undefined, fakeContext());
+		const call = (await loadTool()).execute("c", { prompt: "x" }, undefined, undefined, fakeContext());
 
 		await expect(call).rejects.toThrow("Codex Images endpoint returned HTTP 502: upstream exploded (request id: req-2)");
 	});
@@ -473,7 +470,7 @@ describe("tracing and quota", () => {
 	test("warns once the image window is 80% used, ignoring zero-length windows", async () => {
 		respond = () => imageResponse({}, OPAQUE_PNG, { ...IMAGE_LIMIT, "x-codex-primary-used-percent": "80" });
 
-		const result = await loadTool().execute("c", { prompt: "x" }, undefined, undefined, fakeContext());
+		const result = await (await loadTool()).execute("c", { prompt: "x" }, undefined, undefined, fakeContext());
 		savedPathOf(result);
 
 		const lines = textOf(result).split("\n");
@@ -485,7 +482,7 @@ describe("tracing and quota", () => {
 	test("adds no warning below 80%", async () => {
 		respond = () => imageResponse({}, OPAQUE_PNG, { ...IMAGE_LIMIT, "x-codex-primary-used-percent": "79" });
 
-		const result = await loadTool().execute("c", { prompt: "x" }, undefined, undefined, fakeContext());
+		const result = await (await loadTool()).execute("c", { prompt: "x" }, undefined, undefined, fakeContext());
 		savedPathOf(result);
 
 		expect(textOf(result)).not.toContain("usage limit");

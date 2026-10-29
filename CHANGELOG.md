@@ -4,6 +4,23 @@
 
 ### Added
 
+- `generate_image` has two Image generation modes, set by the new plugin
+  setting `imageGenerationMode`. `openai`, the default, uses GPT Image 2.5
+  Sunburst through the public OpenAI Images API with the `openai` API key,
+  billed to that API organization: OpenAI spends Promotional API credits
+  first and then purchased credits, with no free-only guarantee. `codex` keeps
+  the earlier Codex Images behavior and arguments. Installations without the
+  setting move to OpenAI mode; run
+  `omp plugin config set omp-tools imageGenerationMode codex` to keep Codex.
+  The mode applies to new sessions, and a failure never switches modes.
+- OpenAI mode supports every Sunburst control: the pinned snapshot model, `n`
+  up to 10 (every image is saved and shown), `quality` up to `max`, standard
+  and custom sizes, `background`, `output_format` and `output_compression`
+  (explicit formats keep the API's bytes; the default is a local lossless
+  WebP), `moderation`, `safety_identifier` and `user`, streamed previews with
+  `partial_images`, up to 16 Reference images from paths, recent conversation
+  images, URLs, or file ids, and `mask` or `markup` edits.
+
 - Added `sideQuestionModel` to the plugin settings, default `@smol`, for both
   `/btw` and Picker btw. It honors the role's thinking level and fallback chain.
   An unavailable selector uses the main model with a warning; a history that

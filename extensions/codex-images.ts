@@ -5,6 +5,7 @@
 // docs/research/codex-images-endpoint.md and issue #11.
 import { ToolAbortError } from "@oh-my-pi/pi-coding-agent/tools/tool-errors";
 import { USER_AGENT } from "@oh-my-pi/pi-utils";
+import type { FinalImage } from "./image-artifacts";
 
 const IMAGES_URL = "https://chatgpt.com/backend-api/codex/images";
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";
@@ -25,12 +26,9 @@ export interface ImageRequest {
 	references: string[];
 }
 
-export interface GeneratedImage {
-	/** Decoded image bytes as returned (always PNG in practice). */
-	bytes: Uint8Array;
-	/** Backend-reported size and quality, e.g. `1370x1148` and `low`. */
-	size?: string;
-	quality?: string;
+/** One Codex Images response: its image (PNG in practice) and what the endpoint reported. */
+export interface CodexImages {
+	images: FinalImage[];
 	/** `x-codex-imagegen-request-id`: the id OpenAI can trace the request by. */
 	requestId?: string;
 	generationId?: string;
@@ -189,12 +187,12 @@ function httpErrorMessage(response: Response, text: string): string {
 	return `Codex Images endpoint returned HTTP ${response.status}: ${detail}${code}`;
 }
 
-export async function requestImage(
+export async function requestCodexImages(
 	request: ImageRequest,
 	accessToken: string,
 	turnId: string,
 	signal: AbortSignal | undefined,
-): Promise<GeneratedImage> {
+): Promise<CodexImages> {
 	const body = requestBody(request);
 	const bodyBytes = Buffer.byteLength(body);
 	if (bodyBytes > MAX_BODY_BYTES) {
@@ -243,9 +241,7 @@ export async function requestImage(
 		);
 	}
 	return {
-		bytes: Buffer.from(image.b64_json, "base64"),
-		size: payload.size,
-		quality: payload.quality,
+		images: [{ bytes: Buffer.from(image.b64_json, "base64"), size: payload.size, quality: payload.quality }],
 		requestId: requestId ?? undefined,
 		generationId: image.generation_id,
 		outputTokens: payload.usage?.output_tokens,

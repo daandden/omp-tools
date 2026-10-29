@@ -56,6 +56,26 @@ _Avoid_: btw (unqualified), our /btw, custom /btw
 This plugin's image tool. It replaces native `generate_image`, which the user disables.
 _Avoid_: custom image tool, image wrapper
 
+**Image generation mode**:
+The choice of image service and billing source for **generate_image**. The two modes are **Codex mode** and **OpenAI mode**.
+_Avoid_: image provider (unqualified), image backend (for the mode)
+
+**Codex mode**:
+The **Image generation mode** that uses a signed-in ChatGPT account's Codex image allowance through **Codex OAuth**.
+_Avoid_: free mode, API-credit mode
+
+**OpenAI mode**:
+The **Image generation mode** that uses GPT Image 2.5 Sunburst through the public OpenAI Images API, billed to an API organization.
+_Avoid_: Codex API mode, free mode
+
+**OpenAI API credits**:
+The value in an API organization used to pay for API requests, including promotional grants and purchased credits. This balance is separate from signed-in Codex usage allowances.
+_Avoid_: Codex credits, ChatGPT usage credits
+
+**Promotional API credits**:
+The free subscription-linked grant within **OpenAI API credits**, which expires at the end of its subscription billing cycle.
+_Avoid_: free Codex credits, purchased API credits
+
 **Codex Images endpoint**:
 The ChatGPT-login image backend the official Codex CLI calls: `/backend-api/codex/images/generations` and `/backend-api/codex/images/edits`.
 _Avoid_: codex-us image generation, Codex image API

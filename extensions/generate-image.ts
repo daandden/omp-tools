@@ -1,53 +1,59 @@
-// generate_image: replaces native `generate_image` with a direct call to the
-// Codex Images endpoint, the way the official Codex CLI does. Codex OAuth only
-// (`openai-codex` login), no system instructions, and Codex's exact arguments.
-//
 // This registration wins whether loaded before native tools or deferred until
 // after startup. Deferred extension tools replace the same-name native tool.
 //
 // OMP's argument validator deletes unknown keys from closed schemas before
 // `execute` runs, so the schema stays open and `execute` rejects them itself.
-import * as os from "node:os";
-import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { AgentToolResult, ExtensionAPI, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
+import { getPluginSettings } from "@oh-my-pi/pi-coding-agent/extensibility/plugins/loader";
 import { type NativeChild, node, span, text } from "@oh-my-pi/pi-tui";
 import type { NativeToolHead, NativeToolView } from "@oh-my-pi/pi-tui/tools/renderer";
-import { Snowflake } from "@oh-my-pi/pi-utils";
-import { requestImage } from "./codex-images";
-import description from "./generate-image.md" with { type: "text" };
-import { referencesFromConversation, referencesFromPaths, toLosslessWebp } from "./reference-images";
+import { saveImages, savedImagesText } from "./image-artifacts";
+import { codexMode, type ImageMode, type ImageModeId, type PreviewDetails } from "./image-modes";
+import { openaiMode } from "./openai-mode";
 
-const ARGUMENTS = ["prompt", "transparent_background", "referenced_image_paths", "num_last_images_to_include"];
+interface OutputDetails {
+	path: string;
+	mimeType: string;
+	size?: string;
+	quality?: string;
+}
 
-interface GenerateImageDetails {
+type FinalDetails<D> = { mode: ImageModeId; outputs: OutputDetails[] } & D;
+
+type GenerateImageDetails<D> = FinalDetails<D> | PreviewDetails;
+
+function isPreview<D>(details: GenerateImageDetails<D>): details is PreviewDetails {
+	return "stage" in details && details.stage === "preview";
+}
+
+/** A Codex result saved before Image generation modes, as session files still hold it. */
+interface LegacyDetails {
 	path: string;
 	size?: string;
 	quality?: string;
-	/** The near-limit warning appended to the result text, for the Tern card. */
 	quotaWarning?: string;
-	/** For tracing a result with OpenAI; not shown to the model. */
-	requestId?: string;
-	generationId?: string;
-	outputTokens?: number;
 }
 
-interface GenerateImageArgs {
-	prompt?: string;
-	transparent_background?: boolean;
-	referenced_image_paths?: string[];
-	num_last_images_to_include?: number;
+function cardContent<D>(mode: ImageMode<D>, details: FinalDetails<D>): { outputs: OutputDetails[]; warnings: string[] } {
+	if (Array.isArray(details.outputs)) return { outputs: details.outputs, warnings: mode.cardWarnings(details) };
+	const legacy = details as unknown as LegacyDetails;
+	return {
+		outputs: [{ path: legacy.path, mimeType: "image/webp", size: legacy.size, quality: legacy.quality }],
+		warnings: legacy.quotaWarning ? [legacy.quotaWarning] : [],
+	};
 }
 
-/** The Tern card head: the prompt's first line, then reference and output facts. */
-function imageHead(args: GenerateImageArgs, details?: GenerateImageDetails): NativeToolHead {
+function imageHead<D>(mode: ImageMode<D>, args: Record<string, unknown>, outputs: OutputDetails[] = []): NativeToolHead {
 	const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
-	const meta: string[] = [];
-	const references = args.referenced_image_paths?.length ?? args.num_last_images_to_include;
-	if (references) meta.push(`${references} reference${references === 1 ? "" : "s"}`);
-	if (args.transparent_background) meta.push("transparent");
-	if (details?.size) meta.push(details.size);
-	if (details?.quality) meta.push(`quality ${details.quality}`);
+	const meta = mode.callFacts(args);
+	const [only] = outputs;
+	if (outputs.length === 1 && only) {
+		if (only.size) meta.push(only.size);
+		if (only.quality) meta.push(`quality ${only.quality}`);
+	} else if (outputs.length > 1) {
+		meta.push(`${outputs.length} images`);
+	}
 	return {
 		title: "Generate image",
 		target: prompt.split("\n", 1)[0] || undefined,
@@ -56,137 +62,108 @@ function imageHead(args: GenerateImageArgs, details?: GenerateImageDetails): Nat
 	};
 }
 
-/** The whole prompt, folded, when the head's one line is unlikely to show it all. */
-function promptSection(args: GenerateImageArgs): NativeChild[] {
+function promptSection(args: Record<string, unknown>): NativeChild[] {
 	const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
 	if (!prompt.includes("\n") && prompt.length <= 100) return [];
 	return [node("section", { head: "Prompt", collapsible: true, collapsed: true }, [text(prompt, { wrap: "word" })], "prompt")];
 }
 
-/**
- * The Tern card once the call ends: the saved file (click opens it), the
- * near-limit warning, the folded prompt, then the image, which the host
- * appends from `content`. Open from the start so the image shows.
- */
-function describeImageResult(
-	result: AgentToolResult<GenerateImageDetails>,
-	args: GenerateImageArgs,
+function savedLine(output: OutputDetails, label: string, facts: boolean): NativeChild {
+	const extra = facts ? [output.size, output.quality && `quality ${output.quality}`].filter(Boolean).join(", ") : "";
+	return text(
+		[
+			span(label, "dim"),
+			span(output.path, "path", { href: pathToFileURL(output.path).href }),
+			...(extra ? [span(` · ${extra}`, "dim")] : []),
+		],
+		{ wrap: "char" },
+	);
+}
+
+function describeImageResult<D>(
+	mode: ImageMode<D>,
+	result: AgentToolResult<GenerateImageDetails<D>>,
+	args: Record<string, unknown>,
 ): NativeToolView {
 	const details = result.details;
+	if (details && isPreview(details)) {
+		const label = `Preview ${details.previews}, in progress (not a final image)`;
+		return { tool: imageHead(mode, args), body: [text([span(label, "dim")]), ...promptSection(args)], open: true };
+	}
 	if (result.isError || !details) {
 		const message = result.content.flatMap(block => (block.type === "text" ? [block.text] : [])).join("\n").trim();
 		return {
-			tool: imageHead(args),
+			tool: imageHead(mode, args),
 			tone: "error",
 			body: message ? [text([span(message, "error")], { wrap: "word" })] : undefined,
 		};
 	}
-	const body: NativeChild[] = [
-		text([span("Saved to ", "dim"), span(details.path, "path", { href: pathToFileURL(details.path).href })], {
-			wrap: "char",
-		}),
-	];
-	if (details.quotaWarning) body.push(text([span(details.quotaWarning, "warning")], { wrap: "word" }));
-	body.push(...promptSection(args));
-	return { tool: imageHead(args, details), body, open: true };
-}
-
-const resultViews = new WeakMap<GenerateImageDetails, NativeToolView>();
-
-function savedImageHint(dir: string, file: string): string {
-	return (
-		`Generated images are saved to ${dir} as ${file} by default. If you need to use a generated image at another ` +
-		"path, copy it and leave the original in place unless the user explicitly asks you to delete it. The generated " +
-		"image is already displayed to the user. There is no need to render it in the final response as a Markdown " +
-		"image or file link."
+	const { outputs, warnings } = cardContent(mode, details);
+	const many = outputs.length > 1;
+	const body: NativeChild[] = outputs.map((output, index) =>
+		savedLine(output, many ? `${index + 1}. Saved to ` : "Saved to ", many),
 	);
+	for (const warning of warnings) body.push(text([span(warning, "warning")], { wrap: "word" }));
+	body.push(...promptSection(args));
+	return { tool: imageHead(mode, args, outputs), body, open: true };
 }
 
-export default function generateImage(pi: ExtensionAPI) {
-	const type = pi.arktype;
-	const parameters = type({
-		prompt: type("string").describe("Image or edit description."),
-		"transparent_background?": type("boolean").describe("Transparent output."),
-		"referenced_image_paths?": type("string[]").describe("Absolute image paths, max 5."),
-		"num_last_images_to_include?": type("1 <= number.integer <= 5").describe(
-			"Last N conversation images, 1–5; not with paths.",
-		),
-	});
+function argumentNames(mode: ImageMode<unknown>): string[] {
+	const schema = mode.parameters.toJsonSchema() as { properties?: Record<string, unknown> };
+	return Object.keys(schema.properties ?? {});
+}
 
-	const definition: ToolDefinition<typeof parameters, GenerateImageDetails> = {
+function registerImageTool<D extends object>(pi: ExtensionAPI, mode: ImageMode<D>) {
+	const names = argumentNames(mode);
+	const resultViews = new WeakMap<object, NativeToolView>();
+	const definition: ToolDefinition<ImageMode<D>["parameters"], GenerateImageDetails<D>> = {
 		name: "generate_image",
 		label: "GenerateImage",
-		description: description.trimEnd(),
-		parameters,
+		description: mode.description,
+		parameters: mode.parameters,
 		approval: "write",
-		describeCall: args => ({ tool: imageHead(args), body: promptSection(args) }),
+		describeCall: args => ({ tool: imageHead(mode, args ?? {}), body: promptSection(args ?? {}) }),
 		describeResult: (result, _options, args) => {
-			// Keyed by `details` (one object per result) so an unchanged card keeps its nodes.
 			const cached = result.details && resultViews.get(result.details);
 			if (cached) return cached;
-			const view = describeImageResult(result, args ?? {});
+			const view = describeImageResult(mode, result, args ?? {});
 			if (result.details) resultViews.set(result.details, view);
 			return view;
 		},
-		async execute(toolCallId, params, signal, _onUpdate, ctx) {
-			const unknown = Object.keys(params).filter(key => !ARGUMENTS.includes(key));
+		async execute(toolCallId, params: Record<string, unknown>, signal, onUpdate, ctx) {
+			const unknown = Object.keys(params).filter(key => !names.includes(key));
 			if (unknown.length > 0) {
-				throw new Error(`Unknown argument(s): ${unknown.join(", ")}. generate_image accepts only ${ARGUMENTS.join(", ")}.`);
+				throw new Error(`Unknown argument(s): ${unknown.join(", ")}. generate_image accepts only ${names.join(", ")}.`);
 			}
-			const paths = params.referenced_image_paths;
-			const count = params.num_last_images_to_include;
-			if (paths !== undefined && count !== undefined) {
-				throw new Error("referenced_image_paths and num_last_images_to_include cannot be used together.");
-			}
-			const relative = paths?.filter(imagePath => !path.isAbsolute(imagePath)) ?? [];
-			if (relative.length > 0) {
-				throw new Error(`referenced_image_paths must be absolute: ${relative.join(", ")}`);
-			}
+			const checked = mode.parameters(params);
+			if (checked instanceof pi.arktype.errors) throw new Error(`Invalid generate_image arguments: ${checked.summary}`);
 
-			const accessToken = await ctx.modelRegistry.getApiKeyForProvider(
-				"openai-codex",
-				ctx.sessionManager.getSessionId(),
-				{ signal },
-			);
-			if (!accessToken) {
-				throw new Error(
-					"generate_image needs a ChatGPT/Codex login. Log in to openai-codex with /login, then retry.",
-				);
-			}
-
-			const references = paths
-				? await referencesFromPaths(paths)
-				: count
-					? await referencesFromConversation(ctx.sessionManager.getBranch(), count)
-					: [];
-			const generated = await requestImage(
-				{ prompt: params.prompt, transparent: params.transparent_background ?? false, references },
-				accessToken,
+			const run = await mode.run({
 				toolCallId,
+				params,
 				signal,
-			);
-
-			const webp = await toLosslessWebp(generated.bytes);
-			const dir = os.tmpdir();
-			const file = path.join(dir, `omp-image-${Snowflake.next()}.webp`);
-			await Bun.write(file, webp);
-			const reported = [generated.size, generated.quality && `quality ${generated.quality}`].filter(Boolean);
-			const lines = [savedImageHint(dir, file)];
-			if (reported.length > 0) lines.push(reported.join(", "));
-			if (generated.quotaWarning) lines.push(generated.quotaWarning);
+				ctx,
+				onPreview: onUpdate
+					? ({ preview, count }) =>
+							onUpdate({
+								content: [
+									{ type: "image", data: preview.data, mimeType: preview.mimeType },
+									{ type: "text", text: `Preview ${count}, in progress. This is not a final image.` },
+								],
+								details: { stage: "preview", mode: mode.id, previews: count },
+							})
+					: undefined,
+			});
+			const saved = await saveImages(run.images, run.policy, signal);
 			return {
 				content: [
-					{ type: "image", data: Buffer.from(webp).toString("base64"), mimeType: "image/webp" },
-					{ type: "text", text: lines.join("\n") },
+					...saved.map(image => ({ type: "image" as const, data: image.base64, mimeType: image.mimeType })),
+					{ type: "text", text: [...savedImagesText(saved), ...run.notes].join("\n") },
 				],
 				details: {
-					path: file,
-					size: generated.size,
-					quality: generated.quality,
-					quotaWarning: generated.quotaWarning,
-					requestId: generated.requestId,
-					generationId: generated.generationId,
-					outputTokens: generated.outputTokens,
+					mode: mode.id,
+					outputs: saved.map(({ path, mimeType, size, quality }) => ({ path, mimeType, size, quality })),
+					...run.details,
 				},
 			};
 		},
@@ -194,4 +171,53 @@ export default function generateImage(pi: ExtensionAPI) {
 	// The result view replaces the call view (the host's `mergeCallAndResult`,
 	// forwarded from the definition like `concurrency` in flexible-ask.ts).
 	pi.registerTool(Object.assign(definition, { mergeCallAndResult: true }));
+}
+
+const MODE_VALUES: readonly ImageModeId[] = ["openai", "codex"];
+
+function selectedMode(value: unknown): ImageModeId | { invalid: string } {
+	if (value === undefined || value === null) return "openai";
+	return MODE_VALUES.find(mode => mode === value) ?? { invalid: JSON.stringify(value) };
+}
+
+function registerConfigurationError(pi: ExtensionAPI, message: string) {
+	const parameters = pi.arktype({ prompt: pi.arktype("string").describe("Image or edit description.") });
+	const definition: ToolDefinition<typeof parameters> = {
+		name: "generate_image",
+		label: "GenerateImage",
+		description: `Not available: ${message}`,
+		parameters,
+		approval: "write",
+		async execute() {
+			throw new Error(message);
+		},
+	};
+	pi.registerTool(definition);
+}
+
+async function registerConfiguredTool(pi: ExtensionAPI, cwd: string): Promise<void> {
+	const settings = await getPluginSettings("omp-tools", cwd);
+	const mode = selectedMode(settings.imageGenerationMode);
+	if (typeof mode === "object") {
+		registerConfigurationError(
+			pi,
+			`The omp-tools setting imageGenerationMode is ${mode.invalid}, but it must be "openai" or "codex". Set it ` +
+				"with `omp plugin config set omp-tools imageGenerationMode openai` (or codex), then start a new session.",
+		);
+		return;
+	}
+	if (mode === "codex") registerImageTool(pi, codexMode(pi.arktype));
+	else registerImageTool(pi, openaiMode(pi.arktype));
+}
+
+/**
+ * OMP runs this initializer once per process, so each new session (`/new`,
+ * resume, fork) reads the setting again and registers the tool anew. A call
+ * already running keeps the definition it started with.
+ */
+export default async function generateImage(pi: ExtensionAPI) {
+	await registerConfiguredTool(pi, process.cwd());
+	pi.on("session_switch", async (_event, ctx) => {
+		await registerConfiguredTool(pi, ctx.cwd);
+	});
 }

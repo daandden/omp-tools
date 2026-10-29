@@ -1,7 +1,8 @@
 # omp-tools
 
-Local OMP adapters: flexible questions, Codex Images `generate_image`, and
-read-only side questions (`/btw` and the Picker btw).
+Local OMP adapters: flexible questions, `generate_image` with OpenAI
+(GPT Image 2.5 Sunburst) and Codex modes, and read-only side questions (`/btw`
+and the Picker btw).
 Formerly `omp-ask`.
 
 ## `ask`
@@ -201,16 +202,103 @@ and its answers with a check on each pick, plus the Submit note.
 
 ## `generate_image`
 
-Replaces native `generate_image`. It calls the Codex Images endpoint
-(`chatgpt.com/backend-api/codex/images/generations` and `/edits`) directly, the
-way the official Codex CLI does, instead of the Responses image tool. There, a
-chat model rewrites your prompt and the model only gets text back. Here, the
-prompt goes to the image backend unchanged with no system instructions, and the
-model sees the generated image.
+Replaces native `generate_image`. The prompt goes to the image backend
+unchanged, with no chat model in between, and the model sees the generated
+images. The tool has two Image generation modes, chosen by the plugin setting
+`imageGenerationMode`:
 
-It needs a ChatGPT/Codex login: log in to `openai-codex` with `/login`. It never
-falls back to another provider or to native `generate_image`.
+- `openai` (the default): GPT Image 2.5 Sunburst through the public OpenAI
+  Images API (`api.openai.com/v1/images/generations` and `/edits`), with an
+  OpenAI API key, billed to that key's API organization.
+- `codex`: the Codex Images endpoint
+  (`chatgpt.com/backend-api/codex/images/generations` and `/edits`) with a
+  ChatGPT/Codex login, the way the official Codex CLI calls it, drawing on the
+  account's Codex image allowance.
 
+Installations without the setting use OpenAI mode. To keep the Codex
+behavior, set the mode to `codex`:
+
+```sh
+omp plugin config set omp-tools imageGenerationMode codex
+```
+
+The mode is read when a session starts, `/new`, `/resume`, and `/fork`
+included, so a change applies to the next session; a running call keeps its
+mode. An invalid value, an empty one included, makes every call fail
+with the fix instead of picking a service. Neither mode falls back to the
+other, to native `generate_image`, or to another provider when it fails,
+because a fallback would change the credential and the balance charged
+(`docs/adr/0002-explicit-image-generation-modes.md`).
+
+Each mode registers only its own arguments; unknown arguments are rejected
+with an error. Requests time out after 5 minutes, cancelling the tool cancels
+the request, and no request is retried automatically.
+
+### OpenAI mode
+
+It needs an OpenAI API key for OMP's `openai` provider: `OPENAI_API_KEY`, or a
+key stored for `openai` in OMP. A ChatGPT/Codex login does not cover the
+public Images API. OpenAI mode sends the key only to the first-party API; if
+the `openai` provider is configured for another base URL, calls fail instead.
+The `OpenAI-Organization` and `OpenAI-Project` headers come from the `openai`
+provider's configured headers, or from `OPENAI_ORG_ID` and `OPENAI_PROJECT_ID`.
+
+Billing is normal API billing on the API organization. OpenAI spends
+Promotional API credits (the free grant some ChatGPT subscriptions link to an
+API organization) before purchased OpenAI API credits, and requests continue
+on purchased credits once the grant runs out. The tool cannot limit a request
+to free credits, does not select a credit grant, and does not report which
+balance paid. When the organization has no credits left, the error says so
+and tells the model not to retry; an ordinary rate limit says to wait.
+
+Arguments (all optional except `prompt`; `null` keeps the API default):
+
+- `prompt`: the image or edit description, up to 32,000 characters.
+- `model`: `gpt-image-2.5-sunburst` (default) or the pinned snapshot
+  `gpt-image-2.5-sunburst-2026-09-08`.
+- `n`: 1–10 images; every image is saved and returned, in the API's order.
+- `quality`: `auto`, `low`, `medium`, `high`, `xhigh`, or `max`.
+- `size`: `auto`, `1024x1024`, `1536x1024`, `1024x1536`, or `WIDTHxHEIGHT`
+  with both edges multiples of 16, an aspect ratio from 1:3 to 3:1, edges up to
+  3840, and 655,360 to 8,294,400 pixels. Sizes above `2560x1440` are
+  experimental.
+- `background`: `auto`, `opaque`, or `transparent` (PNG, WebP, or the default
+  format).
+- `output_format`: `png`, `jpeg`, or `webp`; `output_compression` 0–100 for
+  JPEG and WebP.
+- `moderation`: `auto` or `low` (less strict filtering, not none).
+- `safety_identifier` (up to 128 characters) or the deprecated `user`. A
+  nonempty `safety_identifier` is sent instead of `user`. The tool sends only
+  identifiers the caller gives and never shows them in the result.
+- `stream` and `partial_images` (0–3): stream the response and show previews
+  while the image renders. Each preview costs 100 extra image output tokens,
+  and fewer previews may arrive. Previews are never saved.
+- Reference images, from one source per call: `referenced_image_paths`
+  (absolute paths), `num_last_images_to_include` (the last 1–16 conversation
+  images, oldest first), or `images` (`{ image_url }` with an https or data URL,
+  or `{ file_id }`). Up to 16 references; any reference makes the call an edit.
+  PNG, JPEG, and WebP files go out unchanged; other formats as PNG.
+- `mask` or `markup`, for edits: `{ path }`, `{ image_url }`, or `{ file_id }`.
+  A mask is a PNG or WebP with alpha, in the format and size of the first
+  Reference image; the edit applies where it is transparent. A markup is a
+  transparent PNG with visual instructions, the size of the first Reference
+  image after its EXIF orientation. They cannot be combined. Local files and
+  data URLs are checked before sending and go out byte-identical; remote URLs
+  and file ids are checked by the API.
+
+Output: with `output_format` omitted, the tool requests PNG and saves a
+lossless WebP converted locally, which keeps every visible pixel and alpha
+value (the encoder drops the color hidden under fully transparent pixels).
+With an explicit format, the API's own bytes are saved and returned unchanged.
+Files go to `$TMPDIR/omp-image-<id>.<png|jpg|webp>`, the extension matching
+the bytes. The model gets every image, its saved path, and the size and
+quality the API reported. The result's details keep the requested settings
+apart from the reported ones, with the token usage and the `x-request-id`;
+errors name the request id.
+
+### Codex mode
+
+It needs a ChatGPT/Codex login: log in to `openai-codex` with `/login`.
 Arguments match Codex's:
 
 - `prompt` (required): the image or edit description.
@@ -220,18 +308,39 @@ Arguments match Codex's:
   conversation, such as pasted images, tool results, and earlier generated
   images. It cannot be combined with `referenced_image_paths`.
 
-Unknown arguments are rejected with an error. The backend ignores size and
-quality, so state the aspect ratio in the prompt. Output is about 1.57
-megapixels, and the server chooses the quality.
+The Codex endpoint ignores size and quality, so state the aspect ratio in the
+prompt. Output is about 1.57 megapixels, and the server chooses the quality
+and the model.
+
+PNG, GIF, BMP, and other non-JPEG references are sent as lossless WebP (about
+25% smaller than PNG, same image-token cost). JPEG and WebP references are sent
+unchanged. The result is saved as lossless WebP to
+`$TMPDIR/omp-image-<id>.webp`. The model gets the image, the saved path, and the
+size and quality the backend reported. The tool result's details also keep the
+request id, generation id, and output token count for tracing a result with
+OpenAI. HTTP errors name the request id.
+
+Guards, for Codex mode only:
+
+- A request body over 64 MB is rejected before sending. Larger bodies get false
+  `moderation_blocked` errors, or the backend silently drops the references and
+  returns an unrelated image.
+- An edit that reports 0 input image tokens fails instead of returning an image
+  that ignored the references.
+- A usage limit error names the limit, the plan, and the reset time, and tells
+  the model not to retry before then.
+- A successful result notes when the image limit window is at least 80% used,
+  with its reset time.
+
+### Prompting, tool cards, and setup
 
 The bundled `generate-image` skill is a checklist the model runs on every
 prompt before sending it. The criteria come from vendor prompting guides,
 text-to-image research and benchmarks, and creative-brief practice
 (`docs/research/image-prompting-*.md`, `docs/research/image-prompt-criteria-*.md`,
 `docs/research/image-prompt-format.md`, `docs/research/gpt-image-2.5-*.md`).
-OpenAI kept its gpt-image-2 prompts for GPT Image 2.5, and the endpoint accepts
-any `model` value with no visible effect, so the rules work whichever model
-serves:
+OpenAI kept its gpt-image-2 prompts for GPT Image 2.5, so the rules hold in
+both modes:
 
 - every prompt: purpose first, one concrete main subject, every requested
   element with nothing invented, visible terms instead of praise, attributes
@@ -244,31 +353,12 @@ serves:
 - transparency set for cutouts and checked in the alpha channel, and review
   against every requirement
 
-PNG, GIF, BMP, and other non-JPEG references are sent as lossless WebP (about
-25% smaller than PNG, same image-token cost). JPEG and WebP references are sent
-unchanged. The result is saved as lossless WebP to
-`$TMPDIR/omp-image-<id>.webp`. The model gets the image, the saved path, and the
-size and quality the backend reported. The tool result's details also keep the
-request id, generation id, and output token count for tracing a result with
-OpenAI. HTTP errors name the request id.
-
-Guards:
-
-- A request body over 64 MB is rejected before sending. Larger bodies get false
-  `moderation_blocked` errors, or the backend silently drops the references and
-  returns an unrelated image.
-- An edit that reports 0 input image tokens fails instead of returning an image
-  that ignored the references.
-- Requests time out after 5 minutes. Cancelling the tool cancels the request.
-- A usage limit error names the limit, the plan, and the reset time, and tells
-  the model not to retry before then.
-- A successful result notes when the image limit window is at least 80% used,
-  with its reset time.
-
 In Tern, the tool card heads with the prompt's first line, the reference count,
-and the size and quality. Below it are the saved path (click to open the file),
-the near-limit warning, a folded copy of a long prompt, and the image. An error
-shows its message in red.
+the mode's settings (such as `n 2` or `transparent`), and the size and quality.
+Below it are each saved path (click to open the file), the Codex near-limit
+warning, a folded copy of a long prompt, and the images. While a stream runs,
+the card shows the latest preview as in progress. An error shows its message
+in red.
 
 Turn off native image generation. The plugin's tool wins either way, because
 OMP adds native tools after extensions and skips names that are taken:
@@ -389,14 +479,21 @@ bun run update   # runs omp update, installs the newest SDK types, then checks
 
 Runtime value imports of `@oh-my-pi/*` resolve to the running OMP's own modules.
 Development types track the `latest` SDK release. Run `bun run update` so omp
-and the types move together. `bun test` runs `generate_image` against a stubbed
-endpoint, the `/btw` question parser, the Picker's paste handling, and the Side
+and the types move together. `bun test` runs `generate_image` in both modes
+against stubbed endpoints (including streamed responses), the `/btw` question
+parser, the Picker's paste handling, and the Side
 question's message seeding. Typechecking and tests do not load the plugin into
 OMP, so a change to registration, the picker, or side questions needs a check
 in a fresh OMP session.
 
 Fresh OMP sessions verified this behavior:
 
+- OMP 18.13.3 with Tern 0.9.7: `generate_image` in each Image generation
+  mode registered only that mode's arguments. A live Codex generation
+  rendered its Tern card with the saved path and image. The OpenAI
+  missing-key and argument-error cards rendered in Tern, and a Codex
+  argument-error card in the classic view. No live OpenAI request has
+  succeeded yet: the test machine had no valid `openai` key.
 - OMP 18.12.5 with Tern 0.9.5: the picker in the Tern and classic views
   (single and multiple questions, `Other`, notes, Submit, timeout, and Tern
   pointer actions), Picker btw, `/btw`, and the read-only Side question
