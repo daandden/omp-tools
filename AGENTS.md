@@ -171,10 +171,14 @@ the Picker btw asks the same kind of Side question.
   `PickerDraftSlot` (`extensions/picker-draft.ts`) before `ctx.abort()`. F5
   (`app.retry`) replays a cancelled tool call with its stored id and
   arguments before any model request (OMP `turn-recovery.ts`), so the same
-  `ask` runs again; no key is bound. `take` hands the draft to a picker whose
-  question ids, text, option labels, and `multi` match, and disposes the
-  thread on any other questions. A main prompt keeps it (a manual retry fires
-  no `before_agent_start`, and a re-ask after "go on" should match).
+  `ask` runs again; no key is bound. Since OMP 18.14, a custom message other
+  than an eval-state snapshot after the abort (a background job's result
+  landing between Esc and F5) makes F5 drop the aborted turn and call the
+  model instead; a re-ask with the same questions still gets the draft.
+  `take` hands the draft to a picker whose question ids, text, option
+  labels, and `multi` match, and disposes the thread on any other
+  questions. A main prompt keeps it (a manual retry fires no
+  `before_agent_start`, and a re-ask after "go on" should match).
   The slot ends every Picker btw thread (`end`): a dropped draft's, a
   mismatched draft's, and a submitted or failed Picker's. `drop` waits for
   all of them. `session_before_switch`, `session_before_branch`,
@@ -491,6 +495,10 @@ The isolated headless helper was proved from a bash launcher. The same
 versions proved each `generate_image` mode's schema, a live Codex generation
 card, and OpenAI error cards; live OpenAI requests are unproven because no
 valid `openai` key was available.
+OMP 18.14.2 with headless Tern 0.9.9 (Tern view and `PI_TUI_NATIVE=0`)
+proved Esc then F5 on an `ask`: the same call id replays from the original
+`toolUse` with no model request between, and the picker restores picks,
+option notes, and the Picker btw turn.
 OMP 18.12.5 with headless Tern 0.9.5 (Tern view and
 `PI_TUI_NATIVE=0`) was used for every surface: the picker (keys, `Other`,
 notes, Submit, pointer, `ask.timeout`), the Picker btw (also during an `ask`
