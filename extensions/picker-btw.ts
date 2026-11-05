@@ -57,7 +57,7 @@ export function pickerBtwRunner(ctx: ExtensionContext): PickerBtwRunner | undefi
 	return {
 		ask: async request => {
 			if (disposed) throw new Error("The Picker is closed.");
-			return (await thread.get()).ask(request.promptText, request, request.signal, request.images);
+			return (await thread.get(request.signal)).ask(request.promptText, request, request.signal, request.images);
 		},
 		dispose: () => {
 			disposed = true;

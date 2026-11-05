@@ -146,7 +146,7 @@ export async function sideQuestionFixture(options: {
 			ui: { notify(message: string) { warnings.push(message); } },
 		} as unknown as ExtensionContext;
 		const open = async () => {
-			const thread = await SideQuestionThread.open(ctx);
+			const thread = await SideQuestionThread.open(ctx, new AbortController().signal);
 			threads.push(thread);
 			return thread;
 		};

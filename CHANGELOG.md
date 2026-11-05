@@ -45,6 +45,11 @@
 
 ### Fixed
 
+- A Side question model that OMP's model list lost while running (after a
+  denied Codex model discovery, for example) no longer falls back to the main
+  model until a restart: the plugin refreshes that model's provider and looks
+  again. If the model is still missing, the warning names the model the role
+  points to.
 - `/btw` now sends attached images and keeps them for follow-up questions.
 - Side questions share the main session's spending cap rather than starting a
   separate cap for each thread.

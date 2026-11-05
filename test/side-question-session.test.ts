@@ -89,7 +89,6 @@ test("new threads read their model setting with model defaults, role thinking, e
 		expect(await unresolved.ask("Answer briefly.", callbacks(), AbortSignal.timeout(5_000))).toBe("answered by main");
 		expect(await unresolved.ask("And again.", callbacks(), AbortSignal.timeout(5_000))).toBe("answered by main");
 		expect(fixture.warnings).toHaveLength(1);
-		expect(fixture.warnings[0]).toContain("could not be resolved");
 		expect(fixture.main.model?.id).toBe("main");
 		expect(fixture.main.configuredThinkingLevel()).toBe(parseConfiguredThinkingLevel("high"));
 	} finally { await fixture.dispose(); }
