@@ -6,7 +6,7 @@
 drop the model-facing option count and show questions
 as full Markdown in the interactive picker; outside the TUI it delegates to
 native `ask`. It replaces native `generate_image` with a tool that has two
-Image generation modes: OpenAI mode (GPT Image 2.5 Sunburst through the public
+Image generation modes: OpenAI mode (GPT Image 2.6 Sunburst through the public
 Images API, the default) and Codex mode (the Codex Images endpoint with Codex
 OAuth). It takes
 over `/btw <question>` with a Side question that may use read-only tools, and
@@ -279,11 +279,13 @@ the Picker btw asks the same kind of Side question.
   case. The schema stays open because OMP's argument validator deletes unknown
   keys from closed schemas (`pi-ai` `coerceArgsFromIssues`); `execute` rejects
   them and checks the schema itself.
-- Final images go in `content` only, never `details.images` (the TUI would show
-  them twice); `details.outputs` lists each saved path, MIME type, size, and
-  quality. Policy `lossless-webp` re-encodes (Bun's WebP encoder drops the
-  color under alpha 0; visible pixels and alpha are kept); `as-returned` keeps
-  the provider's bytes. Streamed previews go through `onUpdate` with
+- Raster results go in `content` only, never `details.images` (the TUI would
+  show them twice); SVG results return a saved path and an instruction to read
+  the file, without image content. `details.outputs` lists each saved path,
+  MIME type, size, and quality. Policy `lossless-webp` re-encodes (Bun's WebP
+  encoder drops the color under alpha 0; visible pixels and alpha are kept);
+  `as-returned` keeps the provider's bytes, including GIF and SVG. GIF content
+  stays `image/gif`. Streamed previews go through `onUpdate` with
   `details.stage: "preview"` and are never saved.
 - Codex mode posts to `chatgpt.com/backend-api/codex/images/generations` (no
   references) or `/edits` with Codex's exact body and headers, using the
@@ -306,6 +308,18 @@ the Picker btw asks the same kind of Side question.
   `getProviderBaseUrl("openai")` (or `OPENAI_BASE_URL` when OMP reports none)
   fails the call. `OpenAI-Organization` and `OpenAI-Project` come from
   `getProviderHeaders("openai")`, else `OPENAI_ORG_ID` and `OPENAI_PROJECT_ID`.
+  It always sends `gpt-image-2.6-sunburst`, with no per-call `model` argument.
+  Optional `complexity` (`low`, `medium`, `high`, default high at the API)
+  controls planning separately from `quality`. Size checks keep only `auto`
+  or multiples of 16 with aspect ratio 1:3 through 3:1; undocumented 2.6 edge
+  and pixel limits are left to the API. GIF size describes each frame.
+  GIF is generation-only, with 2–16 frames (default 9), 20–2000 ms per frame
+  (default 200), no Reference images, streaming, or `output_compression`.
+  SVG is generation-only, with `n` 1 or omitted, and the same exclusions.
+  OpenAI tool registration reads `svgAuthorModel` at session start and again
+  on session switches, defaulting absent or empty values to `gpt-6.1-sol`.
+  SVG requests always send `svg: { model }`; a call's `svg.model` and
+  `svg.reasoning.effort` override the author settings.
   `extensions/sunburst-images.ts` sends one JSON request (no retries), decodes
   JSON or SSE (`*.partial_image`, `*.completed`, `error`; a stream needs `n`
   completions), and keeps `x-request-id`. The 5-minute timeout covers the
@@ -314,8 +328,10 @@ the Picker btw asks the same kind of Side question.
   local files and data URLs are checked first (`extensions/image-checks.ts`:
   alpha from the file header, transparency from decoded pixels, sizes from
   `Bun.Image` metadata, which applies EXIF orientation). No Codex guard
-  applies. `details.requested` holds the sent settings (never the identifiers)
-  and `details.reported` what the API reported.
+  applies. `details.requested` holds the sent settings, including complexity,
+  frame controls, and the `svg` object (never the identifiers);
+  `details.reported` holds what the API reported. `details.svgUsage` keeps
+  separate SVG-author usage from `svg_usage`.
 
 ## Important Files
 
@@ -410,8 +426,9 @@ the Picker btw asks the same kind of Side question.
   It is generic and has no examples; the cited research behind it is in
   `docs/research/image-prompting-*.md`, `image-prompt-criteria-*.md`,
   `image-prompt-format.md` (prose vs labeled lines vs JSON),
-  `gpt-image-2.5-*.md` (rules checked against Images 2.5; the Codex endpoint
-  accepts any `model` with no visible effect, so rules stay model-agnostic),
+  `gpt-image-2.6.md` (current controls, pricing, documentation conflicts, and
+  GIF, SVG-author, and Codex probes), `gpt-image-2.5-*.md` (historical checks
+  against Images 2.5),
   `codex-image-backend-model.md` (live check of which model serves;
   inconclusive), and `codex-api-credit-images.md` (the public Sunburst
   contract and API credit billing).
@@ -491,8 +508,15 @@ Run typechecking and `bun test` after code changes; tests cover
 draft, the host `askDialog` route, the real Side question session's model,
 thinking, context boundary, images, fallback and cost cap, cache-miss tracking,
 usage ledger, recovery rendering, and the Side question model's provider
-refresh over a real registry whose Codex catalog lost a discovered model. There is
-no repository CI. Registration, ask, and Side question changes
+refresh over a real registry whose Codex catalog lost a discovered model.
+
+The opt-in `test/generate-image-openai.live.test.ts` runs only with
+`OMP_TOOLS_LIVE_IMAGES=1` and `OPENAI_API_KEY`. Run
+`OMP_TOOLS_LIVE_IMAGES=1 bun test live` for three paid API checks: a still
+image with complexity, SVG, and GIF. All three passed on 2026-11-05 in
+45 seconds; this does not verify OMP registration or cards.
+
+There is no repository CI. Registration, ask, and Side question changes
 require a fresh-session OMP smoke; typechecking alone does not exercise host
 integration or UI. OMP 18.13.3 with Tern 0.9.7 proved both renderers' primary
 model selection, role thinking, retry countdowns, fallback switches, terminal
@@ -501,8 +525,8 @@ Other, draft and timeout; eager and deferred tool precedence; and compiled RPC
 Side question images, five-tool restriction, privacy and shared cost gate.
 The isolated headless helper was proved from a bash launcher. The same
 versions proved each `generate_image` mode's schema, a live Codex generation
-card, and OpenAI error cards; live OpenAI requests are unproven because no
-valid `openai` key was available.
+card, and OpenAI error cards. That session had no valid `openai` key, so it
+did not verify live OpenAI requests.
 OMP 18.14.2 with headless Tern 0.9.9 (Tern view and `PI_TUI_NATIVE=0`)
 proved Esc then F5 on an `ask`: the same call id replays from the original
 `toolUse` with no model request between, and the picker restores picks,

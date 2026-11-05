@@ -11,15 +11,18 @@ import {
 	type SunburstAccess,
 	type SunburstReported,
 	type SunburstUsage,
+	type SvgAuthorUsage,
 } from "./sunburst-images";
 
-export const SUNBURST_MODELS = ["gpt-image-2.5-sunburst", "gpt-image-2.5-sunburst-2026-09-08"] as const;
+export const SUNBURST_MODEL = "gpt-image-2.6-sunburst";
+const DEFAULT_SVG_AUTHOR = "gpt-6.1-sol";
 
 export interface OpenAIDetails {
 	/** The settings this call asked for, as sent (the prompt and images left out). */
 	requested: Record<string, unknown>;
 	reported: SunburstReported;
 	usage?: SunburstUsage;
+	svgUsage?: SvgAuthorUsage;
 	requestId?: string;
 }
 
@@ -60,16 +63,23 @@ async function openaiAccess(ctx: ExtensionContext, signal: AbortSignal | undefin
 	return { apiKey, attribution };
 }
 
-type OutputFormat = "png" | "jpeg" | "webp";
+type OutputFormat = "png" | "jpeg" | "webp" | "gif" | "svg";
+
+interface SvgSettings {
+	model?: string;
+	reasoning?: { effort?: string | null } | null;
+}
 
 interface OpenAIArgs {
 	prompt: string;
-	model?: string | null;
 	n?: number | null;
 	output_format?: OutputFormat | null;
 	output_compression?: number | null;
+	frame_count?: number | null;
+	frame_duration_ms?: number | null;
 	background?: "auto" | "opaque" | "transparent" | null;
 	quality?: string | null;
+	complexity?: "low" | "medium" | "high" | null;
 	size?: string | null;
 	moderation?: "auto" | "low" | null;
 	safety_identifier?: string | null;
@@ -81,6 +91,7 @@ interface OpenAIArgs {
 	markup?: EditResource | null;
 	stream?: boolean | null;
 	partial_images?: number | null;
+	svg?: SvgSettings | null;
 }
 
 type NativeImage = { image_url: string } | { file_id: string };
@@ -95,35 +106,24 @@ const PASSED_SETTINGS = [
 	"n",
 	"background",
 	"output_compression",
+	"frame_count",
+	"frame_duration_ms",
 	"quality",
+	"complexity",
 	"size",
 	"moderation",
 	"stream",
 	"partial_images",
 ] as const satisfies readonly (keyof OpenAIArgs)[];
 
-const SIZE_RULES = {
-	multiple: 16,
-	maxRatio: 3,
-	maxEdge: 3840,
-	minPixels: 655_360,
-	maxPixels: 8_294_400,
-};
-
 function checkSize(size: string): void {
 	if (size === "auto") return;
-	const match = /^(\d+)x(\d+)$/.exec(size);
+	const match = /^([1-9]\d*)x([1-9]\d*)$/.exec(size);
 	if (!match) throw new Error(`size must be "auto" or WIDTHxHEIGHT, such as 1536x864 (was ${JSON.stringify(size)}).`);
 	const [width, height] = [Number(match[1]), Number(match[2])];
 	const broken = (rule: string) => new Error(`size ${size} is not supported: ${rule}.`);
-	if (width % SIZE_RULES.multiple || height % SIZE_RULES.multiple) throw broken("width and height must be multiples of 16");
-	if (Math.max(width, height) > SIZE_RULES.maxEdge) throw broken("neither edge may exceed 3840 pixels");
-	if (Math.max(width, height) > SIZE_RULES.maxRatio * Math.min(width, height)) {
-		throw broken("the aspect ratio must be between 1:3 and 3:1");
-	}
-	const pixels = width * height;
-	if (pixels < SIZE_RULES.minPixels) throw broken("it must have at least 655,360 pixels");
-	if (pixels > SIZE_RULES.maxPixels) throw broken("it may have at most 8,294,400 pixels (3840x2160)");
+	if (width % 16 || height % 16) throw broken("width and height must be multiples of 16");
+	if (Math.max(width, height) > 3 * Math.min(width, height)) throw broken("the aspect ratio must be between 1:3 and 3:1");
 }
 
 function checkCombinations(args: OpenAIArgs): void {
@@ -137,12 +137,33 @@ function checkCombinations(args: OpenAIArgs): void {
 		throw new Error('background "transparent" needs output_format png or webp; jpeg has no alpha channel.');
 	}
 	if (args.size != null) checkSize(args.size);
+	for (const field of ["frame_count", "frame_duration_ms"] as const) {
+		if (args[field] != null && format !== "gif") throw new Error(`${field} applies only to output_format gif.`);
+	}
+	if (args.svg != null && format !== "svg") throw new Error("svg settings apply only to output_format svg.");
+	const unknownSvgKeys = [
+		...Object.keys(args.svg ?? {}).filter(key => key !== "model" && key !== "reasoning").map(key => `svg.${key}`),
+		...Object.keys(args.svg?.reasoning ?? {}).filter(key => key !== "effort").map(key => `svg.reasoning.${key}`),
+	];
+	if (unknownSvgKeys.length > 0) {
+		throw new Error(`Unknown svg setting(s): ${unknownSvgKeys.join(", ")}. svg takes model and reasoning.effort.`);
+	}
+	if (format === "svg" && args.n != null && args.n !== 1) {
+		throw new Error("output_format svg makes one image; leave out n or set it to 1.");
+	}
+	const newImageOnly = format === "gif" || format === "svg";
+	if (newImageOnly && args.stream === true) {
+		throw new Error(`output_format ${format} does not stream: the API returns only the finished file. Leave out stream.`);
+	}
 	if (args.partial_images != null && args.stream !== true) {
 		throw new Error("partial_images needs stream: true; previews only arrive in a streamed response.");
 	}
 	const sources = REFERENCE_SOURCES.filter(source => args[source] != null);
 	if (sources.length > 1) {
 		throw new Error(`Use one Reference image source, not ${sources.join(" and ")} together.`);
+	}
+	if (newImageOnly && sources.length > 0) {
+		throw new Error(`output_format ${format} makes a new image only; edits with Reference images are not supported.`);
 	}
 	const relative = args.referenced_image_paths?.filter(imagePath => !path.isAbsolute(imagePath)) ?? [];
 	if (relative.length > 0) throw new Error(`referenced_image_paths must be absolute: ${relative.join(", ")}`);
@@ -177,7 +198,9 @@ async function editResource(
 	if ("image_url" in resource) return { reference: resource, bytes: dataUrlBytes(resource.image_url) };
 	const bytes = await readImageFile(resource.path, name === "mask" ? "Mask" : "Markup");
 	const format = imageFormatOf(bytes);
-	if (!format) throw new Error(`${name} ${resource.path} is not a PNG, JPEG, or WebP image.`);
+	if (format !== "png" && format !== "jpeg" && format !== "webp") {
+		throw new Error(`${name} ${resource.path} is not a PNG, JPEG, or WebP image.`);
+	}
 	return { reference: { image_url: `data:${mimeTypeOf(format)};base64,${Buffer.from(bytes).toString("base64")}` }, bytes };
 }
 
@@ -241,14 +264,18 @@ function identifier(args: OpenAIArgs): Record<string, string> {
 	return args.user != null ? { user: args.user } : {};
 }
 
-function requestedSettings(args: OpenAIArgs) {
+function requestedSettings(args: OpenAIArgs, svgAuthor: string) {
 	const explicit = args.output_format ?? undefined;
 	const settings: Record<string, unknown> = {
-		model: args.model ?? SUNBURST_MODELS[0],
+		model: SUNBURST_MODEL,
 		output_format: explicit ?? "png",
 	};
 	for (const field of PASSED_SETTINGS) {
 		if (args[field] != null) settings[field] = args[field];
+	}
+	if (explicit === "svg") {
+		const reasoning = args.svg?.reasoning;
+		settings.svg = { model: args.svg?.model ?? svgAuthor, ...(reasoning ? { reasoning } : {}) };
 	}
 	return { settings, policy: explicit ? ("as-returned" as const) : ("lossless-webp" as const) };
 }
@@ -260,22 +287,32 @@ function editResourceType(type: ExtensionAPI["arktype"]) {
 		.or("null");
 }
 
-export function openaiMode(type: ExtensionAPI["arktype"]): ImageMode<OpenAIDetails> {
+/** `svgAuthorModel` is the plugin setting; an unset or blank one leaves gpt-6.1-sol. */
+export function openaiMode(type: ExtensionAPI["arktype"], svgAuthorModel: unknown): ImageMode<OpenAIDetails> {
+	const svgAuthor =
+		typeof svgAuthorModel === "string" && svgAuthorModel.trim() ? svgAuthorModel.trim() : DEFAULT_SVG_AUTHOR;
 	const parameters = type({
 		prompt: type("0 < string <= 32000").describe("Image or edit description, sent unchanged; up to 32,000 characters."),
-		"model?": type("'gpt-image-2.5-sunburst' | 'gpt-image-2.5-sunburst-2026-09-08' | null").describe(
-			"gpt-image-2.5-sunburst (default) or its pinned snapshot gpt-image-2.5-sunburst-2026-09-08.",
-		),
 		"n?": type("1 <= number.integer <= 10 | null").describe("Number of images, 1–10; every image is returned."),
 		"quality?": type("'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null").describe(
 			"Rendering effort and cost, low to max; auto by default.",
 		),
-		"size?": type("string | null").describe(
-			"auto (default), 1024x1024, 1536x1024, 1024x1536, or WIDTHxHEIGHT: multiples of 16, ratio 1:3 to 3:1, " +
-				"edges up to 3840, 655,360 to 8,294,400 pixels. Sizes above 2560x1440 are experimental.",
+		"complexity?": type("'low' | 'medium' | 'high' | null").describe(
+			"How much the model plans before rendering, separate from quality: high (the API default when omitted) " +
+				"for open layouts and dense text, low for a one-detail edit.",
 		),
-		"output_format?": type("'png' | 'jpeg' | 'webp' | null").describe(
-			"Omit for a lossless WebP made locally from PNG. An explicit format returns the API's own bytes.",
+		"size?": type("string | null").describe(
+			"auto (default), 1024x1024, 1536x1024, 1024x1536, or WIDTHxHEIGHT: multiples of 16, ratio 1:3 to 3:1. " +
+				"For GIF output it is the size of each frame.",
+		),
+		"output_format?": type("'png' | 'jpeg' | 'webp' | 'gif' | 'svg' | null").describe(
+			"Omit for a lossless WebP made locally from PNG. An explicit format returns the API's own bytes. gif makes " +
+				"an animation; svg makes one vector image, saved and given to you by path only. Both make new images " +
+				"only, without stream or Reference images.",
+		),
+		"frame_count?": type("2 <= number.integer <= 16 | null").describe("GIF frames, 2–16; 9 when omitted."),
+		"frame_duration_ms?": type("20 <= number.integer <= 2000 | null").describe(
+			"Milliseconds per GIF frame, 20–2000, rounded to 10; 200 when omitted.",
 		),
 		"output_compression?": type("0 <= number.integer <= 100 | null").describe(
 			"0–100, for output_format jpeg or webp only.",
@@ -312,6 +349,17 @@ export function openaiMode(type: ExtensionAPI["arktype"]): ImageMode<OpenAIDetai
 			"Visual instructions drawn on a transparent PNG the size of the first Reference image: { path }, " +
 				"{ image_url }, or { file_id }. Not with mask.",
 		),
+		"svg?": type({
+			"model?": "string > 0",
+			"reasoning?": type({
+				"effort?": "'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null",
+			}).or("null"),
+		})
+			.or("null")
+			.describe(
+				`SVG author, the text model that writes the SVG from the drawn image: { model, reasoning: { effort } }. ` +
+					`model defaults to ${svgAuthor}. For output_format svg only.`,
+			),
 	});
 	return {
 		id: "openai",
@@ -321,7 +369,6 @@ export function openaiMode(type: ExtensionAPI["arktype"]): ImageMode<OpenAIDetai
 			const facts: string[] = [];
 			const count = referenceCount(args) ?? (Array.isArray(args.images) ? args.images.length : undefined);
 			if (count) facts.push(`${count} reference${count === 1 ? "" : "s"}`);
-			if (typeof args.model === "string" && args.model !== SUNBURST_MODELS[0]) facts.push(args.model);
 			if (typeof args.n === "number" && args.n > 1) facts.push(`n ${args.n}`);
 			if (typeof args.output_format === "string") facts.push(args.output_format);
 			if (args.background === "transparent") facts.push("transparent");
@@ -331,7 +378,7 @@ export function openaiMode(type: ExtensionAPI["arktype"]): ImageMode<OpenAIDetai
 		async run({ params, signal, ctx, onPreview }) {
 			const args = params as unknown as OpenAIArgs;
 			checkCombinations(args);
-			const { settings, policy } = requestedSettings(args);
+			const { settings, policy } = requestedSettings(args, svgAuthor);
 			const access = await openaiAccess(ctx, signal);
 			const images = await references(args, ctx);
 			const overlays = await editOverlays(args, images);
@@ -350,7 +397,13 @@ export function openaiMode(type: ExtensionAPI["arktype"]): ImageMode<OpenAIDetai
 				images: response.images,
 				policy,
 				notes: [],
-				details: { requested: settings, reported: response.reported, usage: response.usage, requestId: response.requestId },
+				details: {
+					requested: settings,
+					reported: response.reported,
+					usage: response.usage,
+					svgUsage: response.svgUsage,
+					requestId: response.requestId,
+				},
 			};
 		},
 	};

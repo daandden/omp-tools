@@ -1,7 +1,7 @@
 # omp-tools
 
 Local OMP adapters: flexible questions, `generate_image` with OpenAI
-(GPT Image 2.5 Sunburst) and Codex modes, and read-only side questions (`/btw`
+(GPT Image 2.6 Sunburst) and Codex modes, and read-only side questions (`/btw`
 and the Picker btw).
 Formerly `omp-ask`.
 
@@ -203,11 +203,11 @@ and its answers with a check on each pick, plus the Submit note.
 ## `generate_image`
 
 Replaces native `generate_image`. The prompt goes to the image backend
-unchanged, with no chat model in between, and the model sees the generated
-images. The tool has two Image generation modes, chosen by the plugin setting
-`imageGenerationMode`:
+unchanged, with no chat model in between. The model sees raster results and
+gets a path to read for SVG results. The tool has two Image generation modes,
+chosen by the plugin setting `imageGenerationMode`:
 
-- `openai` (the default): GPT Image 2.5 Sunburst through the public OpenAI
+- `openai` (the default): GPT Image 2.6 Sunburst through the public OpenAI
   Images API (`api.openai.com/v1/images/generations` and `/edits`), with an
   OpenAI API key, billed to that key's API organization.
 - `codex`: the Codex Images endpoint
@@ -251,21 +251,32 @@ to free credits, does not select a credit grant, and does not report which
 balance paid. When the organization has no credits left, the error says so
 and tells the model not to retry; an ordinary rate limit says to wait.
 
-Arguments (all optional except `prompt`; `null` keeps the API default):
+OpenAI mode always sends `gpt-image-2.6-sunburst`; there is no per-call
+`model` argument.
+
+Arguments (all optional except `prompt`; `null` is treated as omitted):
 
 - `prompt`: the image or edit description, up to 32,000 characters.
-- `model`: `gpt-image-2.5-sunburst` (default) or the pinned snapshot
-  `gpt-image-2.5-sunburst-2026-09-08`.
 - `n`: 1–10 images; every image is saved and returned, in the API's order.
 - `quality`: `auto`, `low`, `medium`, `high`, `xhigh`, or `max`.
+- `complexity`: `low`, `medium`, or `high`, separate from rendering `quality`.
+  Omitted means the API default `high`.
 - `size`: `auto`, `1024x1024`, `1536x1024`, `1024x1536`, or `WIDTHxHEIGHT`
-  with both edges multiples of 16, an aspect ratio from 1:3 to 3:1, edges up to
-  3840, and 655,360 to 8,294,400 pixels. Sizes above `2560x1440` are
-  experimental.
-- `background`: `auto`, `opaque`, or `transparent` (PNG, WebP, or the default
-  format).
-- `output_format`: `png`, `jpeg`, or `webp`; `output_compression` 0–100 for
-  JPEG and WebP.
+  with both edges multiples of 16 and an aspect ratio from 1:3 to 3:1. OpenAI
+  publishes no 2.6 edge or total-pixel bounds; the API checks remaining limits.
+  For GIF output, `size` is each frame's size.
+- `background`: `auto`, `opaque`, or `transparent` (PNG, WebP, SVG, or the
+  default format).
+- `output_format`: `png`, `jpeg`, `webp`, `gif`, or `svg`;
+  `output_compression` 0–100 for JPEG and WebP only.
+- `frame_count`: 2–16, default 9, and `frame_duration_ms`: 20–2000,
+  default 200. Both require `output_format: "gif"`. GIF is for new images
+  only, without Reference images, streaming, or `output_compression`.
+- `svg`: optional author settings for `output_format: "svg"`, with `model`
+  and `reasoning: { effort }`. Effort is `none`, `minimal`, `low`, `medium`,
+  `high`, `xhigh`, or `max`, subject to the author's support. A call's settings
+  override the plugin's SVG author. SVG is for new images only, with `n` 1 or
+  omitted, without Reference images, streaming, or `output_compression`.
 - `moderation`: `auto` or `low` (less strict filtering, not none).
 - `safety_identifier` (up to 128 characters) or the deprecated `user`. A
   nonempty `safety_identifier` is sent instead of `user`. The tool sends only
@@ -289,12 +300,30 @@ Arguments (all optional except `prompt`; `null` keeps the API default):
 Output: with `output_format` omitted, the tool requests PNG and saves a
 lossless WebP converted locally, which keeps every visible pixel and alpha
 value (the encoder drops the color hidden under fully transparent pixels).
-With an explicit format, the API's own bytes are saved and returned unchanged.
-Files go to `$TMPDIR/omp-image-<id>.<png|jpg|webp>`, the extension matching
-the bytes. The model gets every image, its saved path, and the size and
-quality the API reported. The result's details keep the requested settings
-apart from the reported ones, with the token usage and the `x-request-id`;
-errors name the request id.
+With an explicit format, the tool saves the API's own bytes unchanged.
+Files go to `$TMPDIR/omp-image-<id>.<png|jpg|webp|gif|svg>`, with the
+extension matching the bytes. The model gets every raster image, its saved
+path, and the size and quality the API reported. GIF content is returned
+unchanged as `image/gif`; the tested Claude Haiku 5.5 and Codex gpt-6-luna
+routes accepted it but saw only the first frame. SVG returns its path only,
+with an instruction to read the file, not image content.
+
+The result's details keep requested settings apart from reported ones, with
+token usage and the `x-request-id`; errors name the request id.
+`details.requested` includes complexity, frame controls, and the sent `svg`
+object. `details.svgUsage` keeps the API's separate `svg_usage`.
+
+Choose the SVG author in **Settings > Plugins > omp-tools**, or with:
+
+```sh
+omp plugin config set omp-tools svgAuthorModel gpt-6.1-sol
+```
+
+The `svgAuthorModel` setting defaults to `gpt-6.1-sol`; an empty value uses
+that default. It is read when a session starts, including `/new`, `/resume`,
+and `/fork`. Each SVG request sends `svg: { model }`, because the API requires
+an author model. A call's `svg.model` overrides the setting, and
+`svg.reasoning.effort` controls that author's reasoning, not image complexity.
 
 ### Codex mode
 
@@ -338,9 +367,10 @@ The bundled `generate-image` skill is a checklist the model runs on every
 prompt before sending it. The criteria come from vendor prompting guides,
 text-to-image research and benchmarks, and creative-brief practice
 (`docs/research/image-prompting-*.md`, `docs/research/image-prompt-criteria-*.md`,
-`docs/research/image-prompt-format.md`, `docs/research/gpt-image-2.5-*.md`).
-OpenAI kept its gpt-image-2 prompts for GPT Image 2.5, so the rules hold in
-both modes:
+`docs/research/image-prompt-format.md`, and
+`docs/research/gpt-image-2.6.md`). The `docs/research/gpt-image-2.5-*.md`
+notes preserve the earlier research. The shared prompt rules hold in both
+modes; the skill also covers OpenAI complexity, GIF, and SVG:
 
 - every prompt: purpose first, one concrete main subject, every requested
   element with nothing invented, visible terms instead of praise, attributes
@@ -488,14 +518,25 @@ question's message seeding. Typechecking and tests do not load the plugin into
 OMP, so a change to registration, the picker, or side questions needs a check
 in a fresh OMP session.
 
+The opt-in `test/generate-image-openai.live.test.ts` sends three paid OpenAI
+requests for a still image with complexity, an SVG, and a GIF. It runs only
+with both `OMP_TOOLS_LIVE_IMAGES=1` and `OPENAI_API_KEY`:
+
+```sh
+OMP_TOOLS_LIVE_IMAGES=1 bun test live
+```
+
+Requests are billed to the key's API organization. All three passed live on
+2026-11-05 in 45 seconds. These API checks do not verify the OMP tool cards.
+
 Fresh OMP sessions verified this behavior:
 
 - OMP 18.13.3 with Tern 0.9.7: `generate_image` in each Image generation
   mode registered only that mode's arguments. A live Codex generation
   rendered its Tern card with the saved path and image. The OpenAI
   missing-key and argument-error cards rendered in Tern, and a Codex
-  argument-error card in the classic view. No live OpenAI request has
-  succeeded yet: the test machine had no valid `openai` key.
+  argument-error card in the classic view. That session had no valid
+  `openai` key, so it did not verify live OpenAI requests.
 - OMP 18.12.5 with Tern 0.9.5: the picker in the Tern and classic views
   (single and multiple questions, `Other`, notes, Submit, timeout, and Tern
   pointer actions), Picker btw, `/btw`, and the read-only Side question

@@ -125,7 +125,7 @@ describe("mode selection", () => {
 	test("an unset imageGenerationMode registers OpenAI mode", async () => {
 		const tool = await loadTool({ imageGenerationMode: null });
 
-		expect(argumentNames(tool)).toContain("model");
+		expect(argumentNames(tool)).toContain("quality");
 		expect(argumentNames(tool)).not.toContain("transparent_background");
 		const result = await tool.execute("c", { prompt: "a fox" }, undefined, undefined, openaiContext());
 		savedFiles.push(...outputPathsOf(result));
@@ -209,7 +209,7 @@ describe("generation", () => {
 		expect(request?.headers.get("authorization")).toBe(`Bearer ${API_KEY}`);
 		expect(request?.headers.get("content-type")).toBe("application/json");
 		expect(request?.headers.has("chatgpt-account-id")).toBe(false);
-		expect(request?.body).toEqual({ model: "gpt-image-2.5-sunburst", prompt, output_format: "png" });
+		expect(request?.body).toEqual({ model: "gpt-image-2.6-sunburst", prompt, output_format: "png" });
 
 		const [image, ...more] = imagesOf(result);
 		expect(more).toHaveLength(0);
@@ -226,18 +226,12 @@ describe("generation", () => {
 		expect(textOf(result)).toContain("1024x1024, quality medium");
 	});
 
-	test("sends the pinned Sunburst snapshot when asked", async () => {
-		await run({ prompt: "x", model: "gpt-image-2.5-sunburst-2026-09-08" });
-
-		expect(requests[0]?.body.model).toBe("gpt-image-2.5-sunburst-2026-09-08");
-	});
-
 	test("keeps requested settings apart from what the API reported, with the request id", async () => {
 		const result = await run({ prompt: "x" });
 
 		expect(result.details).toMatchObject({
 			mode: "openai",
-			requested: { model: "gpt-image-2.5-sunburst", output_format: "png" },
+			requested: { model: "gpt-image-2.6-sunburst", output_format: "png" },
 			reported: { background: "opaque", output_format: "png", quality: "medium", size: "1024x1024" },
 			usage: { input_tokens: 12, output_tokens: 1056, total_tokens: 1068 },
 			requestId: "req_abc",
@@ -259,12 +253,15 @@ describe("arguments", () => {
 		expect(requests).toHaveLength(0);
 	});
 
-	test("rejects a model other than the Sunburst alias or snapshot", async () => {
+	test("has no model argument: every call uses GPT Image 2.6 Sunburst", async () => {
 		const tool = await openaiTool();
 
-		const error = await failure(tool.execute("c", { prompt: "x", model: "gpt-image-2" }, undefined, undefined, openaiContext()));
+		expect(argumentNames(tool)).not.toContain("model");
+		const error = await failure(
+			tool.execute("c", { prompt: "x", model: "gpt-image-2.5-sunburst" }, undefined, undefined, openaiContext()),
+		);
 
-		expect(error.message).toContain("model");
+		expect(error.message).toContain("Unknown argument(s): model.");
 		expect(requests).toHaveLength(0);
 	});
 
@@ -634,6 +631,137 @@ describe("output formats", () => {
 	});
 });
 
+describe("GIF output", () => {
+	const GIF = Buffer.from("R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==", "base64");
+
+	test("sends the frame settings and returns the API's GIF unchanged, as image/gif", async () => {
+		respond = () => imagesResponse({ data: [{ b64_json: GIF.toString("base64") }], output_format: "gif", size: "512x512" });
+
+		const result = await run({ prompt: "a looping lantern", output_format: "gif", frame_count: 9, frame_duration_ms: 200, size: "512x512" });
+
+		expect(requests[0]?.url).toBe(GENERATIONS_URL);
+		expect(requests[0]?.body).toMatchObject({ output_format: "gif", frame_count: 9, frame_duration_ms: 200, size: "512x512" });
+		const [image] = imagesOf(result);
+		expect(image?.mimeType).toBe("image/gif");
+		expect(image?.bytes.equals(GIF)).toBe(true);
+		const [saved] = outputPathsOf(result);
+		expect(path.extname(saved ?? "")).toBe(".gif");
+		expect(Buffer.from(await Bun.file(saved ?? "").bytes()).equals(GIF)).toBe(true);
+		expect(result.details).toMatchObject({ reported: { output_format: "gif" } });
+	});
+
+	test("accepts the frame bounds every OpenAI source allows", async () => {
+		respond = () => imagesResponse({ data: [{ b64_json: GIF.toString("base64") }], output_format: "gif" });
+		for (const [frame_count, frame_duration_ms] of [[2, 20], [16, 2000]]) {
+			await run({ prompt: "x", output_format: "gif", frame_count, frame_duration_ms });
+		}
+
+		expect(requests.map(request => [request.body.frame_count, request.body.frame_duration_ms])).toEqual([
+			[2, 20],
+			[16, 2000],
+		]);
+	});
+
+	test("rejects frames outside 2 to 16 and durations outside 20 to 2000 ms before any request", async () => {
+		for (const frame_count of [1, 17, 2.5]) {
+			expect((await rejected({ prompt: "x", output_format: "gif", frame_count })).message).toContain("frame_count");
+		}
+		for (const frame_duration_ms of [10, 2010, 20.5]) {
+			expect((await rejected({ prompt: "x", output_format: "gif", frame_duration_ms })).message).toContain(
+				"frame_duration_ms",
+			);
+		}
+	});
+
+	test("rejects frame settings without GIF output", async () => {
+		for (const params of [{ frame_count: 4 }, { output_format: "png", frame_duration_ms: 100 }]) {
+			const error = await rejected({ prompt: "x", ...params });
+			expect(error.message).toContain("gif");
+		}
+	});
+
+	test("rejects GIF with streaming, compression, or Reference images, which GIF generation does not take", async () => {
+		const cases: [Record<string, unknown>, string][] = [
+			[{ stream: true }, "stream"],
+			[{ stream: true, partial_images: 1 }, "stream"],
+			[{ output_compression: 50 }, "output_compression"],
+			[{ images: [{ file_id: "file-1" }] }, "Reference"],
+			[{ num_last_images_to_include: 1 }, "Reference"],
+		];
+		for (const [params, named] of cases) {
+			const error = await rejected({ prompt: "x", output_format: "gif", ...params });
+			expect(error.message).toContain(named);
+		}
+	});
+});
+
+describe("SVG output", () => {
+	const SVG = '<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><circle cx="512" cy="512" r="384" fill="#1e6bff"/></svg>';
+	const SVG_USAGE = { model: "gpt-6.1-sol", input_tokens: 1559, output_tokens: 107, reasoning_tokens: 0, total_tokens: 1666 };
+
+	beforeEach(() => {
+		respond = () =>
+			imagesResponse({ data: [{ b64_json: Buffer.from(SVG).toString("base64") }], output_format: "svg", svg_usage: SVG_USAGE });
+	});
+
+	test("sends gpt-6.1-sol as SVG author by default and saves the SVG, giving the model its path only", async () => {
+		const result = await run({ prompt: "a bakery logo", output_format: "svg" });
+
+		expect(requests[0]?.url).toBe(GENERATIONS_URL);
+		expect(requests[0]?.body).toMatchObject({ output_format: "svg", svg: { model: "gpt-6.1-sol" } });
+		expect(imagesOf(result)).toHaveLength(0);
+		const [saved] = outputPathsOf(result);
+		expect(path.extname(saved ?? "")).toBe(".svg");
+		expect(await Bun.file(saved ?? "").text()).toBe(SVG);
+		expect(textOf(result)).toContain(saved ?? "missing");
+		expect(textOf(result)).toContain("not displayed");
+		expect(result.details).toMatchObject({
+			outputs: [{ mimeType: "image/svg+xml" }],
+			requested: { output_format: "svg", svg: { model: "gpt-6.1-sol" } },
+			reported: { output_format: "svg" },
+			svgUsage: SVG_USAGE,
+		});
+	});
+
+	test("the svgAuthorModel setting picks the author, and a call's svg.model and reasoning effort win", async () => {
+		const tool = await loadTool({ imageGenerationMode: "openai", svgAuthorModel: "gpt-6-luna" });
+		for (const params of [{}, { svg: { model: "gpt-6.1-terra", reasoning: { effort: "low" } } }]) {
+			const result = await tool.execute("c", { prompt: "x", output_format: "svg", ...params }, undefined, undefined, openaiContext());
+			savedFiles.push(...outputPathsOf(result));
+		}
+
+		expect(requests.map(request => request.body.svg)).toEqual([
+			{ model: "gpt-6-luna" },
+			{ model: "gpt-6.1-terra", reasoning: { effort: "low" } },
+		]);
+	});
+
+	test("rejects SVG with more than one image, streaming, or Reference images, and svg settings without SVG", async () => {
+		const cases: [Record<string, unknown>, string][] = [
+			[{ output_format: "svg", n: 2 }, "n"],
+			[{ output_format: "svg", stream: true }, "stream"],
+			[{ output_format: "svg", images: [{ file_id: "file-1" }] }, "Reference"],
+			[{ output_format: "svg", svg: { reasoning: { effort: "extreme" } } }, "effort"],
+			[{ output_format: "png", svg: { model: "gpt-6-luna" } }, "svg"],
+		];
+		for (const [params, named] of cases) {
+			const error = await rejected({ prompt: "x", ...params });
+			expect(error.message).toContain(named);
+		}
+	});
+
+	test("rejects unknown keys inside svg and svg.reasoning before any request", async () => {
+		const cases: [Record<string, unknown>, string][] = [
+			[{ modle: "gpt-6-luna" }, "svg.modle"],
+			[{ model: "gpt-6-luna", reasoning: { effort: "low", summary: "auto" } }, "svg.reasoning.summary"],
+		];
+		for (const [svg, named] of cases) {
+			const error = await rejected({ prompt: "x", output_format: "svg", svg });
+			expect(error.message).toContain(named);
+		}
+	});
+});
+
 describe("background", () => {
 	const alphaPng = encodePng(4, 3, x => [255, 0, 0, x === 0 ? 0 : 128]);
 
@@ -665,7 +793,7 @@ describe("background", () => {
 	});
 });
 
-describe("quality, size, and moderation", () => {
+describe("quality, complexity, size, and moderation", () => {
 	test("sends every Sunburst quality and rejects legacy ones", async () => {
 		const qualities = ["auto", "low", "medium", "high", "xhigh", "max"];
 		for (const quality of qualities) await run({ prompt: "x", quality });
@@ -675,8 +803,22 @@ describe("quality, size, and moderation", () => {
 		for (const quality of ["standard", "hd"]) expect((await rejected({ prompt: "x", quality })).message).toContain("quality");
 	});
 
-	test("sends auto, the standard sizes, and valid custom sizes", async () => {
-		const sizes = ["auto", "1024x1024", "1536x1024", "1024x1536", "1536x864", "3840x2160", "2160x3840", "816x816"];
+	test("sends each complexity, for edits too, and rejects other values", async () => {
+		for (const complexity of ["low", "medium", "high"]) await run({ prompt: "x", complexity });
+		await run({ prompt: "x", complexity: "low", images: [{ file_id: "file-1" }] });
+
+		expect(requests.map(request => [request.url, request.body.complexity])).toEqual([
+			[GENERATIONS_URL, "low"],
+			[GENERATIONS_URL, "medium"],
+			[GENERATIONS_URL, "high"],
+			["https://api.openai.com/v1/images/edits", "low"],
+		]);
+		requests = [];
+		expect((await rejected({ prompt: "x", complexity: "max" })).message).toContain("complexity");
+	});
+
+	test("sends auto, the standard sizes, and any size within the documented 2.6 rules", async () => {
+		const sizes = ["auto", "1024x1024", "1536x1024", "1024x1536", "1536x864", "512x512", "3856x1296", "4096x4096"];
 		for (const size of sizes) await run({ prompt: "x", size });
 
 		expect(requests.map(request => request.body.size)).toEqual(sizes);
@@ -686,9 +828,6 @@ describe("quality, size, and moderation", () => {
 		const cases = [
 			["1000x1000", "multiples of 16"],
 			["3072x1008", "1:3 and 3:1"],
-			["3856x1296", "3840"],
-			["800x800", "655,360"],
-			["3840x2176", "8,294,400"],
 			["big", "WIDTHxHEIGHT"],
 		];
 		for (const [size, rule] of cases) {
@@ -707,9 +846,9 @@ describe("quality, size, and moderation", () => {
 	});
 
 	test("a null optional setting leaves the API default instead of a local one", async () => {
-		await run({ prompt: "x", quality: null, size: null, moderation: null, background: null, n: null, model: null });
+		await run({ prompt: "x", quality: null, complexity: null, size: null, moderation: null, background: null, n: null });
 
-		expect(requests[0]?.body).toEqual({ model: "gpt-image-2.5-sunburst", prompt: "x", output_format: "png" });
+		expect(requests[0]?.body).toEqual({ model: "gpt-image-2.6-sunburst", prompt: "x", output_format: "png" });
 	});
 
 	test("rejects legacy and unsupported fields as unknown arguments", async () => {

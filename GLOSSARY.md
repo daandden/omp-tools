@@ -65,8 +65,12 @@ The **Image generation mode** that uses a signed-in ChatGPT account's Codex imag
 _Avoid_: free mode, API-credit mode
 
 **OpenAI mode**:
-The **Image generation mode** that uses GPT Image 2.5 Sunburst through the public OpenAI Images API, billed to an API organization.
+The **Image generation mode** that uses GPT Image Sunburst through the public OpenAI Images API, billed to an API organization.
 _Avoid_: Codex API mode, free mode
+
+**SVG author**:
+The text model that writes an **OpenAI mode** SVG result from the raster image the image model drew first. It is chosen separately from the image model.
+_Avoid_: SVG model, vectorizer
 
 **OpenAI API credits**:
 The value in an API organization used to pay for API requests, including promotional grants and purchased credits. This balance is separate from signed-in Codex usage allowances.
