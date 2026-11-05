@@ -9,7 +9,9 @@ Use `generate_image` for new images, for edits of attached, pasted, or earlier g
 
 The prompt is used exactly as written, and the model sees nothing else: no conversation, no earlier prompts. Before every call, check the prompt against the criteria below: all of **Every prompt**, plus each section whose trigger applies.
 
-The tool's arguments show its Image generation mode. With `transparent_background`, it is Codex mode: size, quality, and model can't be set, so the shape follows the prompt. With `model`, `size`, and `quality`, it is OpenAI mode (GPT Image 2.5 Sunburst): set `size` when the user needs an exact shape or resolution, `quality` when they ask for drafts or the best rendering, and `n` when they want alternatives. Each image costs the user's API credits, so leave `n`, `quality`, and previews at their defaults unless the user asks.
+The tool's arguments show its Image generation mode. With `transparent_background`, it is Codex mode: size, quality, and model can't be set, so the shape follows the prompt. With `size`, `quality`, and `complexity`, it is OpenAI mode (GPT Image 2.6 Sunburst), with no per-call image-model choice. Set `size` for an exact shape or resolution, `quality` for drafts or the best rendering, and `n` for alternatives. Each image costs the user's API credits, so leave `n`, `quality`, complexity, and previews at their defaults unless the task needs a change.
+
+In OpenAI mode, complexity controls planning separately from rendering quality and defaults to `high`. Leave it at the default for a new workflow. Use `high` for open layout decisions or dense text, and start with `low` for a one-detail edit. Check surrounding details for unwanted changes. Change quality or complexity one at a time; keep complexity fixed when comparing small-text legibility at different quality settings.
 
 ## Every prompt
 
@@ -50,6 +52,11 @@ The tool's arguments show its Image generation mode. With `transparent_backgroun
 - A new logo, mascot, or character that the prompt designs from scratch is requested as original, with no existing trademarks. A character or mark the user supplies or references keeps its identity, as in any keep list. When an existing logo must match its official artwork exactly, leave its area clear and composite the official file afterwards.
 - Icons: one concept, few simple shapes, consistent stroke and perspective, centered with padding, no text.
 
+## GIF and SVG output (OpenAI mode)
+
+- For an animated GIF, set `output_format: "gif"`. Describe the motion, give the subject a starting pose to return to, and say whether the camera moves. `frame_count` is 2–16, default 9; `frame_duration_ms` is 20–2000, default 200. Set `size` for each frame. GIF is for new images only, without Reference images, streaming, or compression. The model may see only the first frame, so inspect the saved animation with local tools before judging its motion.
+- For logos or icons that must scale or be recolored by editing paths, use `output_format: "svg"` and `n` 1 or omitted. SVG is for new images only, without Reference images, streaming, or compression. The tool uses the configured SVG author unless `svg.model` overrides it; `svg.reasoning.effort` controls author reasoning separately from image complexity. The result contains a saved path only. Read the SVG file to check the output.
+
 ## Edits and reference images
 
 References:
@@ -60,7 +67,7 @@ References:
 
 Masks and markup (OpenAI mode):
 - `mask` limits an edit to the mask's transparent area. It needs an alpha channel and the format and size of the first reference. Name the masked region and its new content in the prompt as well.
-- `markup` is a transparent PNG with drawn instructions (arrows, circles, notes) over the first reference, at that image's size. The prompt says what the marks mean.
+- `markup` is a separate transparent PNG with drawn instructions (arrows, circles, notes), at the first reference's dimensions after orientation. Keep it separate from the base image, rather than flattening the marks into a copy. It applies only to image 1; other images are references. Name the marked target, explain the change and what stays, and ask to remove the annotation from the finished image.
 - Use one or the other. Both take `{ path }`, `{ image_url }`, or `{ file_id }`.
 
 Every edit prompt:
@@ -89,10 +96,10 @@ Follow-up edits:
 
 ## Transparency
 
-- When the user asks for a transparent background, a cutout, or background removal, request transparency (`transparent_background: true` in Codex mode; `background: "transparent"` in OpenAI mode, with the default format, `png`, or `webp`, never `jpeg`) and describe an isolated subject on a fully transparent background, with no backdrop, checkerboard, or shadow. Any backdrop the prompt describes overrides it.
+- When the user asks for a transparent background, a cutout, or background removal, request transparency (`transparent_background: true` in Codex mode; `background: "transparent"` in OpenAI mode, with the default format, `png`, `webp`, or `svg`, never `jpeg`) and describe an isolated subject on a fully transparent background, with no backdrop, checkerboard, or shadow. Any backdrop the prompt describes overrides it.
 - For charts and icons, name the regions that stay transparent.
 - On every later edit, request transparency again and ask to preserve the transparent background.
-- Check the saved file's alpha channel with a local tool, including fine edges (hair, glass, shadows). A painted checkerboard or a file with no alpha channel means transparency was lost: retry and restate it.
+- For raster output, check the saved file's alpha channel with a local tool, including fine edges (hair, glass, shadows). A painted checkerboard or a file with no transparent pixels means transparency was lost: retry and restate it. For SVG, read the file and check that the intended transparent regions have no background fill.
 
 ## Review and iterate
 
@@ -102,9 +109,9 @@ Check the result against every requirement in the prompt: coverage, text spellin
 - Fix an edit one thing per call: send the result back as image 1 with the change and the full keep list.
 - If one part regressed, send the original and the draft with roles, and say which parts to take from each.
 - For regions that must stay pixel-identical, paste them back from the original with local tools. For an exact aspect ratio, set `size` in OpenAI mode; in Codex mode, crop.
-- Tell the user about anything the tool can't deliver: vector output, an exact match to official logo artwork, and in Codex mode exact pixel sizes or a chosen image model or version (such as GPT Image 2.5 Flare or Sunburst).
+- Tell the user about anything the tool can't deliver: an exact match to official logo artwork, and in Codex mode vector output, exact pixel sizes, or a chosen image model or version.
 - Don't tell the user which image model made a result. The tool doesn't report it: in Codex mode the server picks the model, and in OpenAI mode the result only shows what was requested.
 
 ## Files
 
-Results are saved under `$TMPDIR` as `.webp`, or as the `output_format` asked for in OpenAI mode, and `$TMPDIR` may be cleaned. When the project needs an image, copy it into the project and leave the original in place. The image is already shown to the user, so don't embed it in the reply.
+Results are saved under `$TMPDIR` as `.webp`, or as the `output_format` asked for in OpenAI mode, and `$TMPDIR` may be cleaned. When the project needs an image, copy it into the project and leave the original in place. Raster images are already shown to the user, so don't embed them in the reply. For SVG, return the saved path after reading the file.

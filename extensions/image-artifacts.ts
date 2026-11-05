@@ -21,12 +21,13 @@ export type ArtifactPolicy = "lossless-webp" | "as-returned";
 export interface SavedImage {
 	path: string;
 	mimeType: string;
-	base64: string;
+	/** The image for the model and the user; undefined for an SVG, which neither can be shown as an image. */
+	base64?: string;
 	size?: string;
 	quality?: string;
 }
 
-const EXTENSIONS: Record<ImageFormat, string> = { png: "png", jpeg: "jpg", webp: "webp" };
+const EXTENSIONS: Record<ImageFormat, string> = { png: "png", jpeg: "jpg", webp: "webp", gif: "gif", svg: "svg" };
 
 /** Encode every image first, then write them all, so a bad image or a cancel saves nothing. */
 export async function saveImages(
@@ -38,7 +39,7 @@ export async function saveImages(
 		images.map(async (image, index) => {
 			if (policy === "lossless-webp") return { ...image, bytes: await toLosslessWebp(image.bytes), format: "webp" as const };
 			const format = imageFormatOf(image.bytes);
-			if (!format) throw new Error(`Image ${index + 1} of the response is not PNG, JPEG, or WebP data.`);
+			if (!format) throw new Error(`Image ${index + 1} of the response is not PNG, JPEG, WebP, GIF, or SVG data.`);
 			return { ...image, format };
 		}),
 	);
@@ -49,7 +50,7 @@ export async function saveImages(
 		saved: {
 			path: path.join(dir, `omp-image-${Snowflake.next()}.${EXTENSIONS[image.format]}`),
 			mimeType: mimeTypeOf(image.format),
-			base64: Buffer.from(image.bytes).toString("base64"),
+			base64: image.format === "svg" ? undefined : Buffer.from(image.bytes).toString("base64"),
 			size: image.size,
 			quality: image.quality,
 		},
@@ -85,11 +86,13 @@ export function savedImagesText(saved: readonly SavedImage[]): string[] {
 	const dir = os.tmpdir();
 	const [only] = saved;
 	if (saved.length === 1 && only) {
-		const lines = [
-			`Generated images are saved to ${dir} as ${only.path} by default. ${KEEP_ORIGINALS} The generated image is ` +
-				"already displayed to the user. There is no need to render it in the final response as a Markdown image " +
-				"or file link.",
-		];
+		const shown =
+			only.base64 === undefined
+				? "The SVG is not displayed to the user or to you as an image; read the file to check it, and give the " +
+					"user its path."
+				: "The generated image is already displayed to the user. There is no need to render it in the final " +
+					"response as a Markdown image or file link.";
+		const lines = [`Generated images are saved to ${dir} as ${only.path} by default. ${KEEP_ORIGINALS} ${shown}`];
 		const facts = reportedFacts(only);
 		if (facts) lines.push(facts);
 		return lines;

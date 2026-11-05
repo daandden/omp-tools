@@ -5,7 +5,7 @@
 ### Added
 
 - `generate_image` has two Image generation modes, set by the new plugin
-  setting `imageGenerationMode`. `openai`, the default, uses GPT Image 2.5
+  setting `imageGenerationMode`. `openai`, the default, uses GPT Image 2.6
   Sunburst through the public OpenAI Images API with the `openai` API key,
   billed to that API organization: OpenAI spends Promotional API credits
   first and then purchased credits, with no free-only guarantee. `codex` keeps
@@ -13,13 +13,23 @@
   setting move to OpenAI mode; run
   `omp plugin config set omp-tools imageGenerationMode codex` to keep Codex.
   The mode applies to new sessions, and a failure never switches modes.
-- OpenAI mode supports every Sunburst control: the pinned snapshot model, `n`
-  up to 10 (every image is saved and shown), `quality` up to `max`, standard
-  and custom sizes, `background`, `output_format` and `output_compression`
+- OpenAI mode supports `n` up to 10 (every raster image is saved and shown),
+  `quality` up to `max`, standard and custom sizes, `background`,
+  `output_format` and `output_compression`
   (explicit formats keep the API's bytes; the default is a local lossless
   WebP), `moderation`, `safety_identifier` and `user`, streamed previews with
   `partial_images`, up to 16 Reference images from paths, recent conversation
   images, URLs, or file ids, and `mask` or `markup` edits.
+- OpenAI mode adds `complexity`, separate from `quality`, with the API default
+  `high` when omitted. New GIF output supports 2–16 frames at 20–2000 ms per
+  frame, defaulting to 9 frames at 200 ms. New SVG output uses one image and
+  an SVG author selected by `svgAuthorModel` (default `gpt-6.1-sol`) or the
+  call's `svg.model`, with optional `svg.reasoning.effort`. GIF and SVG are
+  generation-only, without Reference images, streaming, or compression.
+  GIF bytes are returned unchanged as image content. SVG returns a saved
+  path to read, with author usage in `details.svgUsage`.
+- Added opt-in paid OpenAI live tests for a still image with complexity, SVG,
+  and GIF. Run `OMP_TOOLS_LIVE_IMAGES=1 bun test live` with `OPENAI_API_KEY`.
 
 - Added `sideQuestionModel` to the plugin settings, default `@smol`, for both
   `/btw` and Picker btw. It honors the role's thinking level and fallback chain.
@@ -70,6 +80,14 @@
   timeout to OMP.
 
 ### Changed
+
+- OpenAI mode now sends only `gpt-image-2.6-sunburst`. Removed the per-call
+  `model` argument and the 2.5 alias and snapshot choices. Codex mode is
+  unchanged.
+- Dropped the 2.5 maximum edge of 3840 and 655,360–8,294,400-pixel size checks.
+  OpenAI publishes no equivalent 2.6 bounds. Local checks now require only
+  `auto` or dimensions divisible by 16 with an aspect ratio of 1:3 to 3:1;
+  the API checks remaining limits. GIF dimensions describe each frame.
 
 - Updated the SDK types to OMP 18.13.3 and synchronized the `ask` description
   with upstream's instruction to show decision context before blocking.

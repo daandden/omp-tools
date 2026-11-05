@@ -157,7 +157,9 @@ function registerImageTool<D extends object>(pi: ExtensionAPI, mode: ImageMode<D
 			const saved = await saveImages(run.images, run.policy, signal);
 			return {
 				content: [
-					...saved.map(image => ({ type: "image" as const, data: image.base64, mimeType: image.mimeType })),
+					...saved.flatMap(({ base64, mimeType }) =>
+						base64 === undefined ? [] : [{ type: "image" as const, data: base64, mimeType }],
+					),
 					{ type: "text", text: [...savedImagesText(saved), ...run.notes].join("\n") },
 				],
 				details: {
@@ -207,7 +209,7 @@ async function registerConfiguredTool(pi: ExtensionAPI, cwd: string): Promise<vo
 		return;
 	}
 	if (mode === "codex") registerImageTool(pi, codexMode(pi.arktype));
-	else registerImageTool(pi, openaiMode(pi.arktype));
+	else registerImageTool(pi, openaiMode(pi.arktype, settings.svgAuthorModel));
 }
 
 /**

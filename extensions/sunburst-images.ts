@@ -31,6 +31,15 @@ export interface SunburstUsage {
 	input_tokens_details?: { image_tokens?: number; text_tokens?: number };
 }
 
+/** Tokens of the SVG author, the text model that writes an SVG from the drawn image; billed apart from `usage`. */
+export interface SvgAuthorUsage {
+	model?: string;
+	input_tokens?: number;
+	output_tokens?: number;
+	reasoning_tokens?: number;
+	total_tokens?: number;
+}
+
 /** What the API reported about a response as a whole, beside its images. */
 export interface SunburstReported {
 	background?: string;
@@ -43,6 +52,7 @@ export interface SunburstImages {
 	images: FinalImage[];
 	reported: SunburstReported;
 	usage?: SunburstUsage;
+	svgUsage?: SvgAuthorUsage;
 	/** `x-request-id`: the id OpenAI support traces a request by. */
 	requestId?: string;
 }
@@ -50,6 +60,7 @@ export interface SunburstImages {
 interface ImagesResponse extends SunburstReported {
 	data?: { b64_json?: string }[];
 	usage?: SunburstUsage;
+	svg_usage?: SvgAuthorUsage;
 }
 
 interface ApiError {
@@ -87,7 +98,7 @@ function describeApiError(head: string, status: number | undefined, error: ApiEr
 	if (status === 401) return `${message}. Check the openai API key.`;
 	if (status === 403) {
 		return (
-			`${message}. The key's organization or project may lack access to GPT Image 2.5 Sunburst or need API ` +
+			`${message}. The key's organization or project may lack access to GPT Image 2.6 Sunburst or need API ` +
 			"organization verification."
 		);
 	}
@@ -187,6 +198,7 @@ function decodeImages(text: string, requestId: string | undefined): SunburstImag
 			size: payload.size,
 		},
 		usage: payload.usage,
+		svgUsage: payload.svg_usage,
 		requestId,
 	};
 }

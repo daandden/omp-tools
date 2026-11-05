@@ -2,7 +2,7 @@
 	"name": "omp-tools",
 	"version": "0.2.0",
 	"private": true,
-	"description": "OMP flexible ask adapter, generate_image with OpenAI (GPT Image 2.5 Sunburst) and Codex modes, and read-only /btw side questions",
+	"description": "OMP flexible ask adapter, generate_image with OpenAI (GPT Image 2.6 Sunburst) and Codex modes, and read-only /btw side questions",
 	"license": "MIT",
 	"type": "module",
 	"scripts": {
@@ -27,7 +27,12 @@
 				"type": "enum",
 				"values": ["openai", "codex"],
 				"default": "openai",
-				"description": "Service and billing for generate_image. openai uses GPT Image 2.5 Sunburst with the openai API key and the API organization's billing; codex uses the ChatGPT/Codex login's image allowance. Applies to new sessions."
+				"description": "Service and billing for generate_image. openai uses GPT Image 2.6 Sunburst with the openai API key and the API organization's billing; codex uses the ChatGPT/Codex login's image allowance. Applies to new sessions."
+			},
+			"svgAuthorModel": {
+				"type": "string",
+				"default": "gpt-6.1-sol",
+				"description": "SVG author for generate_image's OpenAI mode: the OpenAI text model that writes an SVG from the drawn image, billed at that model's token rates. A call's svg.model overrides it. Empty uses gpt-6.1-sol. Applies to new sessions."
 			},
 			"sideQuestionModel": {
 				"type": "string",
