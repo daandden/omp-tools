@@ -382,8 +382,10 @@ BTW history, and autocomplete is OMP's.
 - Model and context: `/btw` and Picker btw use the `sideQuestionModel` plugin
   setting, default `@smol`, with that role's thinking level. Each thread copies
   the live conversation and uses OMP's default system prompt for its five tools.
-  An empty setting uses the main model. An unresolvable selector uses the main
-  model with a warning. If the history exceeds the selected model's context
+  An empty setting uses the main model. A selector that does not resolve makes
+  the plugin refresh the providers it names and look again; if it still does
+  not resolve, the thread uses the main model with a warning that names the
+  missing model. If the history exceeds the selected model's context
   window, the thread uses the main model instead. A call the main agent still
   waits on (a pending `ask`, or a tool still running) shows to the side
   question as still open, not as failed. The first side question in a main

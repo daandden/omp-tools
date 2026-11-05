@@ -38,7 +38,7 @@ export default function sideQuestionProbe(pi: ExtensionAPI): void {
 		for (const question of PROMPTS[probe]!) {
 			let thread: SideQuestionThread | undefined;
 			try {
-				thread = await SideQuestionThread.open(ctx);
+				thread = await SideQuestionThread.open(ctx, new AbortController().signal);
 				const tools = thread.toolNames;
 				const answer = await thread.ask(
 					question,

@@ -48,7 +48,7 @@ class BtwCycle {
 		void answerInto(
 			turn,
 			async callbacks =>
-				(await this.#thread.get()).ask(prompt.render(btwPrompt, { question }), callbacks, abort.signal, images),
+				(await this.#thread.get(abort.signal)).ask(prompt.render(btwPrompt, { question }), callbacks, abort.signal, images),
 			() => this.#render(),
 		).then(() => {
 			if (this.#abort === abort) this.#abort = undefined;

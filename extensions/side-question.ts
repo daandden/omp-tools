@@ -354,12 +354,13 @@ export class SideQuestionThread {
 		this.#contextFallback = contextFallback;
 	}
 
-	static async open(ctx: ExtensionContext): Promise<SideQuestionThread> {
+	static async open(ctx: ExtensionContext, signal: AbortSignal): Promise<SideQuestionThread> {
 		const main = liveSession(ctx);
 		const parentFile = ctx.sessionManager.getSessionFile();
 		const model = main?.model;
 		if (!main || !parentFile || !model) throw new Error("Side questions need a saved main session.");
-		const selected = await sideQuestionModel(main, ctx.cwd);
+		const selected = await sideQuestionModel(main, ctx.cwd, signal);
+		if (signal.aborted) throw new DOMException("Side question cancelled", "AbortError");
 		if (selected?.warning) ctx.ui.notify(selected.warning, "warning");
 		const contextFallback = selected?.model && (selected.model.provider !== model.provider || selected.model.id !== model.id)
 			? {
@@ -562,9 +563,10 @@ export class LazySideQuestionThread {
 		this.#ctx = ctx;
 	}
 
-	get(): Promise<SideQuestionThread> {
+	/** The first caller's `signal` cancels the open; a cancelled open is retried by the next `get`. */
+	get(signal: AbortSignal): Promise<SideQuestionThread> {
 		if (!this.#thread) {
-			const opening = SideQuestionThread.open(this.#ctx);
+			const opening = SideQuestionThread.open(this.#ctx, signal);
 			this.#thread = opening;
 			opening.catch(() => {
 				if (this.#thread === opening) this.#thread = undefined;

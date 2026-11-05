@@ -100,7 +100,14 @@ the Picker btw asks the same kind of Side question.
   `side-question-model.ts` reads it per thread with `getPluginSettings` and
   resolves the role and thinking level with `resolveModelOverride`. The fork
   records the selected role so shared-model roles retain their own fallback
-  chains. An unresolved selector warns and keeps the main model. The mirror's
+  chains. An unresolved selector refreshes the providers its patterns name
+  (`refreshDiscoverableProviders(..., "online")`, never `refreshProvider`,
+  whose static reload drops discovered models) and resolves again: a running
+  OMP can lose discovery-only models such as Codex `gpt-6.1-terra` after a
+  denied discovery with no usable model cache, until restart. The ask's
+  signal, passed through `LazySideQuestionThread.get` and `open`, ends the
+  wait at once without aborting the shared refresh. Still unresolved, it
+  warns with the missing model and keeps the main model. The mirror's
   tokenizer checks the live history with prompt and tool overhead before the
   first request; a known context window too small uses the main model instead.
   OMP still owns overflow recovery if that model also cannot fit. The mirror
@@ -483,7 +490,8 @@ Run typechecking and `bun test` after code changes; tests cover
 `generate_image`, `parseBtwQuestion`, `AnswerEditor` paste handling, the Picker
 draft, the host `askDialog` route, the real Side question session's model,
 thinking, context boundary, images, fallback and cost cap, cache-miss tracking,
-usage ledger, and recovery rendering. There is
+usage ledger, recovery rendering, and the Side question model's provider
+refresh over a real registry whose Codex catalog lost a discovered model. There is
 no repository CI. Registration, ask, and Side question changes
 require a fresh-session OMP smoke; typechecking alone does not exercise host
 integration or UI. OMP 18.13.3 with Tern 0.9.7 proved both renderers' primary
