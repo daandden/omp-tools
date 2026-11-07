@@ -509,8 +509,9 @@ omp plugin link "$PWD"
   state for display.
 - **Cancellation.** Thread `signal` through the UI, the mirror session, and
   HTTP. Network clients combine the tool signal with a 5-minute timeout and
-  tell a user abort from a timeout. Cancelled tools call `ctx.abort()` and
-  throw `ToolAbortError`.
+  throw `ToolAbortError` on a user abort but a plain `Error` on a timeout.
+  Only a user's cancel in the Picker also calls `ctx.abort()`, which ends the
+  main turn; other tools leave the turn running.
 - **State.** Long-lived state sits in per-load owners (`PickerDraftSlot`,
   `BtwCycle`, `LazySideQuestionThread`) that the session switch, branch,
   tree, and shutdown events dispose. State shared across module loads lives
