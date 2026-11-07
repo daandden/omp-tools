@@ -1,488 +1,14 @@
 # omp-tools
 
-Local OMP adapters: flexible questions, `generate_image` with OpenAI
-(GPT Image 2.6 Sunburst) and Codex modes, and read-only side questions (`/btw`
-and the Picker btw).
-Formerly `omp-ask`.
-
-## `ask`
-
-Removes the model-facing option count: the description asks for distinct
-options without a number (native says 2–5). The rest of the description,
-including when to ask, matches native `ask`.
-
-In the interactive TUI the wrapper shows its own picker so questions keep their
-Markdown: headings, lists, paragraph breaks, and code blocks. Option
-descriptions and previews are Markdown too. Tall questions scroll with
-PgUp/PgDn. After you scroll, the first move or action key brings the cursor
-back into view instead of acting on a hidden row. The picker keeps the native
-structure: tabs and a Submit review for several or multi-select questions,
-`Other (type your own)`, `ask.timeout` auto-selection, and `ask.notify`.
-
-### Keys
-
-Each key means the same thing in every picker:
-
-| Key | Action |
-|---|---|
-| j/k or ↑/↓ | Move between rows (on the Submit tab, scroll) |
-| h/l, ←/→, or Tab | Switch tabs (when there is a Submit tab) |
-| Space | Toggle the row and stay. Single-select un-picks the others |
-| Enter | Finish the question. Single-select picks the row first, then goes to the next question. The last question goes to the Submit tab, or submits when there is none. On the Submit tab, submit |
-| n | Edit the row's text: the option's note, the `Other` answer, or, on the Submit tab, the Submit note |
-| x | Clear that text (on `Other`, also un-pick it) |
-
-Space or Enter on an empty `Other` opens its editor. In an editor, Enter (or
-Ctrl+Q) saves and stays on the row, and Esc discards the edit. Saving `Other`
-text picks it. Above a note or `Other` editor, the picker shows the question's
-title (its `header`), the question, and the row you edit with its description.
-
-### Differences from native `ask`
-
-Answering differs from native `ask`:
-
-- Nothing typed is lost by picking. Every option keeps its own note through
-  select and deselect, and un-picking `Other` keeps its text (`n` and save picks
-  it again).
-- The Submit tab has a Submit note for the whole ask.
-- On timeout, unanswered questions get the recommended option.
-- The agent gets a compact labeled summary instead of `id: value` lines: each
-  question's id and first line, `Selected:` with a short description of each
-  option, `Other:` for your own text, `Note (<option>):` for every note
-  (`Note (<option>, not picked):` on options you did not pick), `Unanswered`
-  for skipped questions, and `Note on all answers:` for the Submit note.
-  Checkbox questions send ticked options and `Other` text together (native ask
-  drops the ticks).
-
-### Editors
-
-The `Other` answer, option-note, and Submit note editors are the main prompt's
-own editor, so they behave like it. They have the same suggestions (`@` files,
-`^` models, `/` file commands and skills, internal URLs such as `skill://`,
-`rule://`, `local://`, `agent://`, `artifact://`, and `omp://`, emoji, GitHub
-refs, and other extensions' providers), ghost-text word completion, typo
-detection and autocorrect, vim mode, and multi-line input. Shift+Enter, Ctrl+J,
-or Alt+Enter inserts a newline, and Enter or Ctrl+Q saves. Ctrl+C clears the
-text and never exits omp from here.
-
-Answers only reference things, and nothing in them runs. `/` suggests commands
-you keep as files (`~/.agents/commands`, `~/.omp/commands`, project command
-folders) and skills, each with its own icon. Skills insert as `/<name>` without
-the `skill:` prefix. Only names that start with what you typed, or have a
-hyphenated part that does, are offered. Built-in and extension commands are not
-suggested. `skill://` and `rule://` also work. `#` prompt actions are hidden,
-accepting a suggestion only inserts its text, and Enter saves exactly what you
-typed, so a `/command` is never run or auto-completed. There is no history,
-push-to-talk, or draft saving. The external editor key (`app.editor.external`,
-Ctrl+G by default) opens the current text in `$VISUAL`/`$EDITOR` and writes the
-result back.
-
-Images paste as in the main prompt. In Tern, Cmd+V pastes text or a copied
-image into an open `Other`, option-note, or Submit note editor. On the option
-list, the picker pastes nothing and says to open a note with `n` or choose
-`Other`. The image-paste key (Ctrl+V by default) reads a copied image, a copied
-Finder file, or an image path on the clipboard, and pasting an image file path
-also attaches it. For a file copied in Finder, Cmd+V in Tern pastes only the
-text Tern offers for it, as in the main prompt, so use the image-paste key to
-attach the file. Each image shows as the main prompt's image chip, and deleting
-the chip drops the image. Images go to the model after the answer text,
-labeled `[Image #N]` to match. To copy question or option text, select it with
-the mouse and press Cmd+C.
-
-### Picker btw
-
-`?` asks a Picker btw: a side question about the ask or the conversation,
-answered inside the picker. The options give way to a thread with a question
-box below it (the same editor as `Other`). Pasted images go with the question.
-Enter asks. The
-answer streams into the thread, and later questions in the same ask follow up
-on the earlier ones. The side question also sees your answers so far (ticked
-options, `Other` text, notes), so "is my pick a good idea?" works. It can look
-things up with read-only tools (see [Side questions](#side-questions)); its
-tool calls fold into "N tool calls" lines between the answer's text, and each
-opens with a click in Tern. Esc
-while an answer streams cancels it and keeps the partial text. The next Esc
-returns to the options with your answers untouched, and `?` reopens the
-thread. PgUp/PgDn scroll a long thread. The thread is discarded when the ask
-ends, unless Esc keeps it in a Picker draft (see
-[Esc keeps your answers](#esc-keeps-your-answers)). The agent never sees it. To
-tell the agent something, put it in `Other` or a note.
-
-A Picker btw is not OMP's `/btw`: it is not saved to BTW history and cannot be
-branched or copied from a panel. It does not change your main prompt.
-`ask.timeout` stops when you press `?` and stays stopped (the title reads
-`Ask (timer paused)`) until your next key in the options, which restarts it in
-full. When side questions cannot run (no saved session, a subagent),
-`? btw` is not offered.
-
-### Esc keeps your answers
-
-Esc (or **Cancel** in Tern) on the options or the Submit tab cancels the ask,
-as in native `ask`. The picker keeps a Picker draft: your picks, notes, `Other`
-answers, the Submit note, the open tab and row, and the Picker btw thread.
-Press F5 (OMP's Retry) to run the cancelled ask again. The picker opens where
-you left it and says `Restored your answers` until your next key. The restore
-sends nothing by itself. With `ask.timeout` set, the countdown starts again in
-full, as for any ask.
-
-The draft opens for any ask with the same questions: the same ids, question
-text, option labels, and single or multi-select. So it also opens when you tell
-the agent to go on and it asks the same questions again. Each session keeps one
-draft. A picker with other questions drops it, and so do a submit, `/new`,
-`/resume`, `/fork`, a branch, a tree jump, and quitting omp. An Esc before you
-answer anything keeps only the tab and row, and the picker reopens there
-without the note.
-
-### Questions from OMP itself
-
-Some OMP features ask you directly instead of through the `ask` tool, such as
-Ratchet's approvals and an ask answered again from `/tree`. In the interactive
-TUI these questions open in the same picker, with notes, `Other`, the Picker
-btw, and the Picker draft. The feature gets the answer in its native form: your
-picks and `Other` text, and one note per question that lists each note after
-its option, with the Submit note last. Esc answers nothing, as in the native
-dialog, and keeps a Picker draft: the same question opens with it again and
-waits for Enter. A timeout counts down only when the feature sets one;
-`ask.timeout` and `ask.notify` apply to the `ask` tool only. Questions that the
-native dialog would refuse (a reserved label, or a repeated id or label) open
-the native dialog. Collaboration guests cannot answer these questions.
-
-### Outside the TUI
-
-Outside the TUI (RPC/ACP/print, subagents), and for inputs native `ask` rejects,
-execution delegates to native `ask`. Differences from the native picker:
-plan mode does not disable `ask.timeout`, answers are not spoken when
-`speech.enabled` is on, and collaboration guests cannot answer.
-
-Keep native `ask` enabled for delegation:
-
-```yaml
-ask:
-  enabled: true
-```
-
-### In Tern
-
-In [Tern](https://docs.stencil.so/tern/) (and other terminals that speak the
-Tern Surface Protocol), the picker is drawn by the terminal instead of as text
-rows. It sits in the composer's place, like native `ask`, but spans the full
-width of the pane instead of the composer's width. Each option is a row: the
-marker, then the label with its Markdown description, preview, and note or
-`Other` text below it. The rows use Tern's theme as native `ask`'s rows do:
-its UI font, primary and muted text colors, a gray fill on the highlighted row
-and on hover, a Recommended badge, and a filled marker on a picked row. They
-switch with Tern's light and dark appearance. The countdown is a ring.
-A row of buttons below the options shows each key with its keycap. The editors
-for `Other`, notes, the Submit note, and the Picker btw are Tern's own text
-fields, without the main prompt's model chip and send button.
-
-The question and its options sit in one box that is as tall as the current
-question needs, up to 70% of the pane's height (70% of the terminal in the
-classic text picker). A short question gives a short picker, so the picker can
-change height when you switch tabs. Taller content scrolls inside the box: use
-the wheel, PgUp/PgDn, or j/k (the
-highlighted row stays in view). A question first shows from its top. When the
-highlighted row is below the box, the first key only brings it into view, so
-no key acts on a row you have not seen. In an editor or the Picker btw, the box
-above it shows the question with its title and the row you edit, every answer
-(for the Submit note), or the thread.
-
-The keys stay the same. The pointer runs the same paths:
-
-| Pointer | Same as |
-|---|---|
-| Click a tab | Switching to that tab |
-| Click an option | Moving to it, then Space |
-| Double-click an option | Moving to it, then Enter |
-| Click a button | Its key (`?`, Space, `n`, `x`, Esc, Enter) |
-
-The `ask` tool card in the transcript uses native ask's Tern view: the question
-and its answers with a check on each pick, plus the Submit note.
-`PI_TUI_NATIVE=0` keeps the text picker.
-
-## `generate_image`
-
-Replaces native `generate_image`. The prompt goes to the image backend
-unchanged, with no chat model in between. The model sees raster results and
-gets a path to read for SVG results. The tool has two Image generation modes,
-chosen by the plugin setting `imageGenerationMode`:
-
-- `openai` (the default): GPT Image 2.6 Sunburst through the public OpenAI
-  Images API (`api.openai.com/v1/images/generations` and `/edits`), with an
-  OpenAI API key, billed to that key's API organization.
-- `codex`: the Codex Images endpoint
-  (`chatgpt.com/backend-api/codex/images/generations` and `/edits`) with a
-  ChatGPT/Codex login, the way the official Codex CLI calls it, drawing on the
-  account's Codex image allowance.
-
-Installations without the setting use OpenAI mode. To keep the Codex
-behavior, set the mode to `codex`:
-
-```sh
-omp plugin config set omp-tools imageGenerationMode codex
-```
-
-The mode is read when a session starts, `/new`, `/resume`, and `/fork`
-included, so a change applies to the next session; a running call keeps its
-mode. An invalid value, an empty one included, makes every call fail
-with the fix instead of picking a service. Neither mode falls back to the
-other, to native `generate_image`, or to another provider when it fails,
-because a fallback would change the credential and the balance charged
-(`docs/adr/0002-explicit-image-generation-modes.md`).
-
-Each mode registers only its own arguments; unknown arguments are rejected
-with an error. Requests time out after 5 minutes, cancelling the tool cancels
-the request, and no request is retried automatically.
-
-### OpenAI mode
-
-It needs an OpenAI API key for OMP's `openai` provider: `OPENAI_API_KEY`, or a
-key stored for `openai` in OMP. A ChatGPT/Codex login does not cover the
-public Images API. OpenAI mode sends the key only to the first-party API; if
-the `openai` provider is configured for another base URL, calls fail instead.
-The `OpenAI-Organization` and `OpenAI-Project` headers come from the `openai`
-provider's configured headers, or from `OPENAI_ORG_ID` and `OPENAI_PROJECT_ID`.
-
-Billing is normal API billing on the API organization. OpenAI spends
-Promotional API credits (the free grant some ChatGPT subscriptions link to an
-API organization) before purchased OpenAI API credits, and requests continue
-on purchased credits once the grant runs out. The tool cannot limit a request
-to free credits, does not select a credit grant, and does not report which
-balance paid. When the organization has no credits left, the error says so
-and tells the model not to retry; an ordinary rate limit says to wait.
-
-OpenAI mode always sends `gpt-image-2.6-sunburst`; there is no per-call
-`model` argument.
-
-Arguments (all optional except `prompt`; `null` is treated as omitted):
-
-- `prompt`: the image or edit description, up to 32,000 characters.
-- `n`: 1–10 images; every image is saved and returned, in the API's order.
-- `quality`: `auto`, `low`, `medium`, `high`, `xhigh`, or `max`.
-- `complexity`: `low`, `medium`, or `high`, separate from rendering `quality`.
-  Omitted means the API default `high`.
-- `size`: `auto`, `1024x1024`, `1536x1024`, `1024x1536`, or `WIDTHxHEIGHT`
-  with both edges multiples of 16 and an aspect ratio from 1:3 to 3:1. OpenAI
-  publishes no 2.6 edge or total-pixel bounds; the API checks remaining limits.
-  For GIF output, `size` is each frame's size.
-- `background`: `auto`, `opaque`, or `transparent` (PNG, WebP, SVG, or the
-  default format).
-- `output_format`: `png`, `jpeg`, `webp`, `gif`, or `svg`;
-  `output_compression` 0–100 for JPEG and WebP only.
-- `frame_count`: 2–16, default 9, and `frame_duration_ms`: 20–2000,
-  default 200. Both require `output_format: "gif"`. GIF is for new images
-  only, without Reference images, streaming, or `output_compression`.
-- `svg`: optional author settings for `output_format: "svg"`, with `model`
-  and `reasoning: { effort }`. Effort is `none`, `minimal`, `low`, `medium`,
-  `high`, `xhigh`, or `max`, subject to the author's support. A call's settings
-  override the plugin's SVG author. SVG is for new images only, with `n` 1 or
-  omitted, without Reference images, streaming, or `output_compression`.
-- `moderation`: `auto` or `low` (less strict filtering, not none).
-- `safety_identifier` (up to 128 characters) or the deprecated `user`. A
-  nonempty `safety_identifier` is sent instead of `user`. The tool sends only
-  identifiers the caller gives and never shows them in the result.
-- `stream` and `partial_images` (0–3): stream the response and show previews
-  while the image renders. Each preview costs 100 extra image output tokens,
-  and fewer previews may arrive. Previews are never saved.
-- Reference images, from one source per call: `referenced_image_paths`
-  (absolute paths), `num_last_images_to_include` (the last 1–16 conversation
-  images, oldest first), or `images` (`{ image_url }` with an https or data URL,
-  or `{ file_id }`). Up to 16 references; any reference makes the call an edit.
-  PNG, JPEG, and WebP files go out unchanged; other formats as PNG.
-- `mask` or `markup`, for edits: `{ path }`, `{ image_url }`, or `{ file_id }`.
-  A mask is a PNG or WebP with alpha, in the format and size of the first
-  Reference image; the edit applies where it is transparent. A markup is a
-  transparent PNG with visual instructions, the size of the first Reference
-  image after its EXIF orientation. They cannot be combined. Local files and
-  data URLs are checked before sending and go out byte-identical; remote URLs
-  and file ids are checked by the API.
-
-Output: with `output_format` omitted, the tool requests PNG and saves a
-lossless WebP converted locally, which keeps every visible pixel and alpha
-value (the encoder drops the color hidden under fully transparent pixels).
-With an explicit format, the tool saves the API's own bytes unchanged.
-Files go to `$TMPDIR/omp-image-<id>.<png|jpg|webp|gif|svg>`, with the
-extension matching the bytes. The model gets every raster image, its saved
-path, and the size and quality the API reported. GIF content is returned
-unchanged as `image/gif`; the tested Claude Haiku 5.5 and Codex gpt-6-luna
-routes accepted it but saw only the first frame. SVG returns its path only,
-with an instruction to read the file, not image content.
-
-The result's details keep requested settings apart from reported ones, with
-token usage and the `x-request-id`; errors name the request id.
-`details.requested` includes complexity, frame controls, and the sent `svg`
-object. `details.svgUsage` keeps the API's separate `svg_usage`.
-
-Choose the SVG author in **Settings > Plugins > omp-tools**, or with:
-
-```sh
-omp plugin config set omp-tools svgAuthorModel gpt-6.1-sol
-```
-
-The `svgAuthorModel` setting defaults to `gpt-6.1-sol`; an empty value uses
-that default. It is read when a session starts, including `/new`, `/resume`,
-and `/fork`. Each SVG request sends `svg: { model }`, because the API requires
-an author model. A call's `svg.model` overrides the setting, and
-`svg.reasoning.effort` controls that author's reasoning, not image complexity.
-
-### Codex mode
-
-It needs a ChatGPT/Codex login: log in to `openai-codex` with `/login`.
-Arguments match Codex's:
-
-- `prompt` (required): the image or edit description.
-- `transparent_background`: request a transparent background.
-- `referenced_image_paths`: absolute paths of images to edit or draw from.
-- `num_last_images_to_include` (1–5): use the last N images in the
-  conversation, such as pasted images, tool results, and earlier generated
-  images. It cannot be combined with `referenced_image_paths`.
-
-The Codex endpoint ignores size and quality, so state the aspect ratio in the
-prompt. Output is about 1.57 megapixels, and the server chooses the quality
-and the model.
-
-PNG, GIF, BMP, and other non-JPEG references are sent as lossless WebP (about
-25% smaller than PNG, same image-token cost). JPEG and WebP references are sent
-unchanged. The result is saved as lossless WebP to
-`$TMPDIR/omp-image-<id>.webp`. The model gets the image, the saved path, and the
-size and quality the backend reported. The tool result's details also keep the
-request id, generation id, and output token count for tracing a result with
-OpenAI. HTTP errors name the request id.
-
-Guards, for Codex mode only:
-
-- A request body over 64 MB is rejected before sending. Larger bodies get false
-  `moderation_blocked` errors, or the backend silently drops the references and
-  returns an unrelated image.
-- An edit that reports 0 input image tokens fails instead of returning an image
-  that ignored the references.
-- A usage limit error names the limit, the plan, and the reset time, and tells
-  the model not to retry before then.
-- A successful result notes when the image limit window is at least 80% used,
-  with its reset time.
-
-### Prompting, tool cards, and setup
-
-The bundled `generate-image` skill is a checklist the model runs on every
-prompt before sending it. The criteria come from vendor prompting guides,
-text-to-image research and benchmarks, and creative-brief practice
-(`docs/research/image-prompting-*.md`, `docs/research/image-prompt-criteria-*.md`,
-`docs/research/image-prompt-format.md`, and
-`docs/research/gpt-image-2.6.md`). The `docs/research/gpt-image-2.5-*.md`
-notes preserve the earlier research. The shared prompt rules hold in both
-modes; the skill also covers OpenAI complexity, GIF, and SVG:
-
-- every prompt: purpose first, one concrete main subject, every requested
-  element with nothing invented, visible terms instead of praise, attributes
-  bound to their nouns, positive scene content, and constraints last
-- when relevant: shape, counts, placement, actions, people, specialist terms,
-  overlay space, and consistent image sets
-- text and graphics: exact quoted final strings, real data, original logos
-- edits: roles first, one explicit operation with its scope, a keep list, rules
-  for each kind of operation, and self-contained follow-ups
-- transparency set for cutouts and checked in the alpha channel, and review
-  against every requirement
-
-In Tern, the tool card heads with the prompt's first line, the reference count,
-the mode's settings (such as `n 2` or `transparent`), and the size and quality.
-Below it are each saved path (click to open the file), the Codex near-limit
-warning, a folded copy of a long prompt, and the images. While a stream runs,
-the card shows the latest preview as in progress. An error shows its message
-in red.
-
-Turn off native image generation. The plugin's tool wins either way, because
-OMP adds native tools after extensions and skips names that are taken:
-
-```yaml
-generate_image:
-  enabled: false
-```
-
-## Side questions
-
-`/btw <question>` in the main editor asks a side question that can look things
-up. It replaces OMP's `/btw` answer for that form; bare `/btw` still opens OMP's
-BTW history, and autocomplete is OMP's.
-
-- Tools: only read, grep, glob, find, and web_search are offered, whatever
-  tools the main agent has, so a side question cannot ask you, run commands,
-  or message or stop agents. Each tool keeps its own size limits, and there is
-  no cap on rounds. `read agent://<id>` reads the main session's agents, also
-  one still running that has no output yet.
-- Model and context: `/btw` and Picker btw use the `sideQuestionModel` plugin
-  setting, default `@smol`, with that role's thinking level. Each thread copies
-  the live conversation and uses OMP's default system prompt for its five tools.
-  An empty setting uses the main model. A selector that does not resolve makes
-  the plugin refresh the providers it names and look again; if it still does
-  not resolve, the thread uses the main model with a warning that names the
-  missing model. If the history exceeds the selected model's context
-  window, the thread uses the main model instead. A call the main agent still
-  waits on (a pending `ask`, or a tool still running) shows to the side
-  question as still open, not as failed. The first side question in a main
-  session does not reuse the main agent's prompt cache. Its follow-ups, and
-  later side questions in the same session, reuse the side question cache:
-  on Codex they go over SSE with their own cache key, since a new websocket
-  missed it.
-- Cache misses: with OMP's Cache Miss Marker setting on
-  (`display.cacheMissMarker`), an answer whose requests had to write the
-  cached prompt again shows `⊘ cache miss · N tokens` under it, in the panel
-  and in the Picker btw. Like OMP's marker, it shows only for providers that
-  report cache writes (Anthropic), not for Codex. Expectations are separate
-  for each provider and model, so a model switch is not counted as a miss.
-- Privacy: only you see the answers, and the agent never sees a side question.
-  Each side question request's token usage, and that of its background calls
-  such as cache warms, is recorded in the main session's usage, so the
-  session's cost includes it; no message is added. Side questions also share
-  the main session's spending cap, including background cache warms.
-- Panel: answers show in a panel above the editor, and the editor keeps focus.
-  Each side question shows as your messages do in the main chat: Markdown in
-  a block on the user message background (a user bubble in Tern), in the
-  panel and in the Picker btw. An answer shows its text and its tool calls in
-  the order they happened; each group of calls folds into one "N tool calls"
-  line. With the editor empty, `t` opens or folds them (a click on a line
-  works in Tern), and Esc cancels a running answer or closes the panel.
-- Recovery: Side questions use OMP's configured retry and fallback chains,
-  including the selected model role's chain. Both views show retry countdowns,
-  model switches, and the final retry error. Provider transport retries happen
-  before OMP emits these events and can still leave the panel showing
-  `Answering…`. Esc cancels either kind of wait.
-- Threads: a later `/btw` follows up in the same thread, also after Esc closed
-  the panel. Your next main prompt ends the thread and clears the panel when
-  the agent takes it (a prompt queued while the agent works ends it then). If
-  an answer is still running at that point, it finishes and shows, but takes no
-  follow-up; the next `/btw` starts a new thread.
-- Images attached to `/btw` go with the question and remain in the thread for
-  follow-ups, as pasted images do in Picker btw.
-- Where it applies: the interactive TUI with a saved session. In a focused
-  subagent view, RPC, ACP, or print mode, `/btw` stays OMP's. File commands with
-  `side: true` also use native `/btw`.
-
-A side question runs as a separate agent session (a copy of the main
-transcript in a temporary folder, deleted when the thread ends), so it costs
-tokens like a short agent turn.
-
-Choose the model in **Settings > Plugins > omp-tools**, or with:
-
-```sh
-omp plugin config set omp-tools sideQuestionModel '@smol'
-```
-
-The value accepts OMP model selectors such as `@smol:low` or
-`provider/model:high`. A change applies when the next thread opens, not during
-an existing thread.
-
-OMP's fallback chains can inherit the default chain and revisit an earlier
-model. If every route fails, that can keep running until Esc. Side questions
-preserve OMP's policy. To make a backup terminal, give its exact model an empty
-chain in OMP's configuration. For example:
-
-```yaml
-retry:
-  fallbackChains:
-    smol:
-      - provider/backup:low
-    provider/backup: []
-```
+An Oh My Pi (OMP) plugin that changes three tools:
+
+- `ask` shows questions as Markdown in its own Picker, with no fixed option
+  count, a note on every option, and answers kept when you press Esc.
+- `generate_image` has two Image generation modes: OpenAI mode (GPT Image 2.6
+  Sunburst through the public OpenAI Images API) and Codex mode (the Codex
+  Images endpoint with a ChatGPT login).
+- `/btw <question>` asks a Side question that can look things up with
+  read-only tools. `?` in the Picker asks one about the open question.
 
 ## Install
 
@@ -497,89 +23,549 @@ The link uses the working tree, so edits need no reinstall. Start a new OMP
 session after you link the plugin or change its code. Running sessions keep the
 tool definitions they loaded.
 
-This plugin replaces the earlier `omp-ask` plugin. Do not load both, and do not
+The plugin replaces the earlier `omp-ask` plugin. Do not load both, and do not
 install a second loose copy of the ask extension.
+
+Keep native `ask` enabled, because the plugin hands questions to it outside
+the TUI. Turn off native `generate_image`. The plugin's tool takes the name
+even when native is on.
+
+```yaml
+ask:
+  enabled: true
+generate_image:
+  enabled: false
+```
+
+## `ask`
+
+The model-facing description asks for distinct options without a number
+(native says 2–5). The rest matches native `ask`, including when to ask.
+
+In the interactive TUI the plugin shows its own Picker, so questions keep their
+Markdown: headings, lists, paragraph breaks, and code blocks. Option
+descriptions and previews are Markdown too. The Picker keeps the native
+structure: tabs and a Submit review for several or multi-select questions,
+`Other (type your own)`, `ask.timeout` auto-selection, and `ask.notify`.
+
+Tall questions scroll with PgUp/PgDn. After you scroll, the first move or
+action key brings the cursor back into view instead of acting on a hidden row.
+
+### Keys
+
+Each key means the same thing in every Picker:
+
+| Key | Action |
+|---|---|
+| j/k or ↑/↓ | Move between rows (on the Submit tab, scroll) |
+| h/l, ←/→, or Tab | Switch tabs (when there is a Submit tab) |
+| Space | Toggle the row and stay. Single-select un-picks the others |
+| Enter | Finish the question. Single-select picks the row first, then goes to the next question. The last question goes to the Submit tab, or submits when there is none. On the Submit tab, submit |
+| n | Edit the row's text: the option's note, the `Other` answer, or, on the Submit tab, the Submit note |
+| x | Clear that text (on `Other`, also un-pick it) |
+| ? | Ask a Picker btw |
+
+Space or Enter on an empty `Other` opens its editor. In an editor, Enter (or
+Ctrl+Q) saves and stays on the row, and Esc discards the edit. Saving `Other`
+text picks it. Above a note or `Other` editor, the Picker shows the question's
+title (its `header`), the question, and the row you edit with its description.
+
+### Differences from native `ask`
+
+- Picking never loses typed text. Every option keeps its own note through
+  select and deselect. Un-picking `Other` keeps its text, and `n` then save
+  picks it again.
+- The Submit tab has a Submit note for the whole ask.
+- On timeout, unanswered questions get the recommended option.
+- Plan mode does not turn off `ask.timeout`, and `speech.enabled` does not
+  read the questions aloud.
+- Collaboration guests cannot answer.
+- The agent gets a compact labeled summary instead of `id: value` lines:
+  - each question's id and first line
+  - `Selected:` with a short description of each option
+  - `Other:` for your own text
+  - `Note (<option>):` for every note, or `Note (<option>, not picked):` on an
+    option you did not pick
+  - `Unanswered` for a skipped question
+  - `Note on all answers:` for the Submit note
+
+  Checkbox questions send ticked options and `Other` text together. Native
+  `ask` drops the ticks.
+
+### Editors
+
+The `Other`, option-note, and Submit note editors are the main prompt's own
+editor, so they behave like it. They offer the same suggestions: `@` files, `^`
+models, `/` file commands and skills, internal URLs such as `skill://`,
+`rule://`, `local://`, `agent://`, `artifact://`, and `omp://`, emoji, GitHub
+refs, and other extensions' providers. They also have ghost-text word
+completion, typo detection and autocorrect, vim mode, and multi-line input.
+Shift+Enter, Ctrl+J, or Alt+Enter inserts a newline. Ctrl+C clears the text and
+never exits omp from here. There is no history, push-to-talk, or draft saving.
+The external editor key (`app.editor.external`, Ctrl+G by default) opens the
+text in `$VISUAL` or `$EDITOR` and writes the result back.
+
+Nothing typed in an answer runs. `/` suggests only commands you keep as files
+(`~/.agents/commands`, `~/.omp/commands`, and project command folders) and
+skills, each with its own icon. Built-in and extension commands are not
+offered. A skill inserts as `/<name>` without the `skill:` prefix. A name is
+offered only when it, or one of its hyphenated parts, starts with what you
+typed. `#` prompt actions are hidden. Accepting a suggestion only inserts its
+text, and Enter saves exactly what you typed.
+
+Images paste as in the main prompt:
+
+- In Tern, Cmd+V pastes text or a copied image into an open editor. On the
+  option list, the Picker pastes nothing and says to open a note with `n` or
+  choose `Other`.
+- The image-paste key (Ctrl+V by default) reads a copied image, a file copied
+  in Finder, or an image path on the clipboard. Cmd+V on a file copied in
+  Finder pastes only the text Tern offers for it, so use the image-paste key
+  for those.
+- Pasting an image file path also attaches the image.
+
+Each image shows as the main prompt's image chip, and deleting the chip drops
+the image. Images go to the model after the answer text, labeled `[Image #N]`
+to match. To copy question or option text, select it with the mouse and press
+Cmd+C.
+
+### Picker btw
+
+`?` asks a Picker btw: a Side question about the ask or the conversation,
+answered inside the Picker. The options give way to a thread with a question
+box below it, the same editor as `Other`. Enter asks, and pasted images go with
+the question. The answer streams into the thread, and later questions in the
+same ask follow up on the earlier ones.
+
+The Side question sees your answers so far (ticked options, `Other` text, and
+notes), so "is my pick a good idea?" works. It can look things up with
+read-only tools (see [Side questions](#side-questions)). Its tool calls fold
+into "N tool calls" lines between the answer's text, and in Tern a click opens
+each one.
+
+Esc while an answer streams cancels it and keeps the partial text. The next Esc
+returns to the options with your answers untouched, and `?` reopens the thread.
+PgUp/PgDn scroll a long thread. The thread is discarded when the ask ends,
+unless Esc keeps it in a Picker draft (see
+[Esc keeps your answers](#esc-keeps-your-answers)).
+
+The agent never sees the thread. To tell the agent something, put it in
+`Other` or a note. A Picker btw is not native `/btw`: it is not saved to BTW
+history, cannot be branched or copied from a panel, and does not change your
+main prompt.
+
+`?` stops `ask.timeout`, and the title reads `Ask (timer paused)` until your
+next key in the options, which restarts the countdown in full. When Side
+questions cannot run (no saved session, or a subagent), `? btw` is not offered.
+
+### Esc keeps your answers
+
+Esc (or **Cancel** in Tern) on the options or the Submit tab cancels the ask,
+as in native `ask`. The Picker keeps a Picker draft: your picks, notes, `Other`
+answers, the Submit note, the open tab and row, and the Picker btw thread.
+
+Press F5 (OMP's Retry) to run the cancelled ask again. The Picker opens where
+you left it and says `Restored your answers` until your next key. The restore
+sends nothing by itself. With `ask.timeout` set, the countdown starts again in
+full. An Esc before you answer anything keeps only the tab and row, and the
+Picker reopens there without the message.
+
+The draft opens for any ask with the same questions: the same ids, question
+text, option labels, and single or multi-select. It also opens when you tell
+the agent to go on and it asks the same questions again. Each session keeps one
+draft. A Picker with other questions drops it, and so do a submit, `/new`,
+`/resume`, `/fork`, a branch, a tree jump, and quitting omp.
+
+### Questions from OMP itself
+
+Some OMP features ask you directly instead of through the `ask` tool, such as
+Ratchet's approvals and an ask answered again from `/tree`. In the interactive
+TUI these questions open in the same Picker, with notes, `Other`, the Picker
+btw, and the Picker draft.
+
+The feature gets the answer in its native form: your picks and `Other` text,
+and one note per question that lists each note after its option, with the
+Submit note last. Esc answers nothing, as in the native dialog, and keeps a
+Picker draft. The same question opens with it again and waits for Enter.
+
+A timeout counts down only when the feature sets one. `ask.timeout` and
+`ask.notify` apply to the `ask` tool only. A question that the native dialog
+would refuse (a reserved label, or a repeated id or label) opens the native
+dialog. Collaboration guests cannot answer these questions.
+
+### Outside the TUI
+
+Outside the interactive TUI (RPC, ACP, print mode, and subagents), and for
+inputs that native `ask` rejects, the plugin runs native `ask` with the same
+arguments.
+
+### The Picker in Tern
+
+In [Tern](https://docs.stencil.so/tern/) and other terminals that speak the
+Tern Surface Protocol, the terminal draws the Picker instead of text rows. It
+sits in the composer's place, like native `ask`, but spans the full width of
+the pane. Each option is a row: the marker, then the label with its Markdown
+description, preview, and note or `Other` text below it.
+
+The rows follow Tern's theme and its light and dark appearance, as native
+`ask`'s rows do: its UI font, primary and muted text colors, a gray fill on the
+highlighted row and on hover, a Recommended badge, and a filled marker on a
+picked row. The countdown is a ring. A row of buttons below the options shows
+each key with its keycap. The editors are Tern's own text fields, without the
+main prompt's model chip and send button.
+
+The question and its options sit in one box that is as tall as the current
+question needs, up to 70% of the pane's height (70% of the terminal in the
+text Picker). A short question gives a short Picker, so the Picker can change
+height when you switch tabs. Taller content scrolls inside the box with the
+wheel, PgUp/PgDn, or j/k, and j/k keeps the highlighted row in view. A
+question first shows from its top. When the highlighted row is below the box,
+the first key only brings it into view. In an editor or the Picker btw, the box
+shows the question with its title and the row you edit, every answer (for the
+Submit note), or the thread.
+
+The keys stay the same, and the pointer runs the same actions:
+
+| Pointer | Same as |
+|---|---|
+| Click a tab | Switching to that tab |
+| Click an option | Moving to it, then Space |
+| Double-click an option | Moving to it, then Enter |
+| Click a button | Its key (`?`, Space, `n`, `x`, Esc, Enter) |
+
+The `ask` tool card in the transcript uses native `ask`'s Tern view: the
+question and its answers with a check on each pick, plus the Submit note.
+`PI_TUI_NATIVE=0` keeps the text Picker.
+
+## `generate_image`
+
+The plugin replaces native `generate_image`. The prompt goes to the image
+service unchanged, with no chat model in between. The model sees raster
+results and gets a path to read for SVG results. The plugin setting
+`imageGenerationMode` picks one of two Image generation modes:
+
+- `openai` (the default): GPT Image 2.6 Sunburst through the public OpenAI
+  Images API (`api.openai.com/v1/images/generations` and `/edits`), with an
+  OpenAI API key, billed to that key's API organization.
+- `codex`: the Codex Images endpoint
+  (`chatgpt.com/backend-api/codex/images/generations` and `/edits`) with a
+  ChatGPT login, called the way the official Codex CLI calls it, drawing on
+  the account's Codex image allowance.
+
+Installations without the setting use OpenAI mode. To keep the Codex behavior,
+run:
+
+```sh
+omp plugin config set omp-tools imageGenerationMode codex
+```
+
+The mode is read when a session starts, including `/new`, `/resume`, and
+`/fork`, so a change applies to the next session. A running call keeps its
+mode. An invalid value, including an empty one, makes every call fail with the
+fix instead of picking a service.
+
+Neither mode falls back to the other, to native `generate_image`, or to
+another provider when it fails, because a fallback would change the credential
+and the balance charged (`docs/adr/0002-explicit-image-generation-modes.md`).
+
+Each mode registers only its own arguments and rejects unknown ones. Requests
+time out after 5 minutes, cancelling the tool cancels the request, and the
+tool never retries a request.
+
+### OpenAI mode
+
+OpenAI mode needs an OpenAI API key for OMP's `openai` provider:
+`OPENAI_API_KEY`, or a key stored for `openai` in OMP. A ChatGPT login does not
+cover the public Images API. The key goes only to `https://api.openai.com/v1`.
+If the `openai` provider uses another base URL, calls fail. The
+`OpenAI-Organization` and `OpenAI-Project` headers come from the `openai`
+provider's configured headers, or else from `OPENAI_ORG_ID` and
+`OPENAI_PROJECT_ID`.
+
+Billing is normal API billing on the API organization. OpenAI spends
+Promotional API credits (the free grant some ChatGPT subscriptions link to an
+API organization) before purchased OpenAI API credits, and requests continue
+on purchased credits once the grant runs out. The tool cannot limit a request
+to free credits, does not select a credit grant, and does not report which
+balance paid. When the organization has no credits left, the error says so and
+tells the model not to retry. An ordinary rate limit says to wait.
+
+OpenAI mode always sends `gpt-image-2.6-sunburst`. There is no per-call
+`model` argument.
+
+All arguments except `prompt` are optional, and `null` counts as omitted:
+
+- `prompt`: the image or edit description, up to 32,000 characters.
+- `n`: 1–10 images. Every image is saved and returned, in the API's order.
+- `quality`: `auto`, `low`, `medium`, `high`, `xhigh`, or `max`.
+- `complexity`: `low`, `medium`, or `high`, separate from rendering `quality`.
+  The API default is `high`.
+- `size`: `auto`, `1024x1024`, `1536x1024`, `1024x1536`, or `WIDTHxHEIGHT`
+  with both edges multiples of 16 and an aspect ratio from 1:3 to 3:1. OpenAI
+  publishes no edge or total-pixel bounds for 2.6, so the API checks the rest.
+  For GIF output, `size` is each frame's size.
+- `background`: `auto`, `opaque`, or `transparent`. Transparency works with
+  PNG, WebP, SVG, and the default format.
+- `output_format`: `png`, `jpeg`, `webp`, `gif`, or `svg`.
+- `output_compression`: 0–100, for JPEG and WebP only.
+- `frame_count` (2–16, default 9) and `frame_duration_ms` (20–2000, default
+  200): both require `output_format: "gif"`. GIF is for new images only,
+  without Reference images, streaming, or `output_compression`.
+- `svg`: SVG author settings for `output_format: "svg"`, with `model` and
+  `reasoning: { effort }`. Effort is `none`, `minimal`, `low`, `medium`,
+  `high`, `xhigh`, or `max`, if the author supports it. A call's settings
+  override the plugin's SVG author. SVG is for new images only, with `n` 1 or
+  omitted, without Reference images, streaming, or `output_compression`.
+- `moderation`: `auto` or `low` (less strict filtering, not none).
+- `safety_identifier` (up to 128 characters) or the deprecated `user`. A
+  nonempty `safety_identifier` is sent instead of `user`. The tool sends only
+  identifiers the caller gives and never shows them in the result.
+- `stream` and `partial_images` (0–3): stream the response and show previews
+  while the image renders. Each preview costs 100 extra image output tokens,
+  and fewer previews may arrive. Previews are never saved.
+- Reference images, from one source per call: `referenced_image_paths`
+  (absolute paths), `num_last_images_to_include` (the last 1–16 conversation
+  images, oldest first), or `images` (`{ image_url }` with an https or data URL,
+  or `{ file_id }`). A call takes up to 16 references, and any reference makes
+  it an edit. PNG, JPEG, and WebP files go out unchanged. Other formats go out
+  as PNG.
+- `mask` or `markup`, for edits: `{ path }`, `{ image_url }`, or `{ file_id }`.
+  They cannot be combined. A mask is a PNG or WebP with alpha, in the format
+  and size of the first Reference image, and the edit applies where it is
+  transparent. A markup is a transparent PNG with visual instructions, the size
+  of the first Reference image after its EXIF orientation. The tool checks
+  local files and data URLs before sending and sends them byte for byte. The
+  API checks remote URLs and file ids.
+
+With `output_format` omitted, the tool requests PNG and saves a lossless WebP
+converted locally. It keeps every visible pixel and alpha value, but the
+encoder drops the color hidden under fully transparent pixels. With an explicit
+format, the tool saves the API's bytes unchanged. Files go to
+`$TMPDIR/omp-image-<id>.<png|jpg|webp|gif|svg>`, with the extension matching
+the bytes.
+
+The model gets every raster image, its saved path, and the size and quality
+the API reported. GIF content goes back unchanged as `image/gif`. The tested
+Claude Haiku 5.5 and Codex gpt-6-luna routes accepted it but saw only the
+first frame. An SVG result returns only its path, with an instruction to read
+the file.
+
+The result's details keep the requested settings (`details.requested`,
+including complexity, frame controls, and the sent `svg` object) apart from
+the reported ones, with token usage and the `x-request-id`.
+`details.svgUsage` keeps the API's separate `svg_usage`. Errors name the
+request id.
+
+Choose the SVG author in **Settings > Plugins > omp-tools**, or run:
+
+```sh
+omp plugin config set omp-tools svgAuthorModel gpt-6.1-sol
+```
+
+`svgAuthorModel` defaults to `gpt-6.1-sol`, and an empty value uses that
+default. It is read when a session starts, including `/new`, `/resume`, and
+`/fork`. Each SVG request sends `svg: { model }`, because the API requires an
+author model. A call's `svg.model` overrides the setting.
+`svg.reasoning.effort` controls the author's reasoning, not image complexity.
+
+### Codex mode
+
+Codex mode needs a ChatGPT login: log in to `openai-codex` with `/login`. The
+arguments match Codex's:
+
+- `prompt` (required): the image or edit description.
+- `transparent_background`: request a transparent background.
+- `referenced_image_paths`: absolute paths of images to edit or draw from.
+- `num_last_images_to_include` (1–5): use the last N images in the
+  conversation, such as pasted images, tool results, and earlier generated
+  images. It cannot be combined with `referenced_image_paths`.
+
+The Codex Images endpoint ignores size and quality, so state the aspect ratio
+in the prompt. Output is about 1.57 megapixels, and the server chooses the
+quality and the model.
+
+JPEG and WebP references go out unchanged. PNG, GIF, BMP, and other formats go
+out as lossless WebP, about 25% smaller than PNG at the same image-token cost.
+The result is saved as lossless WebP to `$TMPDIR/omp-image-<id>.webp`. The
+model gets the image, the saved path, and the size and quality the endpoint
+reported. The result's details also keep the request id, generation id, and
+output token count for tracing a result with OpenAI. HTTP errors name the
+request id.
+
+Codex mode also guards each request:
+
+- A request body over 64 MB fails before sending. Larger bodies get false
+  `moderation_blocked` errors, or the endpoint silently drops the references
+  and returns an unrelated image.
+- An edit that reports 0 input image tokens fails instead of returning an image
+  that ignored the references.
+- A usage limit error names the limit, the plan, and the reset time, and tells
+  the model not to retry before then.
+- A successful result notes when the image limit window is at least 80% used,
+  with its reset time.
+
+### Prompting skill
+
+The bundled `generate-image` skill is a checklist the model runs on every
+prompt before sending it. Its prompt rules hold in both modes, and it also
+covers OpenAI complexity, GIF, and SVG:
+
+- Every prompt: purpose first, one concrete main subject, every requested
+  element with nothing invented, visible terms instead of praise, attributes
+  bound to their nouns, positive scene content, and constraints last.
+- When relevant: shape, counts, placement, actions, people, specialist terms,
+  overlay space, and consistent image sets.
+- Text and graphics: exact quoted final strings, real data, and original logos.
+- Edits: roles first, one explicit operation with its scope, a keep list, rules
+  for each kind of operation, and self-contained follow-ups.
+- Transparency: set for cutouts, checked in the alpha channel, and reviewed
+  against every requirement.
+
+The criteria come from vendor prompting guides, text-to-image research and
+benchmarks, and creative-brief practice, in `docs/research/`:
+`image-prompting-*.md`, `image-prompt-criteria-*.md`,
+`image-prompt-format.md`, and `gpt-image-2.6.md`. The `gpt-image-2.5-*.md`
+notes keep the earlier research.
+
+### Tool card in Tern
+
+The card's header shows the prompt's first line, the reference count, the
+mode's settings (such as `n 2` or `transparent`), and the size and quality.
+Below it are each saved path (click to open the file), the Codex near-limit
+warning, a folded copy of a long prompt, and the images. While a stream runs,
+the card shows the latest preview as in progress. An error shows its message
+in red.
+
+## Side questions
+
+`/btw <question>` in the main editor asks a Side question that can look things
+up. It replaces native `/btw`'s answer for that form. Bare `/btw` still opens
+OMP's BTW history, and autocomplete is OMP's.
+
+A Side question runs as a separate agent session on a copy of the main
+transcript in a temporary folder, deleted when the thread ends. It costs tokens
+like a short agent turn. Only you see the answers. The agent never sees a Side
+question.
+
+### What a Side question can do
+
+It gets only read, grep, glob, find, and web_search, whatever tools the main
+agent has, so it cannot ask you, run commands, or message or stop agents. Each
+tool keeps its own size limits, and there is no cap on rounds. `read
+agent://<id>` reads the main session's agents, including one still running
+that has no output yet.
+
+Each thread copies the live conversation and uses OMP's default system prompt
+for its five tools. A call the main agent still waits on (a pending `ask`, or a
+tool still running) shows to the Side question as still open, not as failed.
+Images attached to `/btw` go with the question and stay in the thread for
+follow-ups, as pasted images do in a Picker btw.
+
+### The panel and threads
+
+Answers show in a panel above the editor, and the editor keeps focus. Each
+Side question shows as your messages do in the main chat: Markdown on the user
+message background, or a user bubble in Tern. An answer shows its text and its
+tool calls in the order they happened, and each group of calls folds into one
+"N tool calls" line. With the editor empty, `t` opens or folds them (in Tern, a
+click on a line also works), and Esc cancels a running answer or closes the
+panel.
+
+A later `/btw` follows up in the same thread, also after Esc closed the panel.
+Your next main prompt ends the thread and clears the panel when the agent takes
+the prompt. A prompt queued while the agent works ends the thread at that
+point. If an answer is still running then, it finishes and shows but takes no
+follow-up, and the next `/btw` starts a new thread.
+
+### Side question model
+
+`/btw` and the Picker btw use the `sideQuestionModel` plugin setting, default
+`@smol`, with that role's thinking level. An empty value uses the main model.
+Choose the model in **Settings > Plugins > omp-tools**, or run:
+
+```sh
+omp plugin config set omp-tools sideQuestionModel '@smol'
+```
+
+The value takes OMP model selectors such as `@smol:low` or
+`provider/model:high`. A change applies when the next thread opens.
+
+If the selector does not resolve, the plugin refreshes the providers it names
+and looks again. If it still does not resolve, the thread uses the main model
+and warns with the missing model's name. If the history exceeds the selected
+model's context window, the thread also uses the main model.
+
+Side questions use OMP's configured retry and fallback chains, including the
+selected role's chain. Both views show retry countdowns, model switches, and
+the final retry error. Provider transport retries happen before OMP reports
+them, so the panel can keep showing `Answering…`. Esc cancels either kind of
+wait.
+
+OMP's fallback chains can inherit the default chain and revisit an earlier
+model, so a run where every route fails can continue until you press Esc. Side
+questions keep OMP's policy. To make a model the last one tried, give it an
+empty chain in OMP's configuration:
+
+```yaml
+retry:
+  fallbackChains:
+    smol:
+      - provider/backup:low
+    provider/backup: []
+```
+
+### Cost and cache
+
+Each Side question request's token usage, and that of its background calls
+such as cache warms, goes into the main session's usage, so the session's cost
+includes it without adding a message. Side questions also share the main
+session's spending cap.
+
+The first Side question in a main session does not reuse the main agent's
+prompt cache. Its follow-ups, and later Side questions in the same session,
+reuse a cache of their own.
+
+With OMP's Cache Miss Marker setting on (`display.cacheMissMarker`), an answer
+whose requests had to write the cached prompt again shows `⊘ cache miss · N
+tokens` under it, in the panel and in the Picker btw. As with OMP's marker, it
+shows only for providers that report cache writes (Anthropic), not for Codex.
+Each provider and model is tracked separately, so a model switch does not count
+as a miss.
+
+### Where native `/btw` answers
+
+Side questions need the interactive TUI and a saved session. In a focused
+subagent view and in RPC, ACP, and print mode, `/btw` stays native. File
+commands with `side: true` also use native `/btw`.
 
 ## Development
 
 ```bash
 bun install --ignore-scripts
 bun run check    # warns if SDK types differ from `omp --version`, then typechecks
-bun test         # generate_image, Picker paste, and Side question tests
+bun test
 bun run update   # runs omp update, installs the newest SDK types, then checks
 ```
 
-Runtime value imports of `@oh-my-pi/*` resolve to the running OMP's own modules.
-Development types track the `latest` SDK release. Run `bun run update` so omp
-and the types move together. `bun test` runs `generate_image` in both modes
-against stubbed endpoints (including streamed responses), the `/btw` question
-parser, the Picker's paste handling, and the Side
-question's message seeding. Typechecking and tests do not load the plugin into
-OMP, so a change to registration, the picker, or side questions needs a check
-in a fresh OMP session.
+Runtime value imports of `@oh-my-pi/*` resolve to the running OMP's own
+modules. Development types track the `latest` SDK release. Run
+`bun run update` so omp and the types move together.
+
+`bun test` covers `generate_image` in both modes against stubbed endpoints
+(including streamed responses), the `/btw` question parser, the Picker's paste
+handling, the Picker draft, host questions through the Picker, and the Side
+question session: its model, thinking level, context limit, images, fallback,
+cost cap, cache-miss tracking, usage ledger, and recovery display. Typechecking
+and tests do not load the plugin into OMP. Check a change to registration, the
+Picker, or Side questions in a fresh OMP session.
 
 The opt-in `test/generate-image-openai.live.test.ts` sends three paid OpenAI
-requests for a still image with complexity, an SVG, and a GIF. It runs only
-with both `OMP_TOOLS_LIVE_IMAGES=1` and `OPENAI_API_KEY`:
+requests: a still image with complexity, an SVG, and a GIF. It runs only with
+both `OMP_TOOLS_LIVE_IMAGES=1` and `OPENAI_API_KEY`, and the requests are
+billed to the key's API organization:
 
 ```sh
 OMP_TOOLS_LIVE_IMAGES=1 bun test live
 ```
 
-Requests are billed to the key's API organization. All three passed live on
-2026-11-05 in 45 seconds. These API checks do not verify the OMP tool cards.
-
-Fresh OMP sessions verified this behavior:
-
-- OMP 18.13.3 with Tern 0.9.7: `generate_image` in each Image generation
-  mode registered only that mode's arguments. A live Codex generation
-  rendered its Tern card with the saved path and image. The OpenAI
-  missing-key and argument-error cards rendered in Tern, and a Codex
-  argument-error card in the classic view. That session had no valid
-  `openai` key, so it did not verify live OpenAI requests.
-- OMP 18.12.5 with Tern 0.9.5: the picker in the Tern and classic views
-  (single and multiple questions, `Other`, notes, Submit, timeout, and Tern
-  pointer actions), Picker btw, `/btw`, and the read-only Side question
-  probes over RPC. A live generation and reference-image edit succeeded
-  through Codex Images. Both tool cards and an argument-error card rendered
-  in Tern and the classic view. The Picker's Tern option labels measured
-  weight 500, with the terminal's font size and row height.
-- OMP 18.3.1: the Markdown picker (one question, an `Other` custom answer, two
-  questions with multi-select, Esc cancel).
-- OMP 18.4.4: `generate_image` live (a generation, an edit with a PNG reference
-  path, and an edit with `num_last_images_to_include`).
-- OMP 18.6.1: the Picker btw (an answer that named the ticked option, a
-  follow-up that quoted the earlier question, Esc cancelling a streaming answer
-  and then returning to the options, the timer paused past the timeout and
-  restarted in full on the next key, the thread kept on reopening, and the
-  agent not seeing the thread after the ask).
-- OMP 18.8.0: the picker keys (Enter picking a single-choice option and moving
-  on, Space ticking a checkbox, a note saved with Enter staying on its row, a
-  Submit note, and the answer text the agent got).
-- OMP 18.8.6 in a headless Tern 0.6.3 window (`tern serve`, driven with
-  `tern ctl`): the Tern views (option rows, keys, row, tab, and button clicks,
-  the note and `Other` editors, the Picker btw thread, the countdown ring,
-  Cancel, the `ask` result card with its Submit note, and a live
-  `generate_image` card with its image and an error card), one picker height
-  across tabs, editors, and the Picker btw, and scrolling by wheel, PgDn, and
-  j/k. The same session with `PI_TUI_NATIVE=0` verified the text picker.
-- OMP 18.8.9 in a headless Tern 0.7.2 window: each question's box as tall as
-  its content up to the cap, a long question scrolling at the cap, and the
-  same in the text picker.
-- OMP 18.10.4 in a headless Tern 0.8.3 window: side questions. `/btw` answered
-  with read, also when sent while the main agent was still running; a follow-up
-  stayed in the thread; `t` opened and folded the tool calls; Esc cancelled a
-  running answer and then closed the panel; a main prompt sent during an
-  answer let it finish and ended the thread; the next main prompt cleared the
-  panel and a new `/btw` started a fresh thread. A Picker btw used grep while
-  `ask` waited, and its thread file was deleted when the Picker closed. The
-  same with `PI_TUI_NATIVE=0` verified the text panel.
-- OMP 18.11.3: side questions offered only the five read-only tools.
-  Replaying a real session where a subagent's IRC message led to a pending
-  `ask` (Claude Opus 5.5), the Picker btw made no call outside the five in
-  15 of 15 answers (before: `ask`, `bash`, or `write proc://…/kill` in 3 of
-  15, each hiding the earlier text). In a headless Tern 0.9.2 window with
-  Claude Haiku 5.5, a Picker btw during that `ask` showed its first line, the
-  folded tool calls, and the answer in order. In RPC mode, `read
-  agent://Sleeper` on a running subagent with no output returned its progress
-  (before: `Not found`).
+These API checks do not verify the OMP tool cards.
