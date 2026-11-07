@@ -5,6 +5,7 @@ This repo's remote and its PRs live on GitHub. Skills run every Code host operat
 - Host: GitHub (`github.com`)
 - Repo: `daandden/omp-tools`
 - Default End state: shipped
+- Landing method: merge
 - Tool: the `gh` CLI
 - Check: `gh auth status`
 - Review reference in commit titles: `(#<number>)`
