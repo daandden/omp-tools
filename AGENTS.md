@@ -1,567 +1,531 @@
-# Repository Guidelines
+# Repository guidelines
 
-## Project Overview
+`omp-tools` is an Oh My Pi (OMP) plugin with three parts. Terms follow
+`GLOSSARY.md`; user-facing behavior is in `README.md`.
 
-`omp-tools` is an Oh My Pi (OMP) plugin. It shadows the native `ask` tool to
-drop the model-facing option count and show questions
-as full Markdown in the interactive picker; outside the TUI it delegates to
-native `ask`. It replaces native `generate_image` with a tool that has two
-Image generation modes: OpenAI mode (GPT Image 2.6 Sunburst through the public
-Images API, the default) and Codex mode (the Codex Images endpoint with Codex
-OAuth). It takes
-over `/btw <question>` with a Side question that may use read-only tools, and
-the Picker btw asks the same kind of Side question.
+- `ask`: a shadow of native `ask` with no model-facing option count. In the
+  TUI it shows the Picker; elsewhere it delegates to native `ask`.
+- `generate_image`: replaces native `generate_image` with two Image generation
+  modes, OpenAI mode (the default) and Codex mode.
+- `/btw <question>` and the Picker btw: Side questions answered by a read-only
+  mirror session.
 
-## Architecture & Data Flow
+`package.json` registers the entry points `extensions/flexible-ask.ts`,
+`extensions/generate-image.ts`, and `extensions/btw.ts`. OMP also loads
+`skills/*/SKILL.md` from the plugin root (the `omp-plugins` discovery
+provider, priority 90).
 
-- `package.json` registers `extensions/flexible-ask.ts`,
-  `extensions/generate-image.ts`, and `extensions/btw.ts` as entry points.
-  OMP also loads `skills/*/SKILL.md` from the plugin root (the `omp-plugins`
-  discovery provider, priority 90).
-- The extension registers a shadow `ask` description/schema. In `ctx.mode ===
-  "tui"` with `ctx.hasUI`, it shows its own picker (`extensions/ask-dialog.ts`)
-  through `ctx.ui.custom` and formats results with native wording and details.
-  The native dialog cannot be restyled from an extension: `ctx.invokeTool` runs
-  it with the session UI, not the wrapper's. Unlike native `ask`
-  (`tools/ask.ts`), the picker keeps `ask.timeout` in plan mode and does not
-  speak the questions under `speech.enabled`.
-- Otherwise (RPC/ACP/print, subagents), and for inputs the native tool rejects
-  (reserved or duplicate labels, duplicate ids), it delegates to
-  `ctx.invokeTool(params, { signal, onUpdate })` so native errors and fallbacks
-  apply unchanged.
-- Host dialogs (`extensions/host-ask-dialog.ts`): OMP code that asks without
-  the `ask` tool calls the shared UI context's `askDialog` (Ratchet approvals
-  in `ratchet/prelude-definition.ts`, the `/tree` ask re-answer). In the TUI,
-  `session_start` routes that method to the picker: it replaces `askDialog`
-  on the context object itself, which the runner hands to extensions and the
-  tool context store wraps (`trackUserWaits`), both proxies with only a `get`
-  trap, so a write through `ctx.ui` lands on the object and the tool context
-  and every handler run started later read it (a handler run already in
-  flight keeps the method its proxy captured). The native `askDialog`,
-  `custom`, and `notify` are read through property descriptors, because the
-  runner's `get` returns per-handler wrappers bound to that handler's
-  signal. This is undocumented OMP internals, proved live with OMP 18.12.6.
-  The object keeps one wrapper under
-  `Symbol.for("omp-tools.host-ask-dialog")`, shared by every module load;
-  further routes stack in its list, not as wrappers, and the last one to end
-  puts the native method back (`session_shutdown`). `askInPicker` opens the
-  picker through `openPicker`, the same draft and Picker btw steps as `ask`,
-  and answers in the native `ExtensionAskDialogResult` shape: the caller's
-  own ids, question text, and labels (the picker shows them without `\r`),
-  picks, `Other` text, one note (each option note after its option, then the
-  Submit note), and images split by whether `customInput` names their label.
-  Esc and an aborted signal give `undefined`; Esc keeps a Picker draft in the
-  same `PickerDraftSlot` as `ask`. Only the caller's `timeout` counts down,
-  and its `onTimeout` is called once on expiry before answers are picked, as
-  native does; no notification is sent. Malformed questions (which the native method
-  coerces) and questions `nativeRejects` go to the native method. Collab
-  guests cannot answer, since the native method's guest race is skipped (an
-  accepted limit: no extension API reports a guest).
-- A Side question (`extensions/side-question.ts`) is a full agent run in a
-  mirror session built the way OMP's `/tan` builds one
-  (`tan-command-controller.ts`): `SessionManager.forkFrom` the main transcript
-  (with `repairInterruptedTail`, since the main agent may be mid-turn) into
-  `$TMPDIR/omp-side-question-<random>/SideQuestion-<uuid>.jsonl`, outside the
-  sessions tree: omp-stats and the Agent Hub scan that tree and counted the
-  fork's usage again on top of the main ledger copy. Then
-  `createMirrorSession`, the one way to build the mirror. Its input type
-  takes no `systemPrompt`, tool list, or plain-string cache key, so the old
-  wiring fails typecheck. It offers only read, grep, glob, find, and
-  web_search with `restrictToolNames`
-  (also no MCP, LSP, IRC, or ambient extension tools) and OMP's default prompt
-  for them; there is no call-time gate. Copying the main prompt and tools to
-  reuse the main prompt cache let a Picker btw call `ask`, `bash`, and `write`
-  (3 of 15 replays, 0 of 15 now), so a thread's first request cannot reuse
-  the main cache. Every thread of one main session shares a Side-only key
-  (`sideQuestionCacheKey`) sent as `providerPromptCacheKey` and Codex
-  `parentSessionId`, over SSE (`preferWebsockets: false`): a later thread's
-  first request then read the earlier thread's prefix in 10 of 10 Codex runs,
-  against 0 of 5 on a new websocket with the same key; Anthropic reused it
-  either way. The mirror gets subagent settings, the parent's
-  prepared extensions, and a `SideQuestionRegistry`: its own `AgentRegistry`
-  (out of the Agent Hub, so nothing can message or list it) whose `get` and
-  `list` fall back to `AgentRegistry.global()`. `read agent://<id>` resolves
-  a running agent with no published output through the reader's registry, so
-  without the fallback it returned `Not found`. As in `/tan`, the mirror is a
-  child session (`parentTaskPrefix`, so it binds no process-wide state) with
-  `localProtocolOptions` snapshotting the main session's artifacts dir and
-  session id: `local://` resolves to the main session's files (a pasted
-  image's `local://pasted-image-*.png`, large pastes). The fork copies no
-  artifacts, so without it those reads returned `Local file not found`. Then
-  `seedMessages` replaces
-  the mirror's messages with a copy of `main.agent.state.messages`
-  (`structuredClone`, plus a still-open result for each call the last reply
-  still waits on: for `ask`, the user is answering it now; for others, still
-  running; both say not to call it again). An "aborted" result there made the
-  model ask the user again. The copy is also on the main session's selected
-  branch, which the file does not record, and it holds messages the live
-  session adds that the file lacks (the `eval-state-context` message after a
-  `/tree` jump, #15933). The fork file still holds the mirror's own turns.
-  `sideQuestionModel` in the plugin's `omp.settings` selects the primary model
-  for both callers, default `@smol`; an empty value keeps the main model.
-  `side-question-model.ts` reads it per thread with `getPluginSettings` and
-  resolves the role and thinking level with `resolveModelOverride`. The fork
-  records the selected role so shared-model roles retain their own fallback
-  chains. An unresolved selector refreshes the providers its patterns name
-  (`refreshDiscoverableProviders(..., "online")`, never `refreshProvider`,
-  whose static reload drops discovered models) and resolves again: a running
-  OMP can lose discovery-only models such as Codex `gpt-6.1-terra` after a
-  denied discovery with no usable model cache, until restart. The ask's
-  signal, passed through `LazySideQuestionThread.get` and `open`, ends the
-  wait at once without aborting the shared refresh. Still unresolved, it
-  warns with the missing model and keeps the main model. The mirror's
-  tokenizer checks the live history with prompt and tool overhead before the
-  first request; a known context window too small uses the main model instead.
-  OMP still owns overflow recovery if that model also cannot fit. The mirror
-  shares `main.costGate`, as `/tan` does.
-  A `SideQuestionCache` per main session hands each thread a tracker that
-  flags a request reading more than 2048 tokens less than expected: the
-  thread's previous request on that provider and model, or for a thread's first
-  one the earlier thread's first request on that route, while the main messages still
-  start with the ones that thread saw (`sharedPrefixPrompt`). It counts only
-  when the request wrote cache (`cacheWrite > 0`, so never on Codex) and shows
-  OMP's `⊘ cache miss · N tokens` label only while `display.cacheMissMarker`
-  is on (`/modes/settings`). Each mirror request's usage goes to the main
-  session's ledger as a `model_usage` entry with purpose `side-question`
-  (`recordSideQuestionUsage`), and every entry the mirror records off its own
-  transcript (cache warms, judge calls) is copied there as
-  `side-question:<purpose>` (`forwardSideQuestionUsage` wraps the fork's
-  `appendModelUsage`), so session cost counts them after the fork file is
-  deleted; none is a message. The mirror keeps OMP's cache warming: an idle
-  panel on a 5-minute cache tier is warmed like the main session (1-hour
-  entries outlive the 30-minute idle window, so they are not). The thread
-  reports each assistant message's start (`onMessageStart`), its streamed
-  text, tool calls, and native retry/fallback events (`onRecovery`).
-  `answerInto` keeps them as ordered parts, with a live retry countdown, so
-  a later message never replaces earlier text. `ask` returns the last
-  assistant message's text; the fork file is deleted on dispose. A Side
-  question needs a live main session (`AgentRegistry.global()`) and a session
-  file; without them `/btw` falls through to native and Picker btw is off.
-  Transport retries precede TurnRecovery events. Native fallback chains can
-  revisit models and renew their retry budgets. Preserve that policy and
-  cancellation rather than adding Side-only retry rules.
-- `/btw <question>` (`extensions/btw.ts`): OMP skips extension commands named
-  like built-ins, so the plugin catches the text in the `input` event, which
-  runs before built-in dispatch (docs/adr/0001), and returns `{ handled: true }`
-  only for `source: "interactive"` in the TUI. Attached images go to the thread.
-  Bare `/btw` (the history), autocomplete, `side: true` file commands, the
-  focused-subagent path (it skips `input` handlers), and RPC `btw` stay native.
-  One `BtwCycle` per session holds the thread: a later
-  `/btw` follows up on the same mirror; `before_agent_start` (a main prompt)
-  ends it, or, while an answer runs, marks it closed so the answer finishes,
-  shows, and the thread is disposed afterwards. Session switch, branch, tree,
-  and shutdown dispose it. The panel (`extensions/btw-panel.ts`) is a widget
-  above the editor (`setWidget`, `placement: "aboveEditor"`); the editor keeps
-  focus. Keys come through `ctx.ui.onTerminalInput` and act only while the
-  panel shows and the editor is empty: `app.interrupt` cancels a running
-  answer or hides the panel, `t` opens or folds the tool calls. In Tern the
-  panel describes a `col` with native `/btw`'s role `omp.overlay.btw` (Tern
-  styles it as that sheet; a plain `col` let the composer's meter row overlap
-  the hints), a `scrollBox` capped at 40% of the rows with `reveal` at the
-  end, and the tool calls as a collapsible `section` (a click opens it). The
-  panel sends its own stylesheet (`omp-tools-btw`, `SCROLL_BOX_CSS` from
-  `ask-editor.ts`) so list numbers are not clipped.
-- `?` in the picker opens a Picker btw (`extensions/picker-btw-view.ts`): a
-  Side question answered inside the picker (`extensions/picker-btw.ts`, prompt
-  `picker-btw.md` with the unsubmitted answers from `formatAskAnswers`). It is
-  not native `/btw`. Each ask gets one thread (`pickerBtwRunner` in
-  `flexible-ask.ts`), opened on the first question, followed up by later ones,
-  and disposed when the dialog closes, unless a Picker draft keeps it; a
-  cancelled turn keeps the thread.
-  `?` disposes the countdown and the next key in the options restarts it.
-  `?` is off when Side questions cannot run. Pasted images in the Picker btw
-  go to `SideQuestionThread.ask` as prompt images.
-- Esc (or the Tern Cancel button) resolves the picker with a Picker draft
-  (`kind: "cancel"`): the `QuestionState`s, tab, Submit note, image count, and
-  Picker btw turns. A restored picker shows `Restored your answers` only when
-  the draft holds a pick, text, a Submit note, or a turn, and it keeps the
-  full `ask.timeout` countdown.
-  `flexible-ask.ts` keeps it with the Picker btw runner in a per-load
-  `PickerDraftSlot` (`extensions/picker-draft.ts`) before `ctx.abort()`. F5
-  (`app.retry`) replays a cancelled tool call with its stored id and
-  arguments before any model request (OMP `turn-recovery.ts`), so the same
-  `ask` runs again; no key is bound. Since OMP 18.14, a custom message other
-  than an eval-state snapshot after the abort (a background job's result
-  landing between Esc and F5) makes F5 drop the aborted turn and call the
-  model instead; a re-ask with the same questions still gets the draft.
-  `take` hands the draft to a picker whose question ids, text, option
-  labels, and `multi` match, and disposes the thread on any other
-  questions. A main prompt keeps it (a manual retry fires no
-  `before_agent_start`, and a re-ask after "go on" should match).
-  The slot ends every Picker btw thread (`end`): a dropped draft's, a
-  mismatched draft's, and a submitted or failed Picker's. `drop` waits for
-  all of them. `session_before_switch`, `session_before_branch`,
-  `session_tree`, and `session_shutdown` drop it, so no thread outlives the
-  session it answers about.
-- Tern sends Cmd+V as OSC 5522 enhanced paste. OMP reads it and calls the
-  focused component's paste contract: `pasteText`, `beginPaste`,
-  `acceptsImages`, and `attachImage`. `AnswerEditor` accepts host text and
-  images, turns host markers into image chips, and queues keys until pending
-  pastes finish. The option list implements the same contract only to refuse
-  a paste and show `Open a note (n) or Other to paste`. Native selection copy
-  stays Tern's.
-- In Tern (terminals that speak the Tern Surface Protocol), OMP calls a
-  component's `describe(cx)` instead of `render()`. The picker describes a
-  `col` with role `omp.editor` (in the composer's place, as pi-tui's
-  `AskDialogComponent`): `tabs`, a ring `meter` (re-described each second;
-  `CountdownTimer`'s `elapsed` node when the terminal lacks `meter`), one
-  compact `row` per option, and `omp.btn` buttons. Inline `min`/`max` widths
-  of 100% override the composer's measure, so the picker spans the pane. The
-  question and options sit in one `scrollBox` (`ask-editor.ts`): a capped
-  `list`, because a `col` with `max.h` only clips. It is as tall as its
-  content up to `DIALOG_HEIGHT_RATIO` of the pane's rows less
-  `NATIVE_CHROME_LINES` (the status line, tabs, buttons, and insets, measured
-  in Tern 0.7.2); the Picker btw thread alone keeps that height fixed
-  (`min.h`). The classic panel is its tab's content up to the same ratio of
-  the terminal. Its row cap is scaled because a list
-  row is a text line plus 6px. The `scroll` request goes on the content, since
-  Tern scrolls the scroller at or above the asking node and the list's scroller
-  is inside the list node. Pointer `action` events run the same commands as
-  keys (`#runRowCommand`, `#runSubmitCommand`); option rows use `omp-tools.*`
-  roles, not `omp.ask.*`, and no `mark: "pick"`, which collapsed the marker
-  column. Tern's sheets only style `omp.*` roles, so the picker sends its own
-  stylesheet (`NATIVE_SHEET`, the `s` verb written to the terminal with every
-  `describe` when `cx.feature("styles")`; a sheet belongs to one surface, and
-  pi-tui opens a new inline surface on `gone` with the same describe context,
-  so a once-only send is lost): theme variables only (`--sans`, `--t1`,
-  `--t3`, `--l1`, `--l2`), so rows follow Tern's theme and appearance. Row
-  text reads the terminal's `--sf-fs` and `--sf-lh` directly, so each line
-  is one terminal row. Tern scopes a program sheet to strict descendants of
-  its region, so a rule on `.sf-region` itself never applies (a copy of the
-  variables there left them unset and dropped the label's `font` shorthand,
-  Tern 0.9.5). The sheet's row padding and gap are in
-  `NATIVE_STYLED_ROW_LINES`, the height estimate.
-  Tern's Markdown hangs list numbers left of a 2-cell indent, into the page
-  margin; a scroll box clips them, so the sheet pads each `scrollBox` scroller
-  by 2 cells on the left and cancels it with a negative margin.
-  Tern never reports what is on screen, so after PgUp/PgDn
-  (`#nativePagedAway`) the next j/k, action key, or button only reveals the
-  highlighted row (`#revealCursor` bumps its `reveal` token), as the classic
-  picker does with a row it did not draw. A question's first showing keeps the
-  question at the top: `#nativeHold` withholds the cursor's `reveal` until the
-  cursor moves or a reveal is asked for, and `#nativeCursorFits` (estimated
-  from the classic layout) sets `#nativePagedAway` when the row ends below the
-  box, checked again whenever the box size changes while the hold lasts. A
-  scroller mounted again (tab switch, back from an editor) reveals the
-  highlighted row by a placement `reveal`.
-  Wheel scrolling is not reported, so it does not trigger this guard.
-  `AnswerEditor` and the Picker btw view describe themselves with the
-  `CustomEditor` as a child component; `AnswerEditor` replaces the composer
-  layout and placeholder so no model chip or send bar shows.
-- Tool cards in Tern come from `describeCall`/`describeResult` on the
-  definition. An extension tool never gets the built-in renderer of its name,
-  so `ask` reuses the exported `askToolRenderer` (plus the Submit note, kept in
-  `details.submitNote`) and `generate_image` has its own view.
-  `mergeCallAndResult` is forwarded from the definition like `concurrency`. The
-  host appends result images from `content` after the view's body.
-- Preserve `approval: "read"`, `concurrency: "exclusive"`, cancellation
-  (`ctx.abort()` plus `ToolAbortError`), `ask.timeout` auto-selection,
-  `ask.notify`, and the explicit error when native ask delegation is unavailable.
-  The Picker passes its timeout to `ui.custom` as `{ signal, timeout }`
-  (`timeout` is not in `ExtensionCustomOptions`): since OMP 18.12 the host
-  runs each extension dialog as a wait for the user, which ends the computer
-  turn so the display can sleep, unless an options argument has a positive
-  `timeout`, as native timed ask does.
-- Keep native `ask` enabled. Replace legacy `omp-ask` installations rather than
-  loading duplicate wrappers.
-- `generate_image` composes the selected Image generation mode
-  (`extensions/image-modes.ts`: description, schema, card facts, and `run`)
-  with the shared artifact step (`extensions/image-artifacts.ts`), so a mode is
-  an entry, not a branch. The async initializer reads `imageGenerationMode`
-  with `getPluginSettings("omp-tools", process.cwd())` (absent or null is
-  `openai`). OMP runs it once per process, so `session_switch` (`/new`,
-  `/resume`, `/fork`) reads it again from `ctx.cwd` and registers the tool
-  anew; the host refreshes a re-registered name, and a running call keeps the
-  definition it started with. An invalid value, `""` included, registers a
-  tool whose every call fails with the fix. No mode falls back to another
-  (ADR 0002).
-  Native `generate_image` is settings-gated. Eager extension registration makes
-  native skip the taken name; deferred extension registration replaces native
-  through the host's late tool-registration path. The plugin wins in either
-  case. The schema stays open because OMP's argument validator deletes unknown
-  keys from closed schemas (`pi-ai` `coerceArgsFromIssues`); `execute` rejects
-  them and checks the schema itself.
-- Raster results go in `content` only, never `details.images` (the TUI would
-  show them twice); SVG results return a saved path and an instruction to read
-  the file, without image content. `details.outputs` lists each saved path,
-  MIME type, size, and quality. Policy `lossless-webp` re-encodes (Bun's WebP
-  encoder drops the color under alpha 0; visible pixels and alpha are kept);
-  `as-returned` keeps the provider's bytes, including GIF and SVG. GIF content
-  stays `image/gif`. Streamed previews go through `onUpdate` with
-  `details.stage: "preview"` and are never saved.
-- Codex mode posts to `chatgpt.com/backend-api/codex/images/generations` (no
-  references) or `/edits` with Codex's exact body and headers, using the
-  `openai-codex` credential. Keep its request guards: 64 MB body cap (larger
-  bodies get false `moderation_blocked` or silently dropped references), the
-  0-image-token dropped-references check on edits, and the 5-minute timeout
-  combined with the tool signal. The Images endpoint returns PNG with a signed
-  C2PA manifest whatever `output_format` is sent (checked 2026-10-08), so the
-  local re-encode drops that manifest. Only the hosted `/codex/responses` image
-  tool returns WebP (lossless, manifest kept), but it puts a chat model in the
-  loop and drew on the weekly `premium` limit rather than the daily
-  `imagegen_premium` one. `details` keeps `x-codex-imagegen-request-id`,
-  `generation_id`, and `usage.output_tokens` for tracing; errors append the
-  request id. Success text warns at 80% of a limit window. The Images endpoint
-  reports its image window as `x-codex-primary-*` under `x-codex-active-limit:
-  imagegen_premium`, so limit-named headers are tried first and `x-codex-*` is
-  the fallback; zero-minute windows are skipped.
-- OpenAI mode (`extensions/openai-mode.ts`) uses the `openai` key from
-  `getApiKeyForProvider`, only for `https://api.openai.com/v1`: a different
-  `getProviderBaseUrl("openai")` (or `OPENAI_BASE_URL` when OMP reports none)
-  fails the call. `OpenAI-Organization` and `OpenAI-Project` come from
-  `getProviderHeaders("openai")`, else `OPENAI_ORG_ID` and `OPENAI_PROJECT_ID`.
-  It always sends `gpt-image-2.6-sunburst`, with no per-call `model` argument.
-  Optional `complexity` (`low`, `medium`, `high`, default high at the API)
-  controls planning separately from `quality`. Size checks keep only `auto`
-  or multiples of 16 with aspect ratio 1:3 through 3:1; undocumented 2.6 edge
-  and pixel limits are left to the API. GIF size describes each frame.
-  GIF is generation-only, with 2–16 frames (default 9), 20–2000 ms per frame
-  (default 200), no Reference images, streaming, or `output_compression`.
-  SVG is generation-only, with `n` 1 or omitted, and the same exclusions.
-  OpenAI tool registration reads `svgAuthorModel` at session start and again
-  on session switches, defaulting absent or empty values to `gpt-6.1-sol`.
-  SVG requests always send `svg: { model }`; a call's `svg.model` and
-  `svg.reasoning.effort` override the author settings.
-  `extensions/sunburst-images.ts` sends one JSON request (no retries), decodes
-  JSON or SSE (`*.partial_image`, `*.completed`, `error`; a stream needs `n`
-  completions), and keeps `x-request-id`. The 5-minute timeout covers the
-  stream. Omitted `output_format` requests PNG and saves lossless WebP; an
-  explicit one keeps the API's bytes. Mask and markup bytes go out unchanged;
-  local files and data URLs are checked first (`extensions/image-checks.ts`:
-  alpha from the file header, transparency from decoded pixels, sizes from
-  `Bun.Image` metadata, which applies EXIF orientation). No Codex guard
-  applies. `details.requested` holds the sent settings, including complexity,
-  frame controls, and the `svg` object (never the identifiers);
-  `details.reported` holds what the API reported. `details.svgUsage` keeps
-  separate SVG-author usage from `svg_usage`.
-
-## Important Files
-
-- `extensions/flexible-ask.ts`: tool registration, TUI/native routing, and
-  native-shaped result `details`.
-- `extensions/ask-result.ts`: the labeled model-facing answer text (the model
-  sees only this text, never `details`) and `joinOptionNotes`, the one note
-  string native details hold per question.
-- `extensions/ask-questions.ts`: the reserved labels, `sanitizeQuestions`,
-  and `nativeRejects`, shared by `ask` and host dialogs.
-- `extensions/ask-dialog.ts`: Markdown picker with the native pi-tui
-  `AskDialogComponent` structure (tabs, Submit review, multi-select, Other,
-  timeout) but its own key flow, one meaning per key in every picker: j/k or
-  ↑/↓ move, h/l or ←/→/Tab switch tabs, Space toggles the row, Enter finishes
-  the question (single-select picks the row first; no Submit tab means submit),
-  `n` edits the row's text (option note, `Other`, Submit note), `x` clears it;
-  editors save on Enter and stay, Esc discards. Notes are per option, survive
-  picking, and are all sent; `Other` text survives un-picking. Diff the
-  structure against upstream when OMP changes the native dialog.
-- `extensions/ask-editor.ts`: `Other`/note text box. Wraps the main prompt's
-  `CustomEditor` with the host's suggestion provider (borrowed in
-  `flexible-ask.ts` through `ctx.ui.addAutocompleteProvider`) for references
-  only: `/` suggests file commands (names from `discoverSlashCommands` in
-  `flexible-ask.ts`) and skills without the `skill:` prefix, found by querying
-  the host provider with synthetic `/<token>` and `/skill:<token>` lines and
-  gated to name or hyphen-segment prefixes; built-in and extension commands are
-  dropped, `#` prompt actions are hidden,
-  completion `onApplied` side effects are dropped, and `trySyncSlashCompletion`
-  is not forwarded, so nothing typed runs. It subclasses
-  `HookEditorComponent` so the host routes the external-editor key and paste
-  contract to it while it holds focus; the base editor is dropped. The plugin
-  reader still handles bracketed pastes inside the `CustomEditor`.
-- `extensions/ask-images.ts`: clipboard and path image loading for the picker's
-  editors, using the host's clipboard/image-loading helpers.
-- `extensions/picker-btw.ts`, `picker-btw.md`, `picker-btw-view.ts`: the
-  Picker btw runner (one Side question thread per ask), its prompt, and its
-  thread view.
-- `extensions/host-ask-dialog.ts`: `routeHostAskDialog` (the host
-  `askDialog` route) and `askInPicker` (the picker answering in the native
-  result shape).
-- `extensions/picker-draft.ts`: `PickerDraftSlot`, the session's one kept
-  Picker draft with its Picker btw runner, the question key it matches on, and
-  the Picker btw threads still ending; `openPicker`, which shows a picker
-  with its matching draft and keeps or ends the draft and thread, for `ask`
-  and host dialogs alike.
-- `extensions/side-question.ts`: `SideQuestionThread` (the mirror session with
-  only the five read-only tools, its `SideQuestionRegistry`, `seedMessages`,
-  and the message-start, text, and tool-call callbacks; an already-aborted
-  signal is rejected before any request), `createMirrorSession` with the
-  Side cache key and stream options, `SideQuestionCache`, the usage ledger
-  (`recordSideQuestionUsage`, `forwardSideQuestionUsage`),
-  `LazySideQuestionThread` (opened on first use,
-  shared by both callers), and `sideQuestionsAvailable`.
-- `extensions/side-question-view.ts`: what both views share: the turn
-  (`SideQuestionTurn` with ordered `parts`, `answerInto`), the interrupt key,
-  and `SideQuestionTurnView`, which draws the question as the main chat draws
-  the user's message (Markdown on `userMessageBg` padded by a row and a
-  column; in Tern a `card` with role `omp.user`, which Tern's sheet styles
-  as the user bubble anywhere), then the turn's text and each group of tool
-  calls as a folded "N tool calls" line, in order (classic lines, or one Tern
-  collapsible `section` per group).
-- `extensions/btw.ts`, `btw.md`, `btw-panel.ts`: the `/btw` takeover
-  (`parseBtwQuestion`, `BtwCycle`, keys), its prompt, and its panel.
-- `extensions/flexible-ask.md`: static model-facing description; keep aligned
-  with upstream `packages/coding-agent/src/prompts/tools/ask.md` except the
-  option count (the plugin states no number instead of 2–5).
-- `extensions/assets.d.ts`: ambient typing for the static Markdown import.
-- `extensions/generate-image.ts`: `generate_image` registration (the mode
-  setting, the invalid-setting tool), the argument check, result content, and
-  the Tern card for previews, saved images, and errors.
-- `extensions/image-modes.ts`: the `ImageMode` entry type and Codex mode.
-- `extensions/openai-mode.ts`: OpenAI mode: schema, argument rules (sizes,
-  formats, reference sources, mask and markup), access, and request body.
-- `extensions/generate-image.md`, `generate-image-openai.md`: the static
-  model-facing description of each mode.
-- `extensions/image-artifacts.ts`: saving final images by policy and the
-  model-facing saved-path text.
-- `extensions/image-codecs.ts`: format sniffing, MIME types, lossless WebP.
-- `extensions/image-checks.ts`: alpha channel, transparent pixels, and
-  oriented size, for local masks and markups.
-- `extensions/codex-images.ts`: Codex Images request body, headers (account id
-  and residency from the token's JWT claims, reimplemented because
-  `@oh-my-pi/pi-catalog` is not served), guards, and error text.
-- `extensions/sunburst-images.ts`: the public Images API client (JSON and SSE
-  decoding, error text, timeout, cancellation).
-- `extensions/reference-images.ts`: reference images from absolute paths or the
-  active branch (`getBranch()`, including native `details.images`). Codex mode
-  keeps JPEG and WebP and sends the rest as lossless WebP; OpenAI mode keeps
-  PNG, JPEG, and WebP and sends the rest as PNG.
-- `skills/generate-image/SKILL.md`: the pre-send criteria for prompts and edits,
-  plus reference, mask, markup, transparency, and retry rules for each mode.
-  It is generic and has no examples; the cited research behind it is in
-  `docs/research/image-prompting-*.md`, `image-prompt-criteria-*.md`,
-  `image-prompt-format.md` (prose vs labeled lines vs JSON),
-  `gpt-image-2.6.md` (current controls, pricing, documentation conflicts, and
-  GIF, SVG-author, and Codex probes), `gpt-image-2.5-*.md` (historical checks
-  against Images 2.5),
-  `codex-image-backend-model.md` (live check of which model serves;
-  inconclusive), and `codex-api-credit-images.md` (the public Sunburst
-  contract and API credit billing).
-- `test/`: `bun test` behavior tests for `generate_image` in both modes through
-  `execute` (settings from a real project `.omp/plugin-overrides.json`; a
-  `mock.module` would leak into other test files) with a stubbed `fetch`,
-  including split-chunk SSE, for `parseBtwQuestion`, `AnswerEditor`'s host paste
-  contract, Picker btw `numberImagesByAppearance`, the Picker draft (the slot's
-  match rule, and Esc then reopen through `showMarkdownAskDialog` with a stub
-  `ui.custom`), host `askDialog` through the route (picks, notes, Esc and
-  draft, abort, native fallback for reserved labels and malformed input,
-  caller ids echoed, `onTimeout`, no stacking), and for the Side question's
-  `seedMessages`, cache key and stream options, `cacheMissTokens`,
-  `SideQuestionCache`, `sharedPrefixPrompt`, the usage ledger and its
-  forwarding, and `answerInto`. The tool limit, the thread cycle, the
-  mirror session, the panel, and a kept Picker btw thread have live smoke only.
-- `package.json`: OMP discovery, scripts, and SDK dependency pins.
-- `tsconfig.json`: strict, no-emit TypeScript configuration for extensions.
-- `README.md` and `CHANGELOG.md`: update when changing user-visible behavior.
-  `README.md` is for users: install, settings, keys, and behavior, in the
-  `GLOSSARY.md` terms. Smoke results and the OMP and Tern versions that proved
-  them go under Runtime and Verification here.
-
-## Development Commands
-
-Run from the repository root:
+## Commands
 
 ```sh
 bun install --ignore-scripts
-bun run check
+bun run check     # SDK version warning, then tsgo --noEmit
 bun test
-bun run update
+bun run update    # omp update, newest SDK types, then check
 omp plugin link "$PWD"
 ```
 
-`bun run check` runs `scripts/check-sdk-version.ts` (warns when installed SDK
-types differ from `omp --version`) and then `tsgo --noEmit`. `bun run update`
-runs `scripts/update-sdk.ts`: `omp update`, `bun update --latest` for both SDK
-packages, restores their `"latest"` specifiers, reinstalls, and checks. Both
-scripts run omp through `scripts/host-env.ts`: `bun run` prepends
-`node_modules/.bin`, where the SDK links its `cli.js` as `omp`, and Bun Shell
-ignores `.env()` PATH when resolving commands, so a bare `omp` would hit the
-dev dependency instead of the installed binary.
+There is no build, lint, or formatter. OMP loads the linked source directly,
+so start a new OMP session after every edit; running sessions keep the
+definitions they loaded.
 
-There is no separate build, lint, formatter, or standalone run script. OMP loads
-linked source directly. Start a **new OMP session** after linking or editing;
-reinstallation is unnecessary for linked edits.
+`scripts/host-env.ts` runs omp for both scripts. `bun run` puts
+`node_modules/.bin` first on PATH, where the SDK links its `cli.js` as `omp`,
+and Bun Shell ignores `.env()` PATH when it resolves commands, so a bare `omp`
+would run the dev dependency instead of the installed binary.
 
-## Code Conventions
+## Code conventions
 
-Match existing tabs, double quotes, semicolons, and trailing commas. Use camelCase
-functions/locals, PascalCase types, and `import type` for SDK types. Keep the
-default-exported initializer and initializer-local registration state. Preserve
-the extension execute signature `(toolCallId, params, signal, onUpdate, ctx)`.
+Match the existing tabs, double quotes, semicolons, and trailing commas. Use
+camelCase functions and locals, PascalCase types, and `import type` for SDK
+types. Keep the default-exported initializer with registration state local to
+it, and the execute signature `(toolCallId, params, signal, onUpdate, ctx)`.
 Return native-shaped async results and propagate failures.
 
-## Runtime and Verification
+## SDK imports
 
-Use Bun and `bun.lock`. The private package is ESM with ESNext/Preserve modules
-and Bundler resolution. SDK packages supply development types. Runtime value
-imports of `@oh-my-pi/*` resolve to the host's in-process modules through OMP's
-extension specifier shim; in compiled binaries only exported subpaths are served
-(`@oh-my-pi/pi-tui`, `/chrome`, `/render`, `/theme`, `/thinking`,
-`@oh-my-pi/pi-coding-agent`, `/judgment`, `/modes/*`, `/tools/*`, `/utils/*`,
-and the `@oh-my-pi/pi-utils` root). Compiled OMP 18.13.3 also loaded the exact
-`pi-coding-agent` subpaths `/config/model-resolver`,
-`/extensibility/plugins/loader`, and `/session/settings` in a live import
-probe. Do not assume other wildcard subpaths work: unserved paths such as
-`@oh-my-pi/pi-tui/overlays/*` can load a second SDK copy and fail.
-`@oh-my-pi/pi-tui` root exports the describe builders (`node`, `col`, `md`,
-`span`, `text`, `kbd`); `actionButton` and `hintsRow` from `/native/overlay`,
-which is not on the checked list, are mirrored in `ask-dialog.ts` and
-`ask-editor.ts`. Type-only imports such as
-`@oh-my-pi/pi-tui/tools/renderer` are erased and safe. Both SDK packages use
-the `"latest"` specifier; `bun.lock` records the resolved version, so update
-through `bun run update` to keep types and the installed omp in step.
+Runtime value imports of `@oh-my-pi/*` resolve to the host's in-process
+modules through OMP's extension specifier shim. Compiled binaries serve only
+exported subpaths:
 
-Run typechecking and `bun test` after code changes; tests cover
-`generate_image`, `parseBtwQuestion`, `AnswerEditor` paste handling, the Picker
-draft, the host `askDialog` route, the real Side question session's model,
-thinking, context boundary, images, fallback and cost cap, cache-miss tracking,
-usage ledger, recovery rendering, and the Side question model's provider
-refresh over a real registry whose Codex catalog lost a discovered model.
+- `@oh-my-pi/pi-tui`, `/chrome`, `/render`, `/theme`, `/thinking`
+- `@oh-my-pi/pi-coding-agent`, `/judgment`, `/modes/*`, `/tools/*`,
+  `/utils/*`, and the exact subpaths `/config/model-resolver`,
+  `/extensibility/plugins/loader`, and `/session/settings` (import probe,
+  compiled OMP 18.13.3)
+- the `@oh-my-pi/pi-utils` root
 
-The opt-in `test/generate-image-openai.live.test.ts` runs only with
-`OMP_TOOLS_LIVE_IMAGES=1` and `OPENAI_API_KEY`. Run
-`OMP_TOOLS_LIVE_IMAGES=1 bun test live` for three paid API checks: a still
-image with complexity, SVG, and GIF. All three passed on 2026-11-05 in
-45 seconds; this does not verify OMP registration or cards.
+Any other subpath can load a second SDK copy and fail
+(`@oh-my-pi/pi-tui/overlays/*` does). The `pi-tui` root exports the describe
+builders (`node`, `col`, `md`, `span`, `text`, `kbd`). `actionButton` and
+`hintsRow` live in the unserved `/native/overlay`, so `ask-dialog.ts` and
+`ask-editor.ts` mirror them. Type-only imports such as
+`@oh-my-pi/pi-tui/tools/renderer` are erased and safe.
 
-There is no repository CI. Registration, ask, and Side question changes
-require a fresh-session OMP smoke; typechecking alone does not exercise host
-integration or UI. OMP 18.13.3 with Tern 0.9.7 proved both renderers' primary
-model selection, role thinking, retry countdowns, fallback switches, terminal
-failure and Esc in `/btw` and Picker btw; host `askDialog` picks, notes,
-Other, draft and timeout; eager and deferred tool precedence; and compiled RPC
-Side question images, five-tool restriction, privacy and shared cost gate.
-The isolated headless helper was proved from a bash launcher. The same
-versions proved each `generate_image` mode's schema, a live Codex generation
-card, and OpenAI error cards. That session had no valid `openai` key, so it
-did not verify live OpenAI requests.
-OMP 18.14.2 with headless Tern 0.9.9 (Tern view and `PI_TUI_NATIVE=0`)
-proved Esc then F5 on an `ask`: the same call id replays from the original
-`toolUse` with no model request between, and the picker restores picks,
-option notes, and the Picker btw turn.
-OMP 18.12.5 with headless Tern 0.9.5 (Tern view and
-`PI_TUI_NATIVE=0`) was used for every surface: the picker (keys, `Other`,
-notes, Submit, pointer, `ask.timeout`), the Picker btw (also during an `ask`
-that a subagent's IRC message started), `/btw`, the `generate_image`
-generate and edit, and the Picker label's computed font (DevTools Console
-`element:style(prop)`); RPC mode for the read-only Side question probes
-(`helpers/side-question-probe.ts`: the five tools, and `read agent://` of a
-running subagent; a file outside the plugin cannot resolve `@oh-my-pi/*`).
-OMP 18.12.1 with native Tern 0.9.4 was used for Picker Cmd+C and Cmd+V (with
-a temporary picker extension). A headless Tern window drives
-the Tern smokes: `tern serve --control <sock>`, then `tern ctl --control <sock>`
-`run`, `type`, `key`, `click '<css selector>'`, and `shot <name>` (PNG plus a
-layout JSON of every element). `PI_TUI_NATIVE=0` in the same window checks the
-text renderer.
+Both SDK packages use the `"latest"` specifier and `bun.lock` records the
+resolved version. Update through `bun run update` so the types and the
+installed omp move together.
+
+## `ask` and the Picker
+
+- `flexible-ask.ts` registers the shadow description and schema. With
+  `ctx.mode === "tui"` and `ctx.hasUI` it opens the Picker through
+  `ctx.ui.custom` and formats native-shaped results. An extension cannot
+  restyle the native dialog: `ctx.invokeTool` runs it with the session UI.
+- Elsewhere (RPC, ACP, print, subagents), and for inputs native rejects
+  (reserved or duplicate labels, duplicate ids), it calls
+  `ctx.invokeTool(params, { signal, onUpdate })` so native errors and
+  fallbacks apply unchanged. `ask-questions.ts` holds the reserved labels,
+  `sanitizeQuestions`, and `nativeRejects`, shared with host dialogs. Keep
+  native `ask` enabled for this, and replace legacy `omp-ask` installs instead
+  of loading two wrappers.
+- Unlike native `ask` (`tools/ask.ts`), the Picker keeps `ask.timeout` in
+  plan mode and does not speak the questions under `speech.enabled`.
+- Preserve `approval: "read"`, `concurrency: "exclusive"`, cancellation
+  (`ctx.abort()` plus `ToolAbortError`), `ask.timeout` auto-selection,
+  `ask.notify`, and the explicit error when native delegation is unavailable.
+- Pass the timeout to `ui.custom` as `{ signal, timeout }` (`timeout` is not
+  in `ExtensionCustomOptions`). Since OMP 18.12 the host treats an extension
+  dialog as a wait for the user, which ends the computer turn so the display
+  can sleep, unless the options carry a positive `timeout`, as native timed
+  ask does.
+- `ask-dialog.ts` keeps pi-tui `AskDialogComponent`'s structure (tabs, Submit
+  review, multi-select, Other, timeout) with its own key flow, one meaning
+  per key in every Picker (README keys table). Diff the structure against
+  upstream when OMP changes the native dialog.
+- `ask-result.ts` writes the labeled answer text, the only part the model
+  sees, and `joinOptionNotes`, the one note string native details hold per
+  question.
+- `flexible-ask.md` is the model-facing description. Keep it aligned with
+  upstream `packages/coding-agent/src/prompts/tools/ask.md`, except that it
+  states no option count where upstream says 2–5. `assets.d.ts` types the
+  Markdown import.
+
+### Editors and paste
+
+- `ask-editor.ts` wraps the main prompt's `CustomEditor` with the host's
+  suggestion provider, borrowed in `flexible-ask.ts` through
+  `ctx.ui.addAutocompleteProvider`, for references only:
+  - `/` suggests file commands (names from `discoverSlashCommands`) and skills
+    without the `skill:` prefix, found by querying the host provider with
+    synthetic `/<token>` and `/skill:<token>` lines and kept to name or
+    hyphen-segment prefixes.
+  - Built-in and extension commands, `#` prompt actions, and completion
+    `onApplied` side effects are dropped, and `trySyncSlashCompletion` is not
+    forwarded, so nothing typed runs.
+  - It subclasses `HookEditorComponent` so the host routes the external-editor
+    key and the paste contract to it while it has focus. The plugin reader
+    still handles bracketed pastes inside the `CustomEditor`.
+- Tern sends Cmd+V as OSC 5522 enhanced paste, and OMP calls the focused
+  component's paste contract (`pasteText`, `beginPaste`, `acceptsImages`,
+  `attachImage`). `AnswerEditor` accepts host text and images, turns host
+  markers into image chips, and queues keys until pending pastes finish. The
+  option list implements the contract only to refuse a paste with
+  `Open a note (n) or Other to paste`. Selection copy stays Tern's.
+- `ask-images.ts` loads clipboard and path images with the host's helpers.
+
+### The Picker in Tern
+
+In terminals that speak the Tern Surface Protocol, OMP calls `describe(cx)`
+instead of `render()`.
+
+- The Picker describes a `col` with role `omp.editor` in the composer's place,
+  as `AskDialogComponent` does: `tabs`, a ring `meter` re-described each second
+  (`CountdownTimer`'s `elapsed` node when the terminal lacks `meter`), one
+  compact `row` per option, and `omp.btn` buttons. Inline `min`/`max` widths
+  of 100% override the composer's measure, so it spans the pane.
+- The question and options share one `scrollBox` (`ask-editor.ts`), a capped
+  `list`, because a `col` with `max.h` only clips. It is as tall as its content
+  up to `DIALOG_HEIGHT_RATIO` of the pane's rows less `NATIVE_CHROME_LINES`
+  (status line, tabs, buttons, and insets, measured in Tern 0.7.2). Only the
+  Picker btw thread fixes that height (`min.h`). The classic Picker caps at the
+  same ratio of the terminal, with the row cap scaled because a list row is a
+  text line plus 6px.
+- Put the `scroll` request on the content: Tern scrolls the scroller at or
+  above the asking node, and the list's scroller is inside the list node.
+- Pointer `action` events run the key commands (`#runRowCommand`,
+  `#runSubmitCommand`). Option rows use `omp-tools.*` roles, not `omp.ask.*`,
+  and no `mark: "pick"`, which collapsed the marker column.
+- Tern's sheets style only `omp.*` roles, so the Picker sends `NATIVE_SHEET`
+  (the `s` verb) with every `describe` when `cx.feature("styles")`. A sheet
+  belongs to one surface, and pi-tui opens a new inline surface on `gone` with
+  the same describe context, so a once-only send is lost.
+  - The sheet uses theme variables only (`--sans`, `--t1`, `--t3`, `--l1`,
+    `--l2`), and row text reads `--sf-fs` and `--sf-lh` so each line is one
+    terminal row.
+  - Tern scopes a program sheet to strict descendants of its region, so a rule
+    on `.sf-region` never applies (Tern 0.9.5).
+  - `NATIVE_STYLED_ROW_LINES`, the height estimate, includes the sheet's row
+    padding and gap.
+  - Tern's Markdown hangs list numbers 2 cells left of the text, where a scroll
+    box clips them, so the sheet pads each `scrollBox` scroller 2 cells left
+    and cancels it with a negative margin.
+- Tern never reports what is on screen. After PgUp/PgDn (`#nativePagedAway`)
+  the next j/k, action key, or button only reveals the highlighted row
+  (`#revealCursor` bumps its `reveal` token). A question's first showing keeps
+  its top in view: `#nativeHold` withholds the cursor's `reveal` until the
+  cursor moves or a reveal is asked for, and `#nativeCursorFits`, estimated
+  from the classic layout, sets `#nativePagedAway` when the row ends below the
+  box, rechecked on every box resize while the hold lasts. A remounted
+  scroller (tab switch, back from an editor) reveals the row by a placement
+  `reveal`. Wheel scrolling is not reported and does not arm this guard.
+- `AnswerEditor` and the Picker btw view describe the `CustomEditor` as a child
+  component. `AnswerEditor` replaces the composer layout and placeholder so no
+  model chip or send bar shows.
+- Tool cards come from `describeCall` and `describeResult`. An extension tool
+  never gets the built-in renderer of its name, so `ask` reuses the exported
+  `askToolRenderer` plus the Submit note (`details.submitNote`).
+  `mergeCallAndResult` is forwarded from the definition like `concurrency`.
+  The host appends result images from `content` after the view's body.
+
+### Picker draft
+
+- Esc (or Tern's Cancel button) resolves the Picker with `kind: "cancel"`
+  and a Picker draft: the `QuestionState`s, tab, Submit note, image count, and
+  Picker btw turns. `flexible-ask.ts` stores it with the Picker btw runner in
+  a per-load `PickerDraftSlot` (`picker-draft.ts`) before `ctx.abort()`.
+- F5 (`app.retry`) replays the cancelled call with its stored id and arguments
+  before any model request (OMP `turn-recovery.ts`), so the same `ask` runs
+  again. No key is bound. Since OMP 18.14, a custom message after the abort
+  other than an eval-state snapshot (a background job result between Esc and
+  F5) makes F5 drop the aborted turn and call the model. A re-ask with the
+  same questions still gets the draft.
+- `take` hands the draft to a Picker whose question ids, text, option labels,
+  and `multi` match, and disposes the thread on other questions. A main
+  prompt keeps the draft: a manual retry fires no `before_agent_start`, and a
+  re-ask after "go on" should match.
+- A restored Picker shows `Restored your answers` only when the draft holds a
+  pick, text, a Submit note, or a turn, and restarts the full `ask.timeout`.
+- The slot ends every Picker btw thread (`end`): dropped, mismatched,
+  submitted, or failed. `drop` waits for all of them.
+  `session_before_switch`, `session_before_branch`, `session_tree`, and
+  `session_shutdown` drop the draft, so no thread outlives its session.
+- `openPicker` shows a Picker with its matching draft and keeps or ends the
+  draft and thread, for `ask` and host dialogs alike.
+
+### Host dialogs
+
+OMP code that asks without the `ask` tool calls the shared UI context's
+`askDialog`: Ratchet approvals (`ratchet/prelude-definition.ts`) and the
+`/tree` ask re-answer. `host-ask-dialog.ts` routes it to the Picker in the
+TUI. The route relies on undocumented OMP internals, proved live with OMP
+18.12.6; recheck it when OMP changes the extension runner.
+
+- `session_start` replaces `askDialog` on the context object itself. The
+  runner's context and the tool context store's wrapper (`trackUserWaits`)
+  are proxies with only a `get` trap, so a write through `ctx.ui` lands on the
+  object, and every later handler run reads it. A run already in flight keeps
+  the method its proxy captured.
+- Read the native `askDialog`, `custom`, and `notify` through property
+  descriptors: the runner's `get` returns per-handler wrappers bound to that
+  handler's signal.
+- One wrapper lives under `Symbol.for("omp-tools.host-ask-dialog")`, shared by
+  every module load. Further routes stack in its list, and the last one to end
+  (`session_shutdown`) restores the native method.
+- `askInPicker` opens the Picker through `openPicker` and answers in the
+  native `ExtensionAskDialogResult` shape: the caller's ids, question text,
+  and labels (shown without `\r`), picks, `Other` text, one note per question
+  (each option note after its option, then the Submit note), and images split
+  by whether `customInput` names their label.
+- Esc and an aborted signal give `undefined`, and Esc keeps a Picker draft in
+  the same slot as `ask`.
+- Only the caller's `timeout` counts down. Its `onTimeout` runs once on expiry
+  before answers are picked, as native does, and no notification is sent.
+- Malformed questions, which native coerces, and `nativeRejects` questions go
+  to the native method.
+- Collaboration guests cannot answer, because the native method's guest race
+  is skipped. This is an accepted limit: no extension API reports a guest.
+
+## Side questions
+
+`side-question.ts` holds `SideQuestionThread`, `createMirrorSession`,
+`SideQuestionCache`, the usage ledger, `LazySideQuestionThread` (opened on
+first use, shared by `/btw` and the Picker btw), and `sideQuestionsAvailable`.
+A Side question is a full agent run in a mirror session built the way OMP's
+`/tan` builds one (`tan-command-controller.ts`).
+
+- **Fork.** `SessionManager.forkFrom` copies the main transcript, with
+  `repairInterruptedTail` because the main agent may be mid-turn, into
+  `$TMPDIR/omp-side-question-<random>/SideQuestion-<uuid>.jsonl`. It stays
+  outside the sessions tree because omp-stats and the Agent Hub scan that
+  tree and counted the fork's usage a second time. Dispose deletes it.
+- **One constructor.** Build the mirror only with `createMirrorSession`. Its
+  input type has no `systemPrompt`, tool list, or plain-string cache key, so
+  the old wiring fails typecheck.
+- **Tools.** `restrictToolNames` offers only read, grep, glob, find, and
+  web_search (no MCP, LSP, IRC, or ambient extension tools) with OMP's
+  default prompt for them. There is no call-time gate. Copying the main prompt
+  and tools to reuse the main cache let a Picker btw call `ask`, `bash`, and
+  `write` in 3 of 15 replays (0 of 15 now), so a thread's first request never
+  reuses the main cache.
+- **Cache key.** Every thread of one main session shares
+  `sideQuestionCacheKey`, sent as `providerPromptCacheKey` and Codex
+  `parentSessionId` over SSE (`preferWebsockets: false`). A later thread's
+  first request read the earlier thread's prefix in 10 of 10 Codex runs,
+  against 0 of 5 on a new websocket with the same key. Anthropic reused it
+  either way.
+- **Session wiring.** The mirror gets subagent settings, the parent's prepared
+  extensions, and `main.costGate`, as in `/tan`. It is a child session
+  (`parentTaskPrefix`, so it binds no process-wide state).
+  `localProtocolOptions` snapshots the main session's artifacts dir and
+  session id so `local://` (pasted images, large pastes) resolves; the fork
+  copies no artifacts.
+- **Registry.** `SideQuestionRegistry` is its own `AgentRegistry`, outside the
+  Agent Hub so nothing can message or list the mirror. Its `get` and `list`
+  fall back to `AgentRegistry.global()`, because `read agent://<id>` resolves
+  a running agent with no output through the reader's registry.
+- **Seed.** `seedMessages` replaces the mirror's messages with a
+  `structuredClone` of `main.agent.state.messages`. The live copy is on the
+  selected branch, which the file does not record, and holds messages the file
+  lacks (the `eval-state-context` message after a `/tree` jump, #15933). Each
+  call the last reply still waits on gets a still-open result (`ask`: the user
+  is answering now; others: still running; both say not to call it again).
+  An "aborted" result made the model ask the user again.
+- **Model.** `side-question-model.ts` reads `sideQuestionModel` (default
+  `@smol`; empty keeps the main model) per thread with `getPluginSettings`,
+  and resolves the role and thinking level with `resolveModelOverride`. The
+  fork records the selected role so shared-model roles keep their own
+  fallback chains.
+  - An unresolved selector calls `refreshDiscoverableProviders(..., "online")`
+    for the providers its patterns name, then resolves again. Use that, not
+    `refreshProvider`, whose static reload drops discovered models. A running
+    OMP can lose discovery-only models such as Codex `gpt-6.1-terra` after a
+    denied discovery with no usable cache.
+  - The caller's signal, passed through `LazySideQuestionThread.get` and
+    `open`, ends the wait without aborting the shared refresh.
+  - Still unresolved, it warns with the missing model and uses the main model.
+  - Before the first request, the tokenizer checks the live history plus
+    prompt and tool overhead. A known context window that is too small uses
+    the main model. OMP owns overflow recovery after that.
+- **Cache misses.** `SideQuestionCache` gives each thread a tracker that flags
+  a request reading more than 2048 tokens below the expected cached prefix:
+  the thread's previous request on that provider and model, or for a first
+  request, the earlier thread's first request on that route while the main
+  messages still start with the ones it saw (`sharedPrefixPrompt`). It counts
+  only when the request wrote cache (`cacheWrite > 0`, never on Codex) and
+  shows `⊘ cache miss · N tokens` only while `display.cacheMissMarker` is on.
+- **Usage.** `recordSideQuestionUsage` writes each mirror request to the main
+  session's ledger as `model_usage` with purpose `side-question`.
+  `forwardSideQuestionUsage` wraps the fork's `appendModelUsage` and copies
+  every entry the mirror records off its transcript (cache warms, judge calls)
+  as `side-question:<purpose>`. Session cost counts them after the fork file is
+  gone, and none is a message.
+- **Cache warming.** OMP's warming stays on: an idle panel on a 5-minute tier
+  is warmed like the main session. 1-hour entries outlive the 30-minute idle
+  window, so they are not.
+- **Streaming.** The thread reports each assistant message's start
+  (`onMessageStart`), its text, tool calls, and native retry and fallback
+  events (`onRecovery`, `side-question-recovery.ts`). `answerInto`
+  (`side-question-view.ts`) keeps them as ordered parts with a live retry
+  countdown, so a later message never replaces earlier text. `ask` returns the
+  last assistant message's text, and rejects an already-aborted signal before
+  any request.
+- **Recovery.** Transport retries happen before TurnRecovery events, and
+  native fallback chains can revisit models and renew their retry budgets.
+  Keep OMP's policy and cancellation; add no Side-only retry rules.
+- **Availability.** A Side question needs a live main session
+  (`AgentRegistry.global()`) and a session file. Without them `/btw` falls
+  through to native and the Picker btw is off.
+- **View.** `SideQuestionTurnView` draws the question as the main chat draws a
+  user message (Markdown on `userMessageBg`, padded a row and a column; in
+  Tern a `card` with role `omp.user`, styled as the user bubble), then the
+  text and each group of tool calls as a folded "N tool calls" line (one Tern
+  collapsible `section` per group).
+
+### `/btw`
+
+`btw.ts`, `btw.md`, and `btw-panel.ts` hold the takeover (`parseBtwQuestion`,
+`BtwCycle`, keys), its prompt, and its panel.
+
+- OMP skips extension commands named like built-ins, so the plugin catches the
+  text in the `input` event, which runs before built-in dispatch
+  (`docs/adr/0001-take-over-btw-through-input-event.md`). It returns
+  `{ handled: true }` only for `source: "interactive"` in the TUI. Bare `/btw`,
+  autocomplete, `side: true` file commands, the focused-subagent path (it
+  skips `input` handlers), and RPC `btw` stay native.
+- One `BtwCycle` per session holds the thread, and a later `/btw` follows up
+  in it. `before_agent_start` (a main prompt) ends it; while an answer runs,
+  it marks the thread closed so the answer finishes and shows first. Session
+  switch, branch, tree, and shutdown dispose it.
+- The panel is a widget above the editor (`setWidget`,
+  `placement: "aboveEditor"`), and the editor keeps focus. Keys come through
+  `ctx.ui.onTerminalInput` and act only while the panel shows and the editor
+  is empty: `app.interrupt` cancels or hides, `t` folds the tool calls.
+- In Tern the panel describes a `col` with native `/btw`'s role
+  `omp.overlay.btw` (a plain `col` let the composer's meter row overlap the
+  hints), a `scrollBox` capped at 40% of the rows with `reveal` at the end, and
+  the tool calls as a collapsible `section`. It sends its own stylesheet
+  (`omp-tools-btw`, `SCROLL_BOX_CSS` from `ask-editor.ts`) so list numbers are
+  not clipped.
+
+### Picker btw
+
+`picker-btw.ts`, `picker-btw.md`, and `picker-btw-view.ts` hold the runner,
+its prompt (with the unsubmitted answers from `formatAskAnswers`), and the
+thread view.
+
+- Each ask gets one thread (`pickerBtwRunner` in `flexible-ask.ts`), opened on
+  the first `?` question and disposed when the dialog closes, unless a Picker
+  draft keeps it. A cancelled turn keeps the thread.
+- `?` disposes the countdown, and the next key in the options restarts it.
+- Pasted images go to `SideQuestionThread.ask` as prompt images.
+
+## `generate_image`
+
+`generate-image.ts` composes the selected mode (`image-modes.ts`: an
+`ImageMode` entry with description, schema, card facts, and `run`) with the
+shared artifact step (`image-artifacts.ts`), so a new mode is an entry, not a
+branch. `generate-image.md` and `generate-image-openai.md` are the
+model-facing descriptions.
+
+- **Mode setting.** The async initializer reads `imageGenerationMode` with
+  `getPluginSettings("omp-tools", process.cwd())`; absent or null is
+  `openai`. OMP runs the initializer once per process, so `session_switch`
+  (`/new`, `/resume`, `/fork`) reads it again from `ctx.cwd` and registers the
+  tool anew. The host refreshes a re-registered name, and a running call keeps
+  the definition it started with. An invalid value, `""` included, registers a
+  tool whose every call fails with the fix. No mode falls back to another
+  (`docs/adr/0002-explicit-image-generation-modes.md`).
+- **Precedence.** Native `generate_image` is settings-gated. Eager extension
+  registration makes native skip the taken name, and deferred registration
+  replaces native through the host's late registration path. The plugin wins
+  either way.
+- **Schema.** Keep the schema open: OMP's validator deletes unknown keys from
+  closed schemas (`pi-ai` `coerceArgsFromIssues`). `execute` rejects unknown
+  keys and checks the schema itself.
+- **Results.** Raster images go in `content` only, never `details.images`
+  (the TUI would show them twice). SVG returns a saved path and an instruction
+  to read it, without image content. `details.outputs` lists each path, MIME
+  type, size, and quality. Policy `lossless-webp` re-encodes (Bun's encoder
+  drops the color under alpha 0 and keeps visible pixels and alpha);
+  `as-returned` keeps the provider's bytes, GIF and SVG included. GIF content
+  stays `image/gif`. Streamed previews go through `onUpdate` with
+  `details.stage: "preview"` and are never saved.
+- **References.** `reference-images.ts` reads absolute paths or the active
+  branch (`getBranch()`, including native `details.images`). Codex mode keeps
+  JPEG and WebP and sends the rest as lossless WebP. OpenAI mode keeps PNG,
+  JPEG, and WebP and sends the rest as PNG. `image-codecs.ts` sniffs formats
+  and encodes WebP.
+
+### Codex mode
+
+`codex-images.ts` posts to `chatgpt.com/backend-api/codex/images/generations`
+(no references) or `/edits` with Codex's exact body and headers and the
+`openai-codex` credential. It reimplements the account id and residency from
+the token's JWT claims because `@oh-my-pi/pi-catalog` is not served.
+
+- Keep the request guards: the 64 MB body cap (larger bodies get false
+  `moderation_blocked` or silently dropped references), the 0-image-token
+  dropped-references check on edits, and the 5-minute timeout combined with
+  the tool signal.
+- The endpoint returns PNG with a signed C2PA manifest whatever
+  `output_format` says (checked 2026-10-08), and the local re-encode drops the
+  manifest. Only the hosted `/codex/responses` image tool returns WebP, but it
+  puts a chat model in the loop and drew on the weekly `premium` limit instead
+  of the daily `imagegen_premium` one.
+- `details` keeps `x-codex-imagegen-request-id`, `generation_id`, and
+  `usage.output_tokens`; errors append the request id.
+- Success text warns at 80% of a limit window. The endpoint reports its image
+  window as `x-codex-primary-*` under
+  `x-codex-active-limit: imagegen_premium`, so limit-named headers come first
+  and `x-codex-*` is the fallback. Zero-minute windows are skipped.
+
+### OpenAI mode
+
+`openai-mode.ts` holds the schema, argument rules, access, and request body.
+`sunburst-images.ts` is the Images API client.
+
+- The `openai` key from `getApiKeyForProvider` goes only to
+  `https://api.openai.com/v1`. A different `getProviderBaseUrl("openai")`, or
+  `OPENAI_BASE_URL` when OMP reports none, fails the call.
+  `OpenAI-Organization` and `OpenAI-Project` come from
+  `getProviderHeaders("openai")`, else `OPENAI_ORG_ID` and
+  `OPENAI_PROJECT_ID`.
+- It always sends `gpt-image-2.6-sunburst`. Size checks keep only `auto` or
+  multiples of 16 with aspect ratio 1:3 to 3:1. The undocumented 2.6 edge and
+  pixel limits are left to the API.
+- Registration reads `svgAuthorModel` at session start and on session switch;
+  absent or empty means `gpt-6.1-sol`. SVG requests always send
+  `svg: { model }`, and a call's `svg` settings override it.
+- The client sends one JSON request (no retries), decodes JSON or SSE
+  (`*.partial_image`, `*.completed`, `error`; a stream needs `n`
+  completions), and keeps `x-request-id`. The 5-minute timeout covers the
+  stream.
+- Mask and markup bytes go out unchanged. Local files and data URLs are
+  checked first (`image-checks.ts`: alpha from the file header, transparency
+  from decoded pixels, sizes from `Bun.Image` metadata with EXIF
+  orientation). No Codex guard applies.
+- `details.requested` holds the sent settings, never the identifiers.
+  `details.reported` holds what the API reported, and `details.svgUsage` the
+  SVG author's `svg_usage`.
+
+### Prompting skill
+
+`skills/generate-image/SKILL.md` holds the pre-send criteria for prompts and
+edits and the reference, mask, markup, transparency, and retry rules for each
+mode. It stays generic, with no examples. Its cited research is in
+`docs/research/`: `image-prompting-*.md`, `image-prompt-criteria-*.md`,
+`image-prompt-format.md` (prose, labeled lines, or JSON), `gpt-image-2.6.md`
+(controls, pricing, documentation conflicts, and GIF, SVG-author, and Codex
+probes), `gpt-image-2.5-*.md` (earlier checks), `codex-image-backend-model.md`
+(which model serves; inconclusive), and `codex-api-credit-images.md` (the
+public Sunburst contract and API credit billing).
+
+## Verification
+
+Run `bun run check` and `bun test` after code changes. Tests drive
+`generate_image` through `execute` with a stubbed `fetch` and settings from a
+real project `.omp/plugin-overrides.json`; a `mock.module` would leak into
+other test files.
+
+The opt-in `test/generate-image-openai.live.test.ts` sends three paid
+requests (a still image with complexity, an SVG, and a GIF) and runs only with
+`OMP_TOOLS_LIVE_IMAGES=1` and `OPENAI_API_KEY`:
+`OMP_TOOLS_LIVE_IMAGES=1 bun test live`.
+
+There is no CI. Changes to registration, `ask`, the Picker, Side questions,
+tool cards, or event handling need a fresh-session OMP smoke through the
+`verify-omp-tools` skill (headless Tern, `PI_TUI_NATIVE=0` for the text
+renderer, RPC for checks without a screen). The five-tool limit, the `/btw`
+thread cycle, the mirror session, the panel, and a kept Picker btw thread have
+live smoke only.
+
+Last live proof, newest first:
+
+- OMP 18.14.2, headless Tern 0.9.9: Esc then F5 on an `ask` replays the same
+  call id with no model request between, and the Picker restores picks, option
+  notes, and the Picker btw turn.
+- OMP 18.13.3, Tern 0.9.7: in both renderers, Side question model selection,
+  role thinking, retry countdowns, fallback switches, terminal failure, and Esc
+  in `/btw` and the Picker btw; host `askDialog` picks, notes, Other, draft,
+  and timeout; eager and deferred `generate_image` precedence; each mode's
+  schema, a live Codex card, and OpenAI error cards (no live OpenAI request);
+  over compiled RPC, Side question images, the five-tool limit, privacy, and
+  the shared cost gate.
+- OMP 18.12.5, headless Tern 0.9.5: every surface in both renderers (Picker
+  keys, `Other`, notes, Submit, pointer, `ask.timeout`; Picker btw, also in an
+  `ask` started by a subagent's IRC message; `/btw`; `generate_image`
+  generate and edit) and the Picker label's computed font (DevTools Console
+  `element:style(prop)`).
+- OMP 18.12.1, native Tern 0.9.4: Picker Cmd+C and Cmd+V.
+- 2026-11-05: the three live OpenAI checks passed in 45 seconds.
+
+## Docs
+
+- Update `README.md` and `CHANGELOG.md` when user-visible behavior changes.
+  `README.md` is for users: install, settings, keys, and behavior. Smoke
+  results go in Verification above.
 
 ## Sibling repos
 
-The OMP source is checked out at `~/work/tries/oh-my-pi` (`origin` is
-`can1357/oh-my-pi`). Read it for host behavior, the upstream files named above
-(the native dialog, `packages/coding-agent/src/prompts/tools/ask.md`), and
-`/tan` or `/btw` internals, at the tag matching `omp --version` (`v<version>`).
+The OMP source is at `~/work/tries/oh-my-pi` (`origin` is `can1357/oh-my-pi`).
+Read it at the tag matching `omp --version` (`v<version>`) for host behavior,
+the upstream files named above, and `/tan` or `/btw` internals.
 
-tern-plugins (`~/work/tries/tern-plugins`) also starts isolated Tern instances
-and seeds the same omp state to keep Tern's omp offer alert off the screen.
-When a Tern update changes the omp state, the alert, or how an isolated
-instance starts, fix the start in both repos: `tern-verify start` there and
+`~/work/tries/tern-plugins` also starts isolated Tern instances and seeds the
+same omp state to keep Tern's omp offer alert off the screen. When a Tern
+update changes that state, the alert, or how an isolated instance starts, fix
+both `tern-verify start` there and
 `.omp/skills/verify-omp-tools/helpers/tern-isolated` here.
 
 ## vstack
