@@ -22,7 +22,9 @@ the Picker btw asks the same kind of Side question.
   "tui"` with `ctx.hasUI`, it shows its own picker (`extensions/ask-dialog.ts`)
   through `ctx.ui.custom` and formats results with native wording and details.
   The native dialog cannot be restyled from an extension: `ctx.invokeTool` runs
-  it with the session UI, not the wrapper's.
+  it with the session UI, not the wrapper's. Unlike native `ask`
+  (`tools/ask.ts`), the picker keeps `ask.timeout` in plan mode and does not
+  speak the questions under `speech.enabled`.
 - Otherwise (RPC/ACP/print, subagents), and for inputs the native tool rejects
   (reserved or duplicate labels, duplicate ids), it delegates to
   `ctx.invokeTool(params, { signal, onUpdate })` so native errors and fallbacks
@@ -448,6 +450,9 @@ the Picker btw asks the same kind of Side question.
 - `package.json`: OMP discovery, scripts, and SDK dependency pins.
 - `tsconfig.json`: strict, no-emit TypeScript configuration for extensions.
 - `README.md` and `CHANGELOG.md`: update when changing user-visible behavior.
+  `README.md` is for users: install, settings, keys, and behavior, in the
+  `GLOSSARY.md` terms. Smoke results and the OMP and Tern versions that proved
+  them go under Runtime and Verification here.
 
 ## Development Commands
 
