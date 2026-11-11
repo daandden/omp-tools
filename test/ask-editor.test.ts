@@ -89,4 +89,17 @@ describe("Picker editor host paste", () => {
 		expect(submitted).toEqual(["AxB"]);
 		editor.dispose();
 	});
+
+	test("a history pick lands after a paste still loading, and later keys and image chips follow it", () => {
+		const { editor, submitted } = editorFixture();
+		editor.pasteText("typed ");
+		const finish = editor.beginPaste();
+		editor.setText("from history");
+		editor.handleInput(" ");
+		editor.pasteText(editor.attachImage({ type: "image", mimeType: "image/png", data: "aW1hZ2U=" })!);
+		finish("pasted");
+		editor.handleInput("\r");
+		expect(submitted).toEqual(["from history [Image #1]"]);
+		editor.dispose();
+	});
 });

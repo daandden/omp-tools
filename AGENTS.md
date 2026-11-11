@@ -569,6 +569,9 @@ Run `bun run check` and `bun test` after code changes. The suite is
 - `test/helpers/side-question-session.ts` runs a real SDK mirror session
   against a local SSE provider and records requests, warnings, and recovery
   events, so retries, fallbacks, and `/btw` follow-ups need no paid model.
+- `test/picker-history-search.test.ts` mounts the Picker in a real pi-tui
+  `TUI` editor slot and runs the host's own
+  `SelectorController.showHistorySearch` for Ctrl+R, over a fixed history.
 - `test/generate-image-openai.live.test.ts` sends three paid requests (a
   still image with complexity, an SVG, and a GIF) and runs only with
   `OMP_TOOLS_LIVE_IMAGES=1` and `OPENAI_API_KEY`:
@@ -583,6 +586,10 @@ smoke only.
 
 Last live proof, newest first:
 
+- OMP 18.18.8, headless Tern 0.9.16, local SSE provider: Ctrl+R in a Picker
+  note, `Other` answer, and Picker btw question puts the picked history entry
+  in that editor; a second Ctrl+R opens over the same editor, Esc keeps its
+  text, and the answer stays out of prompt history.
 - OMP 18.14.2, headless Tern 0.9.9: Esc then F5 on an `ask` replays the same
   call id with no model request between, and the Picker restores picks, option
   notes, and the Picker btw turn.

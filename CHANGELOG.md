@@ -55,6 +55,11 @@
 
 ### Fixed
 
+- Ctrl+R in a Picker `Other`, note, Submit note, or Picker btw editor now puts
+  the prompt-history entry you pick into that editor, ready to edit. It went to
+  a hidden copy of the editor instead, and after the search closed, focus moved
+  from the editor to the Picker, so the next Ctrl+R or external-editor key
+  reached the hidden main prompt.
 - A Side question model that OMP's model list lost while running (after a
   denied Codex model discovery, for example) no longer falls back to the main
   model until a restart: the plugin refreshes that model's provider and looks

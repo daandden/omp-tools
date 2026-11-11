@@ -467,7 +467,7 @@ function actionBar(buttons: readonly (NativeNode | null)[]): NativeNode {
 }
 
 class MarkdownAskDialog implements Component, Focusable {
-	focused = false;
+	#focused = false;
 	readonly #questions: ExtensionAskDialogQuestion[];
 	readonly #states: QuestionState[];
 	readonly #tui: TUI;
@@ -576,6 +576,23 @@ class MarkdownAskDialog implements Component, Focusable {
 				() => this.#handleTimeout(),
 			);
 		}
+	}
+
+	get focused(): boolean {
+		return this.#focused;
+	}
+
+	/**
+	 * Focus given to the Picker while an editor is open goes on to that editor.
+	 * The host refocuses its editor slot's child, the Picker, when Ctrl+R history
+	 * search closes; the editor must hold focus for the next Ctrl+R and the
+	 * external-editor key to reach it rather than the hidden main prompt.
+	 */
+	set focused(focused: boolean) {
+		this.#focused = focused;
+		if (!focused || this.#closed) return;
+		const editor = this.#btwOpen ? this.#btw?.editor : this.#prompt;
+		if (editor) this.#tui.setFocus(editor);
 	}
 
 	setUseTerminalCursor(useTerminalCursor: boolean): void {

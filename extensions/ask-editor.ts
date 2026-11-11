@@ -5,8 +5,9 @@
 //
 // It subclasses `HookEditorComponent` only for focus routing: omp hands the
 // external-editor key to a focused `HookEditorComponent` instead of opening it
-// on the hidden main prompt. The base editor it builds is dropped; this class
-// renders, describes (in Tern), and routes input itself.
+// on the hidden main prompt, and sends it Ctrl+R history picks through
+// `setText`. The base editor it builds is dropped; this class renders,
+// describes (in Tern), and routes input itself.
 import type { ImageContent } from "@oh-my-pi/pi-ai";
 import { CustomEditor, HookEditorComponent, settings } from "@oh-my-pi/pi-coding-agent";
 import {
@@ -330,8 +331,8 @@ export class AnswerEditor extends HookEditorComponent {
 	readonly #options: AnswerEditorOptions;
 	#closed = false;
 	readonly #imageChips = new Map<string, number>();
-	/** Host paste reservations and the keys typed after the first one, in arrival order. */
-	readonly #queue: ({ settled: boolean; text: string | undefined } | string)[] = [];
+	/** Host paste reservations, then the keys and history picks that came after the first one, in arrival order. */
+	readonly #queue: ({ settled: boolean; text: string | undefined } | string | { replace: string })[] = [];
 	/** The Tern view: a card titled like the classic field, the editor (which describes itself), the key hints. */
 	readonly #nativeRoot: NativeNode;
 
@@ -445,9 +446,10 @@ export class AnswerEditor extends HookEditorComponent {
 	#drain(): void {
 		while (this.#queue.length > 0 && !this.#closed) {
 			const item = this.#queue[0]!;
-			if (typeof item !== "string" && !item.settled) return;
+			if (typeof item !== "string" && "settled" in item && !item.settled) return;
 			this.#queue.shift();
 			if (typeof item === "string") this.#handleKey(item);
+			else if ("replace" in item) this.#replaceText(item.replace);
 			else if (item.text) this.#insertPastedText(item.text);
 		}
 	}
@@ -459,6 +461,19 @@ export class AnswerEditor extends HookEditorComponent {
 			return;
 		}
 		this.#insertPastedText(text);
+	}
+
+	/** Ctrl+R history search's pick: it replaces the answer, after any paste that came first. */
+	override setText(text: string): void {
+		if (this.#closed) return;
+		if (this.#queue.length > 0) this.#queue.push({ replace: text });
+		else this.#replaceText(text);
+	}
+
+	#replaceText(text: string): void {
+		this.#options.onInput();
+		this.editor.setText(text);
+		this.#tui.requestRender();
 	}
 
 	#insertPastedText(text: string): void {

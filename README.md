@@ -64,11 +64,18 @@ Each key means the same thing in every Picker:
 | n | Edit the row's text: the option's note, the `Other` answer, or, on the Submit tab, the Submit note |
 | x | Clear that text (on `Other`, also un-pick it) |
 | ? | Ask a Picker btw |
+| Ctrl+R (in an editor) | Search OMP's prompt history; the entry you pick replaces the editor's text |
 
 Space or Enter on an empty `Other` opens its editor. In an editor, Enter (or
 Ctrl+Q) saves and stays on the row, and Esc discards the edit. Saving `Other`
 text picks it. Above a note or `Other` editor, the Picker shows the question's
 title (its `header`), the question, and the row you edit with its description.
+
+Ctrl+R (`app.history.search`) in an `Other`, note, Submit note, or Picker btw
+editor opens OMP's prompt history search. The entry you pick replaces that
+editor's text, and you can edit it before saving. Esc in the search keeps the
+text, and either way the editor keeps focus. Nothing is sent, the main prompt
+keeps its text, and answers are not added to the history.
 
 ### Differences from native `ask`
 
@@ -101,7 +108,9 @@ models, `/` file commands and skills, internal URLs such as `skill://`,
 refs, and other extensions' providers. They also have ghost-text word
 completion, typo detection and autocorrect, vim mode, and multi-line input.
 Shift+Enter, Ctrl+J, or Alt+Enter inserts a newline. Ctrl+C clears the text and
-never exits omp from here. There is no history, push-to-talk, or draft saving.
+never exits omp from here. Ctrl+R searches the prompt history (see Keys).
+Up/Down does not step through history, and there is no push-to-talk or draft
+saving.
 The external editor key (`app.editor.external`, Ctrl+G by default) opens the
 text in `$VISUAL` or `$EDITOR` and writes the result back.
 
