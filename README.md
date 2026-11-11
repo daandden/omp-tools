@@ -23,6 +23,15 @@ The link uses the working tree, so edits need no reinstall. Start a new OMP
 session after you link the plugin or change its code. Running sessions keep the
 tool definitions they loaded.
 
+omp-tools needs an OMP whose `/tree` re-answer runs the plugin's `ask`, so
+that answering a past `ask` again keeps everything the Picker adds. No OMP
+release has it yet: it is commit `8ed79a8` on the OMP branch
+`feat/extension-ask-replay`, which serves
+`@oh-my-pi/pi-coding-agent/tools/ask-reanswer`. On an older OMP, such as
+18.18.8 or 18.18.9, the plugin reports an error naming that commit when a
+session starts, and every `ask` call fails with the same error. It does not
+fall back to native `ask`; disable the plugin to use native `ask` there.
+
 The plugin replaces the earlier `omp-ask` plugin. Do not load both, and do not
 install a second loose copy of the ask extension.
 
@@ -236,8 +245,22 @@ each unanswered question's recommended option, as the native dialog does.
 the native dialog would refuse (a reserved label, or a repeated id or label)
 opens the native dialog. Collaboration guests cannot answer these questions.
 
-An ask answered again from `/tree` runs native `ask` in OMP 18.18.8, not the
-Picker.
+### Answering again from `/tree`
+
+Picking an `ask` result in `/tree` reopens its form in the Picker, with no
+model request in between. The new answer keeps everything an ordinary answer
+has: the form data, Notes on picked and unpicked options, `Other` answers,
+the Submit note, and pasted images. OMP saves it once, as a new branch beside
+the old answer, and the agent continues from it.
+
+Esc leaves the tree as it was and keeps a Picker draft. The next re-answer of
+the same form, or F5 on it, opens with that draft. Since no turn is running,
+Esc here stops nothing else in the session. If the Picker fails, OMP shows the
+error and leaves the tree as it was; it does not open its own form instead.
+
+An `ask` saved with the old `questions` argument has no form to reopen.
+`/tree` moves to it as to any other entry, its card shows the saved answer
+text, and the session file is not changed.
 
 ### Outside the TUI
 

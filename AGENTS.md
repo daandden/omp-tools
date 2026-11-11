@@ -66,6 +66,13 @@ imports such as `@oh-my-pi/pi-tui/tools/renderer` are erased and safe.
 `@oh-my-pi/pi-catalog` is not served, so `codex-images.ts` reimplements what
 it needs.
 
+`@oh-my-pi/pi-coding-agent/tools/ask-reanswer` exists only on the OMP with the
+`/tree` re-answer integration (commit `8ed79a8`, branch
+`feat/extension-ask-replay`; no release yet) and is not in the npm SDK.
+`ask-host.ts` imports it dynamically with a literal specifier, which the
+host's loader rewrites to its own module, and `ask-reanswer.d.ts` types it.
+Delete that declaration once the SDK ships the module.
+
 ### `ask` and the Picker
 
 - `flexible-ask.ts` takes native's one argument, `html`, and refuses any other
@@ -75,6 +82,25 @@ it needs.
   path, and fails with an explicit error when native delegation is
   unavailable. An extension cannot restyle the native dialog, because
   `ctx.invokeTool` runs it with the session UI.
+- **Required host.** `ask-host.ts` checks once per load whether the host
+  serves `tools/ask-reanswer`. Without it, a `session_start` handler throws
+  an error naming `REQUIRED_HOST`, which OMP shows as an extension error, and
+  every `ask` call throws the same error before anything else: no Picker and
+  no `ctx.invokeTool`. Owning `ask` there would let `/tree` re-answer run
+  native `AskTool` and drop the Picker's channels (ADR 0003), so there is no
+  fallback.
+- **`/tree` re-answer.** The host calls the registered `ask` outside a turn
+  with tool call id `ASK_REANSWER_TOOL_CALL_ID` (`"tree-reanswer"`) and
+  `{ html }` from the saved call, then saves the returned content and details
+  once as a sibling answer and resumes the agent. A `ToolAbortError` (also as
+  an error `cause`) cancels with no history change; any other error is shown,
+  with no native form. The Picker answers it like any call (draft, Picker
+  btw, images), except that Esc does not call `ctx.abort()`, which would stop
+  the idle session's background work (`AgentSession.abort`). A cancelled
+  re-answer emits no `session_tree`, so its draft stays for the next
+  re-answer or F5; a committed one emits it and drops the draft. Saved
+  `questions[]` calls have no `html`, so the host moves the leaf without
+  calling `ask`.
 - Outside the TUI (RPC, ACP, print, subagents), and for a form with no named
   control, it calls `ctx.invokeTool(params, { signal, onUpdate })` so native
   prompting, errors, and headless outcomes apply unchanged. Keep native `ask`
@@ -242,11 +268,11 @@ instead of `render()`.
 OMP code that asks with structured questions instead of the `ask` tool calls
 the shared UI context's `askDialog`, such as Ratchet approvals
 (`ratchet/prelude-definition.ts`).
-`host-ask-dialog.ts` routes it to the Picker in the TUI. Since OMP 18.18.3
-the `/tree` ask re-answer runs native `AskTool`, which calls `formDialog`, not
-`askDialog`, so it shows native's HTML form dialog, not the Picker. The route
-relies on undocumented OMP internals, proved live with OMP 18.12.6; recheck
-it when OMP changes the extension runner.
+`host-ask-dialog.ts` routes it to the Picker in the TUI. The `/tree` ask
+re-answer does not use `askDialog`: the required host runs the registered
+`ask` for it (see `ask` and the Picker). The route relies on undocumented OMP
+internals, proved live with OMP 18.12.6; recheck it when OMP changes the
+extension runner.
 
 - `session_start` replaces `askDialog` on the context object itself. The
   runner's context and the tool context store's wrapper (`trackUserWaits`)
@@ -612,8 +638,21 @@ Run `bun run check` and `bun test` after code changes. The suite is
   `ExtensionAPI` (`loadSession`, `loadTool`, `fakeContext`), so tests drive
   `generate_image` through `execute` with `spyOn(globalThis, "fetch")` and
   settings from a real project `.omp/plugin-overrides.json`. `loadTool`
-  defaults to Codex mode, unlike the plugin. Avoid `mock.module`: it leaks
-  into other test files.
+  defaults to Codex mode, unlike the plugin. Avoid `mock.module` in test
+  files: it leaks into other test files.
+- `test/preload.ts` (`bunfig.toml`) is the one exception. It stands in for
+  the required host's `tools/ask-reanswer` in every test file, since the npm
+  SDK lacks it. `test/ask-host.test.ts` runs
+  `test/helpers/unpatched-host-ask.ts` as its own process, without the
+  preload, for a host without the integration.
+- `test/tree-reanswer.test.ts` runs `/tree` re-answer through a real host:
+  it imports every module from the OMP checkout in `OMP_TOOLS_HOST`, loads
+  the plugin with the host's extension loader, and drives the host's tree
+  selector and the Picker over an in-process provider. It is skipped without
+  `OMP_TOOLS_HOST`:
+  `OMP_TOOLS_HOST=<checkout at 8ed79a8> bun test tree-reanswer`. The checkout
+  needs its native addon (copy `~/.omp/natives/<version>/` into
+  `packages/natives/native/`).
 - UI tests call `Settings.init({ inMemory: true })` and `initTheme()` in
   `beforeAll` before building fake TUI contexts.
 - `test/helpers/side-question-session.ts` runs a real SDK mirror session
@@ -636,6 +675,12 @@ smoke only.
 
 Last live proof, newest first:
 
+- OMP source at `8ed79a8` (`feat/extension-ask-replay`), headless Tern
+  0.9.16, local SSE provider, in both renderers: `/tree` re-answer opens the
+  Picker with no model request; Esc leaves the session file unchanged and a
+  repeat re-answer restores the draft; the committed answer carries the
+  unpicked Note, the Submit note, and one image, saved once. Installed OMP
+  18.18.9: the required-host error at session start, and `ask` fails with it.
 - OMP 18.18.8, headless Tern 0.9.16, local SSE provider: Ctrl+R in a Picker
   note, `Other` answer, and Picker btw question puts the picked history entry
   in that editor; a second Ctrl+R opens over the same editor, Esc keeps its

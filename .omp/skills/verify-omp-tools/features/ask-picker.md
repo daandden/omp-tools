@@ -18,6 +18,8 @@ When the agent calls `ask` with an HTML `<form>`, the plugin shows its own picke
 - `ask-draft` keeps the answers through Esc and restores them on F5.
 - `ask-text` answers text, number, and textarea fields beside choices in the same editor as notes; a password shows as bullets outside its editor.
 - `ask-history` fills an open editor (note, `Other`, text field, Submit note, Picker btw) from OMP's Ctrl+R prompt history search.
+- `ask-reanswer` answers a past `ask` again from `/tree` in the Picker; the new answer keeps Notes, images, and the Submit note, and Esc keeps a draft.
+- `ask-host` reports the required-host error at session start on an OMP without the `/tree` re-answer integration, and fails every `ask` with it.
 
 ## How to get to it (user POV)
 
@@ -42,10 +44,12 @@ Preconditions:
 - Esc and F5. Pick an option and add a note, press Esc, then F5. The picker reopens with `Restored your answers`, the pick and the note, and sends nothing until Enter.
 - Text fields (`ask-text`). Ask for a form with a radio group, `<input name="title">`, `<input type="number" name="days" min="1" max="90">`, `<textarea name="why">`, and `<input type="password" name="token">`. On the title row `$C key Enter` opens its editor; type, paste an image chip, `$C key Enter` saves. On days type `200`, save, go to the Submit tab, and `$C key Enter`: the picker opens Days with `Must be at most 90`. Fix it and submit. The data holds `days` as a number, the textarea's lines, and the token; the token row, the Submit tab, and the card show bullets. Esc before submitting and F5 restore the typed text.
 - Second view. The main session JSONL's `toolResult` for `ask` holds the text the agent received: `User answers:` (or the timeout line) and the form data JSON, then `Option notes:`, `Other answers`, and `Note on all answers:` lines when present. `details.answers` holds one entry per question.
+- Re-answer (`ask-reanswer`). Needs the patched OMP (commit `8ed79a8`, `feat/extension-ask-replay`; no release yet). Run it from an OMP source checkout at that commit with its native addon copied in (`cp ~/.omp/natives/<version>/pi_natives.darwin-arm64.node <checkout>/packages/natives/native/`): replace `omp` in the launch with `<bun path> <checkout>/packages/coding-agent/src/cli.ts`, and load the plugin with `--no-extensions -e …`. Answer an ask once, then `$C type '"/tree"'`, `$C key Enter`, `$C key Up` to the `[ask: …]` entry, and `$C key Enter`: the omp-tools Picker opens (`Ask aside`), with no provider request. Pick, type a text field, then Esc: the status reads `Re-answer cancelled`, and the session JSONL and the provider's request count are unchanged. Re-answer again: `Restored your answers`. Add a Note on the unpicked option with an image (bracketed paste of a PNG path: `$C type "\"$(printf '\033[200~')<path>$(printf '\033[201~')\""`), a Submit note, and submit: the card shows the unpicked Note, `Note on all answers`, and the image once. The JSONL holds two `ask` results with the same parent and call id, the new one with the Note, the Submit note, and one image block.
+- Required host (`ask-host`). Launch the installed OMP without the integration (18.18.9 or older) the same way. The session starts with a red `Extension "…/flexible-ask.ts" error:` naming `8ed79a8` and `feat/extension-ask-replay`, and an `ask` call returns that error as its result, with no Picker and no native dialog.
 
 ## Gotchas
 
 - With `ask.timeout` set, an idle picker submits; take shots before the countdown ends or press a key to restart it.
 - In RPC, ACP, print, and subagents, `ask` goes to OMP's native tool; this picker is TUI only.
 - A long question first shows from its top; after PgUp/PgDn the first move only reveals the highlighted row.
-- An ask answered again from `/tree` shows OMP's own form dialog on OMP 18.18.8, not this picker.
+- `/tree` re-answer needs the patched OMP (`ask-reanswer`); on an OMP without it, `ask` itself fails.

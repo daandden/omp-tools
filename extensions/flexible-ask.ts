@@ -7,13 +7,16 @@
 // Picker (./ask-dialog.ts), which keeps Notes on unpicked options, pasted
 // images, the Submit note, Picker drafts, and the Picker btw. Everywhere else
 // (RPC/ACP/print, subagents) and for forms native answers with its own error,
-// it passes the HTML to the native tool through `ctx.invokeTool`.
+// it passes the HTML to the native tool through `ctx.invokeTool`. `/tree`
+// re-answer runs this tool too; on a host that cannot (./ask-host.ts) every
+// call fails instead.
 import type { AgentToolResult, AskToolDetails, ExtensionAPI, ExtensionContext, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
 import { askToolRenderer, discoverSlashCommands, logger, settings } from "@oh-my-pi/pi-coding-agent";
 import { cfgAskNotify, cfgAskTimeout } from "@oh-my-pi/pi-coding-agent/modes/settings";
 import { ToolAbortError } from "@oh-my-pi/pi-coding-agent/tools/tool-errors";
 import { type AutocompleteProvider, span, TERMINAL, text } from "@oh-my-pi/pi-tui";
 import type { NativeToolView } from "@oh-my-pi/pi-tui/tools/renderer";
+import { type AskHost, loadAskHost } from "./ask-host";
 import { type AskForm, readHtmlForm } from "./ask-form";
 import { type AskResultDetails, askToolResult } from "./ask-result";
 import { askInPicker, routeHostAskDialog } from "./host-ask-dialog";
@@ -94,6 +97,7 @@ async function askWithPicker(
 	form: AskForm,
 	signal: AbortSignal | undefined,
 	session: PickerSession,
+	reanswer: boolean,
 ): Promise<AgentToolResult<AskResultDetails>> {
 	const timeoutSeconds = cfgAskTimeout.get(settings);
 	if (cfgAskNotify.get(settings) !== "off") {
@@ -118,7 +122,9 @@ async function askWithPicker(
 		throw error;
 	}
 	if (!picked) {
-		ctx.abort();
+		// A `/tree` re-answer runs outside a turn: there is none to end, and
+		// ctx.abort() would stop the session's background work.
+		if (!reanswer) ctx.abort();
 		throw new ToolAbortError("Ask tool was cancelled by the user");
 	}
 	return askToolResult(picked.answer);
@@ -130,6 +136,13 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 	const parameters = type({ "+": "reject", html: type("string").describe("one HTML <form>") });
 
 	const drafts = new PickerDraftSlot();
+	const host: Promise<AskHost> = loadAskHost();
+	// On a host without the re-answer integration the plugin must not own
+	// `ask`: say so at session start, and fail every call below.
+	pi.on("session_start", async () => {
+		const loaded = await host;
+		if (loaded.kind === "missing") throw new Error(loaded.error);
+	});
 	const dropDraft = () => drafts.drop();
 	pi.on("session_before_switch", dropDraft);
 	pi.on("session_before_branch", dropDraft);
@@ -189,12 +202,14 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 		renderCall: (args, options, theme) => askToolRenderer.renderCall(args, options, theme),
 		renderResult: (result, options, theme, args) =>
 			askToolRenderer.renderResult({ content: result.content, details: classicDetails(result.details) }, options, theme, args),
-		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const loaded = await host;
+			if (loaded.kind === "missing") throw new Error(loaded.error);
 			if (!ctx.invokeTool) throw new Error("Native ask tool unavailable for delegation");
 			if (ctx.mode !== "tui" || !ctx.hasUI) return ctx.invokeTool<AskToolDetails>(params, { signal, onUpdate });
 			const read = readHtmlForm(params.html);
 			if (read.kind === "empty") return ctx.invokeTool<AskToolDetails>(params, { signal, onUpdate });
-			return askWithPicker(ctx, read.form, signal, pickerSession(ctx));
+			return askWithPicker(ctx, read.form, signal, pickerSession(ctx), toolCallId === loaded.reanswerCallId);
 		},
 	};
 	// `concurrency` and `mergeCallAndResult` are not part of the extension

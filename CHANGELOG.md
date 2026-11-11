@@ -47,11 +47,18 @@
   notes, `Other` answers, Submit note, open tab, and Picker btw thread, and
   F5 (OMP's Retry) opens the cancelled ask with them. Any ask with the same
   questions gets them, and the picker says `Restored your answers`.
-- Questions that OMP asks directly, such as Ratchet's approvals and an ask
-  answered again from `/tree`, now open in the picker instead of OMP's stock
-  dialog, with notes, `Other`, the Picker btw, and the Picker draft. The
-  feature gets OMP's native answer, so Ratchet still records an approval only
-  when you pick Approve, and Esc answers nothing.
+- Questions that OMP asks directly, such as Ratchet's approvals, now open in
+  the picker instead of OMP's stock dialog, with notes, `Other`, the Picker
+  btw, and the Picker draft. The feature gets OMP's native answer, so Ratchet
+  still records an approval only when you pick Approve, and Esc answers
+  nothing.
+- An `ask` answered again from `/tree` opens in the Picker, and OMP saves the
+  whole answer once as a new branch: the form data, Notes on picked and
+  unpicked options, `Other` answers, the Submit note, and pasted images. Esc
+  leaves the tree as it was and keeps a Picker draft that the next re-answer
+  or F5 restores; a Picker failure is reported, with no fallback to OMP's own
+  form. An `ask` saved with the old `questions` argument stays as it was and
+  has no form to reopen.
 
 ### Fixed
 
@@ -135,8 +142,12 @@
   first field that fails. A password shows as bullets outside its editor and
   still reaches the agent. No form with a supported control fails or falls
   back to native `ask`'s dialog.
-- An ask answered again from `/tree` shows OMP's own form dialog: since OMP
-  18.18.3 the re-answer no longer goes through the dialog the plugin routes.
+- omp-tools now needs an OMP whose `/tree` re-answer runs the plugin's `ask`
+  (`@oh-my-pi/pi-coding-agent/tools/ask-reanswer`). No OMP release has it
+  yet: it is commit `8ed79a8` on the OMP branch `feat/extension-ask-replay`.
+  On an older OMP, such as 18.18.8 or 18.18.9, the plugin reports an error
+  naming that commit at session start, and every `ask` call fails with the
+  same error instead of falling back to native `ask`.
 
 - Updated the SDK types to OMP 18.13.3 and synchronized the `ask` description
   with upstream's instruction to show decision context before blocking.

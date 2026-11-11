@@ -9,6 +9,7 @@ import {
 	type ToolDefinition,
 } from "@oh-my-pi/pi-coding-agent";
 import { cfgAskNotify, cfgAskTimeout } from "@oh-my-pi/pi-coding-agent/modes/settings";
+import { ToolAbortError } from "@oh-my-pi/pi-coding-agent/tools/tool-errors";
 import type { Component, NativeNode, TUI } from "@oh-my-pi/pi-tui";
 import { initTheme, theme } from "@oh-my-pi/pi-tui/theme";
 import flexibleAsk from "../extensions/flexible-ask";
@@ -150,6 +151,12 @@ function tuiSession(mode: "tui" | "rpc" = "tui") {
 function run(tool: ToolDefinition, html: string, session: ReturnType<typeof tuiSession>): Promise<AskResult> {
 	session.reset();
 	return tool.execute("call-1", { html }, undefined, undefined, session.ctx) as Promise<AskResult>;
+}
+
+/** Runs the call `/tree` makes when the user re-answers a past ask. */
+function reanswer(tool: ToolDefinition, html: string, session: ReturnType<typeof tuiSession>): Promise<AskResult> {
+	session.reset();
+	return tool.execute("tree-reanswer", { html }, undefined, undefined, session.ctx) as Promise<AskResult>;
 }
 
 /** The submitted form data: the JSON block of the result text. */
@@ -720,6 +727,30 @@ describe("Picker draft", () => {
 		await session.press(ENTER);
 		expect(formData(await again)).toEqual({ store: "sqlite" });
 	});
+
+	test("Esc in a /tree re-answer keeps the draft for the next re-answer and F5, and ends no turn", async () => {
+		const { tool } = loadAsk();
+		const session = tuiSession();
+		const first = reanswer(tool, TWO, session);
+		await session.press("j", ENTER, "n");
+		await session.type("not this");
+		await session.press(ENTER, ESC);
+		await expect(first).rejects.toBeInstanceOf(ToolAbortError);
+		expect(session.aborts()).toBe(0);
+
+		const second = reanswer(tool, TWO, session);
+		expect(await session.render()).toContain("Restored your answers");
+		await session.press(ESC);
+		await expect(second).rejects.toBeInstanceOf(ToolAbortError);
+		expect(session.aborts()).toBe(0);
+
+		const retried = run(tool, TWO, session);
+		expect(await session.render()).toContain("Restored your answers");
+		await session.press("l", ENTER);
+		const answered = await retried;
+		expect(formData(answered)).toEqual({ store: "pg", keep: [] });
+		expect(answered.details?.unpickedNotes?.[0]).toMatchObject({ option: "Picks", text: "not this" });
+	});
 });
 
 /** Every text run of a Tern view, in order. */
@@ -768,5 +799,18 @@ describe("ask card", () => {
 		for (const shown of [tern, classic]) {
 			for (const part of ["too slow", "Redis", "keep these", "ship friday"]) expect(count(shown, part)).toBe(1);
 		}
+	});
+
+	test("an old questions[] call from a saved session reads as its saved text in both renderers", () => {
+		const { tool } = loadAsk();
+		const args = { questions: [{ id: "store", question: "Which store?", options: [{ label: "SQLite" }, { label: "Postgres" }] }] };
+		const saved = {
+			content: [{ type: "text", text: "User selected: Postgres" }],
+			details: { results: [{ id: "store", question: "Which store?", options: ["SQLite", "Postgres"], multi: false, selectedOptions: ["Postgres"] }] },
+		};
+		const options = { expanded: true, isPartial: false };
+		const tern = viewText(tool.describeResult?.(saved as never, options as never, args as never) as NativeNode);
+		const classic = (tool.renderResult?.(saved as never, options as never, theme as never, args as never) as Component).render(120).join("\n");
+		for (const shown of [tern, classic]) expect(shown).toContain("User selected: Postgres");
 	});
 });
