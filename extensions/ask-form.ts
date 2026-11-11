@@ -1,7 +1,7 @@
 // The one place `ask` interprets a form: it reads the native HTML form model
 // (the host's own `html-form` parser and data rules), names the form for
 // Picker drafts, holds the rich answer state (picks, Other answers, Notes,
-// images), validates a manual Submit, and serializes the answer as native
+// typed text, images), validates a manual Submit, and serializes the answer as native
 // form data plus the Picker's extra channels. The Picker, the host askDialog
 // adapter, and the result builder all go through it.
 import type { ImageContent } from "@oh-my-pi/pi-ai";
@@ -13,22 +13,23 @@ import {
 	type HtmlFormData,
 	type HtmlFormValue,
 	OTHER_LABEL,
+	textValue,
 } from "@oh-my-pi/pi-tui/html-form/data";
 import {
 	type ChoiceField,
 	type FormBlock,
+	type FormField,
 	type FormSpan,
 	type HtmlForm,
 	parseHtmlForm,
 	spansText,
-	type TextField,
 } from "@oh-my-pi/pi-tui/html-form/parse";
 import { sanitizeCarriageReturns } from "@oh-my-pi/pi-tui/render";
 import type { PastedImage } from "./ask-images";
 
 export type { FormSpan } from "@oh-my-pi/pi-tui/html-form/parse";
 
-/** An image pasted into an Other answer, a Note, or the Submit note, referenced by `label` in its text. */
+/** An image pasted into an Other answer, a Note, a text field, or the Submit note, referenced by `label` in its text. */
 export interface AskImage extends PastedImage {
 	label: string;
 }
@@ -56,10 +57,14 @@ export interface AskOption {
 	recommended: boolean;
 }
 
-/** One question of the Picker: a native choice field and what the Picker shows with it. */
+/** One question of the Picker: a native field and what the Picker shows with it. */
 export interface AskQuestion {
-	/** The native field: name, grouping, `multi`, `select`, `other`, `required`, option values. */
-	field: ChoiceField;
+	/**
+	 * The native field. A choice: name, grouping, `multi`, `select`, `other`,
+	 * `required`, option values. A text field: `type`, `multiline`, prefill,
+	 * placeholder, and the rules a manual Submit checks.
+	 */
+	field: FormField;
 	/** The question as one line of plain text, as native names it in answers and notes. */
 	question: string;
 	/** The tab label. */
@@ -68,6 +73,7 @@ export interface AskQuestion {
 	title: string;
 	/** What the question shows above its options. */
 	context: AskContext[];
+	/** The choice's options; none for a text field. */
 	options: AskOption[];
 }
 
@@ -89,6 +95,8 @@ export interface AnswerState {
 	otherPicked: boolean;
 	/** Notes by option index, kept whether or not the option is picked. */
 	notes: Map<number, AnswerText>;
+	/** A text field's text; it opens with the prefill. */
+	text: AnswerText | undefined;
 }
 
 /** A Note on one option, picked or not. */
@@ -140,9 +148,7 @@ export interface AskFormAnswer {
 export type ReadForm =
 	| { kind: "form"; form: AskForm }
 	/** No named control: native ask answers this with its own error. */
-	| { kind: "empty" }
-	/** A control the Picker does not offer yet. */
-	| { kind: "unsupported"; error: string };
+	| { kind: "empty" };
 
 /** Inline style to Markdown delimiters. */
 const MARKDOWN_STYLE = { strong: "**", em: "*" } as const;
@@ -232,27 +238,14 @@ function contextOf(blocks: readonly FormBlock[]): AskContext[] {
 	return context;
 }
 
-/** The control as the model wrote it, for the unsupported-control error. */
-function controlTag(field: TextField): string {
-	return field.multiline ? `<textarea name="${field.name}">` : `<input type="${field.type}" name="${field.name}">`;
-}
-
 /**
- * Read an `ask` form. Each named radio group, checkbox group, and select is a
- * question; the context before it (and, for the last one, after it) is shown
- * with it.
+ * Read an `ask` form. Each named radio group, checkbox group, select, text
+ * input, and textarea is a question; the context before it (and, for the last
+ * one, after it) is shown with it.
  */
 export function readHtmlForm(html: string): ReadForm {
 	const parsed = parseHtmlForm(html);
-	const named = parsed.fields.filter(field => field.name);
-	if (named.length === 0) return { kind: "empty" };
-	const text = named.find((field): field is TextField => field.kind === "text");
-	if (text) {
-		return {
-			kind: "unsupported",
-			error: `The Picker cannot show ${controlTag(text)} yet; text, number, and textarea fields are not supported. Ask again with only radio, checkbox, or <select> controls, and ask for free text in your reply or a later ask.`,
-		};
-	}
+	if (!parsed.fields.some(field => field.name)) return { kind: "empty" };
 	return { kind: "form", form: { key: formKey(parsed), questions: htmlQuestions(parsed), hidden: parsed.hidden } };
 }
 
@@ -272,7 +265,7 @@ function htmlQuestions(form: HtmlForm): AskQuestion[] {
 		);
 		let first = true;
 		for (const block of section.blocks) {
-			if (block.kind !== "field" || !block.field.name || block.field.kind !== "choice") {
+			if (block.kind !== "field" || !block.field.name) {
 				if (block.kind !== "field") pending.push(block);
 				continue;
 			}
@@ -290,11 +283,14 @@ function htmlQuestions(form: HtmlForm): AskQuestion[] {
 				tab: fields.length === 1 && title ? title : field.name,
 				title: fields.length === 1 ? title : "",
 				context,
-				options: field.options.map(option => ({
-					label: option.label.length > 0 ? option.label : [{ text: option.value }],
-					disabled: option.disabled,
-					recommended: false,
-				})),
+				options:
+					field.kind === "choice"
+						? field.options.map(option => ({
+								label: option.label.length > 0 ? option.label : [{ text: option.value }],
+								disabled: option.disabled,
+								recommended: false,
+							}))
+						: [],
 			});
 			pending = [];
 			first = false;
@@ -369,15 +365,20 @@ export function optionText(question: AskQuestion, index: number): string {
 	return option ? oneLine(spansText(option.label)) : "";
 }
 
-/** A fresh answer state: the form's checked options, the last checked radio winning as in a browser. */
+/** A fresh answer state: the form's checked options, the last checked radio winning as in a browser, or a text field's prefill. */
 export function initialAnswer(question: AskQuestion): AnswerState {
+	const field = question.field;
 	const checked = new Set<number>();
-	question.field.options.forEach((option, index) => {
+	if (field.kind === "text") {
+		const text = field.value ? { text: field.value, images: [] } : undefined;
+		return { checked, other: undefined, otherPicked: false, notes: new Map(), text };
+	}
+	field.options.forEach((option, index) => {
 		if (!option.checked) return;
-		if (!question.field.multi) checked.clear();
+		if (!field.multi) checked.clear();
 		checked.add(index);
 	});
-	return { checked, other: undefined, otherPicked: false, notes: new Map() };
+	return { checked, other: undefined, otherPicked: false, notes: new Map(), text: undefined };
 }
 
 /** The row the cursor starts on: the first checked option, else the recommended one, else the first. */
@@ -390,7 +391,7 @@ export function initialCursor(question: AskQuestion, state: AnswerState): number
 
 /** Pick option `index`; a single choice drops its other pick. Disabled options cannot be picked. */
 export function pickOption(question: AskQuestion, state: AnswerState, index: number): boolean {
-	if (question.options[index]?.disabled !== false) return false;
+	if (question.field.kind !== "choice" || question.options[index]?.disabled !== false) return false;
 	if (!question.field.multi) {
 		state.checked.clear();
 		state.otherPicked = false;
@@ -401,13 +402,13 @@ export function pickOption(question: AskQuestion, state: AnswerState, index: num
 
 /** Unpick option `index`. A single `<select>` always keeps one option, as native does. */
 export function unpickOption(question: AskQuestion, state: AnswerState, index: number): boolean {
-	if (question.field.select && !question.field.multi) return false;
+	if (question.field.kind !== "choice" || (question.field.select && !question.field.multi)) return false;
 	return state.checked.delete(index);
 }
 
 /** Pick the Other answer; a single choice drops its picked option. */
 export function pickOther(question: AskQuestion, state: AnswerState): void {
-	if (!question.field.other) return;
+	if (question.field.kind !== "choice" || !question.field.other) return;
 	if (!question.field.multi) state.checked.clear();
 	state.otherPicked = true;
 }
@@ -424,6 +425,13 @@ export function setNote(state: AnswerState, index: number, text: AnswerText | un
 	else state.notes.delete(index);
 }
 
+/** Save a text field's text; a one-line field drops line breaks, as a browser's input does. */
+export function setText(question: AskQuestion, state: AnswerState, text: AnswerText | undefined): void {
+	if (question.field.kind !== "text") return;
+	if (text && !question.field.multiline) text = { ...text, text: text.text.replace(/\r\n|\r|\n/g, "") };
+	state.text = text?.text ? text : undefined;
+}
+
 /** The picked Other answer, when it has text. */
 function pickedOther(state: AnswerState): AnswerText | undefined {
 	return state.otherPicked && state.other?.text.trim() ? state.other : undefined;
@@ -431,12 +439,14 @@ function pickedOther(state: AnswerState): AnswerText | undefined {
 
 /** The value native form data holds for the question. */
 export function questionValue(question: AskQuestion, state: AnswerState): HtmlFormValue | undefined {
-	return choiceValue(question.field, state.checked, pickedOther(state)?.text);
+	const field = question.field;
+	if (field.kind === "text") return textValue(field, state.text?.text ?? "");
+	return choiceValue(field, state.checked, pickedOther(state)?.text);
 }
 
 export function isAnswered(question: AskQuestion, state: AnswerState): boolean {
 	const value = questionValue(question, state);
-	return value !== undefined && !(Array.isArray(value) && value.length === 0);
+	return value !== undefined && value !== "" && !(Array.isArray(value) && value.length === 0);
 }
 
 /** The first question a manual Submit refuses, with native's reason. */
@@ -451,8 +461,12 @@ export function firstInvalid(form: AskForm, states: readonly AnswerState[]): { i
 	return undefined;
 }
 
-/** Picked option labels, then `Other: text`, as the answer reads. */
+/** Picked option labels, then `Other: text`, or a text field's text, as the answer reads. */
 export function answerParts(question: AskQuestion, state: AnswerState): string[] {
+	if (question.field.kind === "text") {
+		const value = questionValue(question, state);
+		return value === undefined || value === "" ? [] : [String(value)];
+	}
 	const parts = question.field.options.flatMap((option, index) =>
 		state.checked.has(index) && !option.disabled ? [optionText(question, index)] : [],
 	);
@@ -463,6 +477,7 @@ export function answerParts(question: AskQuestion, state: AnswerState): string[]
 
 /** Every Note on the question, in option order, picked or not. */
 function questionNotes(question: AskQuestion, state: AnswerState): AskNote[] {
+	if (question.field.kind !== "choice") return [];
 	return question.field.options.flatMap((option, index) => {
 		const note = state.notes.get(index);
 		if (!note) return [];
@@ -492,18 +507,24 @@ export function formAnswer(
 		const state = states[index] ?? initialAnswer(question);
 		const value = questionValue(question, state);
 		if (value !== undefined && question.field.name) data[question.field.name] = value;
+		const field = question.field;
 		const other = pickedOther(state);
 		return {
-			name: question.field.name,
+			name: field.name,
 			question: question.question,
 			value,
-			picked: question.field.options.flatMap((option, optionIndex) =>
-				state.checked.has(optionIndex) && !option.disabled ? [optionIndex] : [],
-			),
+			picked:
+				field.kind === "choice"
+					? field.options.flatMap((option, optionIndex) => (state.checked.has(optionIndex) && !option.disabled ? [optionIndex] : []))
+					: [],
 			answer: answerParts(question, state).join(", "),
 			other,
 			notes: questionNotes(question, state),
-			images: [...(other?.images ?? []), ...[...state.notes.values()].flatMap(note => note.images)],
+			images: [
+				...(field.kind === "text" ? (state.text?.images ?? []) : []),
+				...(other?.images ?? []),
+				...[...state.notes.values()].flatMap(note => note.images),
+			],
 		};
 	});
 	return { data, questions, submitNote, timedOut };

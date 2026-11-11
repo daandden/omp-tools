@@ -82,19 +82,28 @@ it needs.
   two wrappers.
 - `ask-form.ts` is the one place a form is interpreted. It parses with the
   host's `html-form/parse` and uses `html-form/data` for values
-  (`choiceValue`), validation (`fieldError`), and question names
+  (`choiceValue`, `textValue`), validation (`fieldError`), and question names
   (`fieldQuestions`), so no widget parses HTML. It also holds the form
   identity (`AskForm.key`, the parsed model, so layout whitespace never
-  matters), the rich answer state (picks, Other answers, Notes, images), and
-  `formAnswer`, which the result builder, the host dialog adapter, and the
-  Picker btw read. Host askDialog questions enter as `hostQuestionsForm`:
-  choice fields named by id whose values are their labels.
-- Until the Picker has text fields, a named text, number, or textarea control
-  fails the call with an error naming it. It never drops the field or falls
-  back to the native dialog.
+  matters), the rich answer state (picks, Other answers, Notes, a text
+  field's text, images), and `formAnswer`, which the result builder, the
+  host dialog adapter, and the Picker btw read. Host askDialog questions
+  enter as `hostQuestionsForm`: choice fields named by id whose values are
+  their labels.
+- Every named control the native parser returns is a question: choice
+  fields, and text fields (every other `<input>` type, number inputs, and
+  textareas). A text field is one row; its text is edited in the same
+  `AnswerEditor` as Notes, so paste, image chips, the external editor, and
+  Ctrl+R apply. `setText` drops line breaks from a one-line field, as
+  native's `Input` does. A form with a text field always has a Submit tab, so
+  an optional field left empty can still be submitted. The Picker masks a
+  password outside its editor (rows and review); `AnswerEditor` has no mask,
+  so the open editor shows the text.
 - Manual Submit runs native `fieldError` and opens the first refused
-  question. The timeout submits the state as it stands with `timedOut`, with
-  no validation and no recommendation filled in, as native does.
+  question, so invalid `min`/`max` and patterns are ignored as native ignores
+  them, and `step` and dates are not checked. The timeout submits the state
+  as it stands with `timedOut`, with no validation and no recommendation
+  filled in, as native does.
 - Unlike native `ask` (`tools/ask.ts`), the Picker keeps `ask.timeout` in
   plan mode and does not speak the questions under `speech.enabled`.
 - Preserve `approval: "read"`, `concurrency: "exclusive"`, cancellation
@@ -117,8 +126,7 @@ it needs.
   `submitNote`. Images go only in `content`, after their labels.
 - `flexible-ask.md` is the model-facing description. Keep it aligned with
   upstream `packages/coding-agent/src/prompts/tools/ask.md`, except that it
-  states no option count where upstream says 2–5 and, until the Picker has
-  text fields, asks for choice controls only.
+  states no option count where upstream says 2–5.
 
 #### Editors and paste
 

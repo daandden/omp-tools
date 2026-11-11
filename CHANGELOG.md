@@ -117,16 +117,24 @@
   equal an option's value, the Submit note, and pasted images after their
   labels. The card is native's in both renderers, with those additions.
 - On `ask.timeout` the Picker now submits the form as it stands, as native
-  does: picks and defaults only, even with a required choice empty, marked as
-  timed out and shown as not your choice. It no longer picks a recommended
-  option. Host dialogs (Ratchet) keep their own native timeout, which picks
-  the recommended option.
+  does: picks, defaults, and typed text only, even with a required field
+  empty or a number out of bounds, marked as timed out (`details.timedOut`)
+  and shown as not your choice. It no longer picks a recommended option.
+  Host dialogs (Ratchet) keep their own native timeout, which picks the
+  recommended option.
 - A Picker draft now matches on the form itself: the same questions, values,
-  defaults, `required`, hidden values, and context. Whitespace and layout
-  markup no longer matter.
-- A form with a text, number, or textarea field fails with an error naming
-  the field until the Picker supports them; it is not dropped and does not
-  fall back to the native dialog.
+  defaults, `required` and other rules, hidden values, and context.
+  Whitespace and layout markup no longer matter.
+- The Picker shows text inputs (`text`, `email`, `url`, `password`, `date`,
+  and other types, as native), number inputs, and textareas as questions
+  beside the choices, in both renderers. You type in the same editor as
+  Notes and `Other`, with paste, image chips, the external editor, and
+  Ctrl+R. A number comes back as a number. Submit checks native's rules
+  (`required`, `min`/`max`, `minlength`/`maxlength`, email, URL, `pattern`,
+  ignoring invalid `min`/`max` and patterns as native does) and opens the
+  first field that fails. A password shows as bullets outside its editor and
+  still reaches the agent. No form with a supported control fails or falls
+  back to native `ask`'s dialog.
 - An ask answered again from `/tree` shows OMP's own form dialog: since OMP
   18.18.3 the re-answer no longer goes through the dialog the plugin routes.
 

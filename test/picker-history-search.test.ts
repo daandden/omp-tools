@@ -25,6 +25,8 @@ const KEEP = `<p>What should a draft keep?</p>
 	<label><input type="radio" name="keep" value="picks"> Picks</label>
 	<label><input type="radio" name="keep" value="notes"> Notes</label>`;
 
+const TITLE = `<label>Title <input name="title"></label>`;
+
 function form(...questions: string[]): AskForm {
 	const read = readHtmlForm(`<form>${questions.join("\n")}</form>`);
 	if (read.kind !== "form") throw new Error(`not a Picker form: ${read.kind}`);
@@ -35,7 +37,7 @@ function form(...questions: string[]): AskForm {
  * The Picker in the host's editor slot, with the host's own Ctrl+R history
  * search (`SelectorController.showHistorySearch`) over a fixed global history.
  */
-function openPicker(questions: string[] = [STORE], askBtw?: AskPickerBtw) {
+function openPicker(questions: string[] = [STORE], askBtw?: AskPickerBtw, timeout?: number) {
 	const terminal = new Proxy({ rows: 40, columns: 100 } as Record<string | symbol, unknown>, {
 		get: (target, key) => (key in target ? target[key] : () => {}),
 	}) as unknown as Terminal;
@@ -78,6 +80,7 @@ function openPicker(questions: string[] = [STORE], askBtw?: AskPickerBtw) {
 		autocomplete: () => undefined,
 		fileCommands: new Set(),
 		askBtw,
+		timeout,
 	});
 	// The host's global Ctrl+R listener runs before the focused component.
 	const press = (...keys: string[]) => {
@@ -157,5 +160,29 @@ describe("Ctrl+R history search in a Picker editor", () => {
 		picker.press(ESC, ENTER);
 		expect(await picker.result).toMatchObject({ kind: "submit", answer: { questions: [{ picked: [0] }] } });
 		expect(picker.composer.getText()).toBe("half-typed main prompt");
+	});
+
+	test("a text field's editor takes the picked entry", async () => {
+		const picker = openPicker([TITLE]);
+		picker.press(ENTER, ..."draft", CTRL_R, ENTER, ..." edited", ENTER, "l", ENTER);
+		expect(await picker.result).toMatchObject({ kind: "submit", answer: { data: { title: "a prompt from history edited" } } });
+		expect(picker.composer.getText()).toBe("half-typed main prompt");
+	});
+});
+
+describe("Picker btw on a form with text fields", () => {
+	test("opens, pauses the countdown, and the next key in the form restarts it", async () => {
+		const picker = openPicker([STORE, TITLE], async () => "an answer", 1000);
+		picker.press(ENTER, ENTER, ..."typed", ENTER, "?");
+		await Bun.sleep(1300);
+		picker.press(ESC);
+		await Bun.sleep(1300);
+		const open = await Promise.race([picker.result.then(() => "settled"), Bun.sleep(0).then(() => "open")]);
+		expect(open).toBe("open");
+		picker.press("k");
+		expect(await picker.result).toMatchObject({
+			kind: "submit",
+			answer: { timedOut: true, data: { store: "memory", title: "typed" } },
+		});
 	});
 });

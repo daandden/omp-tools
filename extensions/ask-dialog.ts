@@ -77,6 +77,7 @@ import {
 	pickOther,
 	setNote,
 	setOther,
+	setText,
 	unpickOption,
 } from "./ask-form";
 import { loadImagePaths, type PasteOutcome, type PastedImage, readClipboardPaste } from "./ask-images";
@@ -90,6 +91,8 @@ const SUBMIT_OPTION = "Submit";
 /** The row of a question's Other answer. */
 export const OTHER_OPTION = "Other (type your own)";
 const RECOMMENDED_SUFFIX = " (Recommended)";
+/** The marker of a text field's row, in the option markers' column. */
+const TEXT_MARKER = "›";
 /** Fraction of the terminal the dialog occupies (the native dialog's cap). */
 const DIALOG_HEIGHT_RATIO = 0.7;
 const MIN_DIALOG_ROWS = 12;
@@ -160,7 +163,8 @@ interface QuestionState extends AnswerState {
 }
 
 interface QuestionRow {
-	kind: "option" | "other";
+	/** A choice's option, its `Other` answer, or a text field's text. */
+	kind: "option" | "other" | "text";
 	key: string;
 	optionIndex: number | undefined;
 }
@@ -218,8 +222,9 @@ function fitLines(lines: readonly string[], room: number): string[] {
 	return [...lines.slice(0, room - 1), theme.fg("dim", `… ${lines.length - room + 1} more lines`)];
 }
 
-/** The option rows, then `Other` when the question offers one. */
+/** The option rows, then `Other` when the question offers one; a text field's one row. */
 function questionRows(question: AskQuestion): QuestionRow[] {
+	if (question.field.kind === "text") return [{ kind: "text", key: "text", optionIndex: undefined }];
 	const rows: QuestionRow[] = question.options.map((_, index) => ({
 		kind: "option",
 		key: `option:${index}`,
@@ -227,6 +232,38 @@ function questionRows(question: AskQuestion): QuestionRow[] {
 	}));
 	if (question.field.other) rows.push({ kind: "other", key: "other", optionIndex: undefined });
 	return rows;
+}
+
+/** Whether the question picks several options: a checkbox group or a multiple select. */
+function isMulti(question: AskQuestion): boolean {
+	return question.field.kind === "choice" && question.field.multi;
+}
+
+const graphemes = new Intl.Segmenter();
+
+/** Text as the Picker shows it: a password field's text is one bullet per character, as native masks it. */
+function shownText(question: AskQuestion, text: string): string {
+	if (question.field.kind !== "text" || question.field.type !== "password") return text;
+	return "•".repeat([...graphemes.segment(text)].length);
+}
+
+/** The answer parts as the Picker shows them (masked for a password). */
+function shownParts(question: AskQuestion, state: AnswerState): string[] {
+	return answerParts(question, state).map(part => shownText(question, part));
+}
+
+/** What a text field's row shows: its text (masked for a password), else its placeholder, dim. */
+function textRowContent(question: AskQuestion, state: AnswerState): { text: string; empty: boolean } {
+	const typed = state.text?.text ?? "";
+	if (typed) return { text: shownText(question, typed), empty: false };
+	const placeholder = question.field.kind === "text" ? question.field.placeholder.trim() : "";
+	return { text: placeholder || "(empty)", empty: true };
+}
+
+/** The text a row holds: its Note, its `Other` answer, or the text field's text. */
+function rowText(state: AnswerState, row: QuestionRow): AnswerText | undefined {
+	if (row.kind === "text") return state.text;
+	return row.kind === "other" ? state.other : state.notes.get(row.optionIndex ?? -1);
 }
 
 /** Spans styled over `base`, as native ask's form rows draw them; code keeps the Markdown code color. */
@@ -252,8 +289,10 @@ function nativeSpans(spans: readonly FormSpan[], extra: string | undefined): Spa
 
 /** Whether the state differs from how the form opens. */
 function changedFromForm(question: AskQuestion, state: QuestionState): boolean {
-	const initial = initialAnswer(question).checked;
+	const opened = initialAnswer(question);
+	const initial = opened.checked;
 	return (
+		state.text?.text !== opened.text?.text ||
 		state.otherPicked ||
 		state.other !== undefined ||
 		state.notes.size > 0 ||
@@ -284,7 +323,7 @@ function optionNotes(question: AskQuestion, state: QuestionState): { option: str
 
 /** Submit-tab summary line. */
 function answerSummary(question: AskQuestion, state: QuestionState): string {
-	const parts = answerParts(question, state);
+	const parts = shownParts(question, state);
 	if (parts.length > 0) return parts.join(", ");
 	return theme.fg("warning", question.field.required ? "unanswered (required)" : "unanswered");
 }
@@ -795,7 +834,8 @@ class Picker implements Component, Focusable {
 		if (!question || !state) return [];
 		const children = this.#describeContext(question, true);
 		const row = questionRows(question)[state.cursorIndex];
-		if (row) children.push(this.#describeRow(question, state, row, state.cursorIndex, "none", false));
+		// A text field's row would only repeat what its editor holds.
+		if (row && row.kind !== "text") children.push(this.#describeRow(question, state, row, state.cursorIndex, "none", false));
 		return children;
 	}
 
@@ -950,6 +990,7 @@ class Picker implements Component, Focusable {
 		reveal: "none" | "mount" | "token",
 		showText = true,
 	): NativeNode {
+		if (row.kind === "text") return this.#describeTextRow(question, state, row, rowIndex, reveal);
 		const option = row.kind === "option" ? question.options[row.optionIndex ?? -1] : undefined;
 		const checked = this.#isPickedRow(state, row);
 		const cursor = rowIndex === state.cursorIndex;
@@ -987,7 +1028,7 @@ class Picker implements Component, Focusable {
 					: [span("✎ ", "success"), span(inlineText(typed), "success")];
 			lines.push(node("text", { spans, wrap: "word", role: "omp-tools.ask-typed" }, undefined, "text"));
 		}
-		const multi = question.field.multi;
+		const multi = isMulti(question);
 		const markerStyle = checked ? (multi ? "success" : "strong") : !styled && cursor ? "accent" : "dim";
 		const marker = span(optionMarker(multi, checked), markerStyle);
 		const role = cursor ? "omp-tools.ask-row.on" : "omp-tools.ask-row";
@@ -1013,22 +1054,58 @@ class Picker implements Component, Focusable {
 		};
 	}
 
+	/**
+	 * A text field's row: its text (masked for a password) or its placeholder,
+	 * under the field marker. A click opens its editor, as Space does.
+	 */
+	#describeTextRow(
+		question: AskQuestion,
+		state: QuestionState,
+		row: QuestionRow,
+		rowIndex: number,
+		reveal: "none" | "mount" | "token",
+	): NativeNode {
+		const cursor = rowIndex === state.cursorIndex;
+		const styled = this.#nativeSheet;
+		const content = textRowContent(question, state);
+		const multiline = question.field.kind === "text" && question.field.multiline;
+		const value = multiline ? displayText(content.text) : inlineText(content.text);
+		const spans = [span(value, content.empty ? "dim" : !styled && cursor ? "accent" : undefined)];
+		const marker = span(TEXT_MARKER, !styled && cursor ? "accent" : "dim");
+		return {
+			...node(
+				"row",
+				{ role: cursor ? "omp-tools.ask-row.on" : "omp-tools.ask-row", gap: "sm", align: "start", actions: { click: "pick", dblclick: "enter" } },
+				[
+					node("text", { spans: [marker], shrink: 0, role: "omp-tools.ask-marker" }, undefined, "marker"),
+					node("text", { spans, wrap: "word", role: "omp-tools.ask-typed", grow: 1, basis: 0 }, undefined, "text"),
+				],
+				row.key,
+			),
+			...(cursor && reveal !== "none"
+				? { reveal: reveal === "mount" ? ("nearest" as const) : { at: "nearest" as const, n: this.#nativeReveal } }
+				: {}),
+		};
+	}
+
 	/** The question tab's keys as buttons: `?`, Space, `n`, `x`, Esc, Enter. */
 	#describeQuestionActions(question: AskQuestion, state: QuestionState, row: QuestionRow | undefined): NativeNode {
 		const btw = this.#options.askBtw ? actionButton("Ask aside", "btw", "?", { title: "Picker btw: ask a side question  ?" }) : null;
 		const cancel = actionButton("Cancel", "cancel", "escape");
 		if (!row) return actionBar([btw, null, cancel]);
-		const typed = row.kind === "other" ? state.other : state.notes.get(row.optionIndex ?? -1);
-		if (row.kind === "other" && !typed) {
+		const typed = rowText(state, row);
+		if (row.kind !== "option" && !typed) {
 			return actionBar([btw, null, actionButton("Type answer", "edit", "n", { accent: true }), cancel]);
 		}
-		const noun = row.kind === "other" ? "answer" : "note";
+		const noun = row.kind === "option" ? "note" : "answer";
 		const edit = actionButton(typed ? `Edit ${noun}` : `Add ${noun}`, "edit", "n");
 		const clear = typed ? actionButton(`Clear ${noun}`, "clear", "x") : null;
 		const disabled = row.kind === "option" && question.options[row.optionIndex ?? -1]?.disabled === true;
-		const pick = disabled ? null : actionButton(this.#isPickedRow(state, row) ? "Unpick" : "Pick", "space", "space");
+		const pick =
+			disabled || row.kind === "text" ? null : actionButton(this.#isPickedRow(state, row) ? "Unpick" : "Pick", "space", "space");
 		const next = this.#hasSubmitTab() ? "next" : "submit";
-		const enterLabel = question.field.multi ? `${next[0]?.toUpperCase()}${next.slice(1)}` : `Pick & ${next}`;
+		const enterLabel =
+			isMulti(question) || row.kind === "text" ? `${next[0]?.toUpperCase()}${next.slice(1)}` : `Pick & ${next}`;
 		const moves = this.#hasSubmitTab() ? "j/k move · h/l tabs" : "j/k move";
 		const enter = actionButton(enterLabel, "enter", "enter", { accent: true, title: `${enterLabel}  enter · ${moves}` });
 		const buttons = [btw, null, pick, edit, clear, cancel, enter].filter((button, index) => button !== null || index === 1);
@@ -1071,7 +1148,7 @@ class Picker implements Component, Focusable {
 			const question = this.#questions[index];
 			const state = this.#states[index];
 			if (!question || !state) continue;
-			const parts = answerParts(question, state);
+			const parts = shownParts(question, state);
 			items.push({
 				k: [span(`${index + 1}. ${tabLabel(question, index)}`, "dim")],
 				v: parts.length > 0 ? [span(parts.join(", "))] : [span(question.field.required ? "unanswered (required)" : "unanswered", "warning")],
@@ -1150,8 +1227,9 @@ class Picker implements Component, Focusable {
 
 	#hasSubmitTab(): boolean {
 		// Multi-select confirms on the Submit tab, so it forces the tab even for
-		// a single question (native parity).
-		return this.#questions.length > 1 || this.#questions.some(question => question.field.multi);
+		// a single question (native parity). So does a text field, which an
+		// optional field left empty could not otherwise submit.
+		return this.#questions.length > 1 || this.#questions.some(question => isMulti(question) || question.field.kind === "text");
 	}
 
 	#isSubmitTab(): boolean {
@@ -1190,6 +1268,7 @@ class Picker implements Component, Focusable {
 			state.other?.text ?? "\u0001",
 			state.otherPicked,
 			[...state.notes].map(([option, note]) => `${option}\u0000${note.text}`).join("\u0000"),
+			state.text?.text ?? "\u0001",
 			this.#pictures.version,
 		].join("\u0002");
 		const cacheKey = `${index}:${width}`;
@@ -1223,6 +1302,7 @@ class Picker implements Component, Focusable {
 	}
 
 	#renderRow(question: AskQuestion, state: QuestionState, row: QuestionRow, selected: boolean, width: number, showText = true): string[] {
+		if (row.kind === "text") return this.#renderTextRow(question, state, selected, width);
 		const option = row.kind === "option" ? question.options[row.optionIndex ?? -1] : undefined;
 		const checked = this.#isPickedRow(state, row);
 		const disabled = option?.disabled === true;
@@ -1230,7 +1310,7 @@ class Picker implements Component, Focusable {
 		// with an accent marker; the marker glyph alone shows the checked state.
 		const color = disabled ? "dim" : selected ? "accent" : checked ? "toolOutput" : "text";
 		const markerColor = checked ? "success" : selected ? "accent" : "dim";
-		const marker = `${theme.fg(markerColor, optionMarker(question.field.multi, checked))} `;
+		const marker = `${theme.fg(markerColor, optionMarker(isMulti(question), checked))} `;
 		const style = (t: string) => (selected ? theme.bold(theme.fg(color, t)) : theme.fg(color, t));
 		const suffix = option?.recommended ? RECOMMENDED_SUFFIX : disabled ? " (unavailable)" : "";
 		const label = option ? `${styleSpans(option.label, style)}${suffix ? style(suffix) : ""}` : style(OTHER_OPTION);
@@ -1263,6 +1343,25 @@ class Picker implements Component, Focusable {
 			lines.push(theme.fg(textColor, `${indent}${shown}`));
 		}
 		return lines;
+	}
+
+	/** A text field's row: the marker, then its text (masked for a password) or placeholder; a textarea shows up to its rows. */
+	#renderTextRow(question: AskQuestion, state: QuestionState, selected: boolean, width: number): string[] {
+		const marker = `${theme.fg(selected ? "accent" : "dim", TEXT_MARKER)} `;
+		const indent = padding(visibleWidth(marker));
+		const inner = Math.max(1, width - visibleWidth(marker));
+		const content = textRowContent(question, state);
+		const color = content.empty ? "dim" : selected ? "accent" : "toolOutput";
+		const field = question.field;
+		const multiline = field.kind === "text" && field.multiline;
+		const lines = multiline
+			? displayText(content.text)
+					.split("\n")
+					.flatMap(line => wrapTextWithAnsi(line, inner))
+			: [truncateToWidth(inlineText(content.text), inner, Ellipsis.Unicode)];
+		const room = field.kind === "text" && multiline ? Math.max(1, field.rows) : 1;
+		const shown = lines.length > room ? [...lines.slice(0, room - 1), "…"] : lines;
+		return shown.map((line, index) => `${index === 0 ? marker : indent}${theme.fg(color, line)}`);
 	}
 
 	#renderTabBar(width: number): string[] {
@@ -1412,22 +1511,25 @@ class Picker implements Component, Focusable {
 		const row = question && state ? questionRows(question)[state.cursorIndex] : undefined;
 		if (!question || !state || !row) return `j/k move${tabs}${scroll}${btw} · ${cancel}`;
 		const next = this.#hasSubmitTab() ? "next" : "submit";
-		const typed = row.kind === "other" ? state.other : state.notes.get(row.optionIndex ?? -1);
-		const noun = row.kind === "other" ? "answer" : "note";
+		const typed = rowText(state, row);
+		const noun = row.kind === "option" ? "note" : "answer";
 		const disabled = row.kind === "option" && question.options[row.optionIndex ?? -1]?.disabled === true;
 		let keys: string;
-		if (row.kind === "other" && !typed) {
+		if (row.kind !== "option" && !typed) {
 			keys = "Space/Enter/n type answer";
 		} else {
 			const edit = typed ? `n edit ${noun} · x clear ${noun}` : `n add ${noun}`;
-			const enter = question.field.multi ? `Enter ${next}` : `Enter pick & ${next}`;
-			keys = disabled ? `unavailable · ${edit}` : `Space ${this.#isPickedRow(state, row) ? "unpick" : "pick"} · ${enter} · ${edit}`;
+			const enter = isMulti(question) || row.kind === "text" ? `Enter ${next}` : `Enter pick & ${next}`;
+			if (row.kind === "text") keys = `${enter} · ${edit}`;
+			else if (disabled) keys = `unavailable · ${edit}`;
+			else keys = `Space ${this.#isPickedRow(state, row) ? "unpick" : "pick"} · ${enter} · ${edit}`;
 		}
 		return `${keys} · j/k move${tabs}${scroll}${btw} · ${cancel}`;
 	}
 
 	/** Whether `row` is picked: a checked option, or a picked `Other`. */
 	#isPickedRow(state: QuestionState, row: QuestionRow): boolean {
+		if (row.kind === "text") return false;
 		if (row.kind === "other") return state.otherPicked;
 		return state.checked.has(row.optionIndex ?? -1);
 	}
@@ -1530,17 +1632,23 @@ class Picker implements Component, Focusable {
 	/**
 	 * One meaning per command: Space toggles the row, Enter finishes the
 	 * question (a single choice picks the row first), `n` edits the row's text,
-	 * `x` clears it. An `Other` without text opens its editor on Space or Enter.
+	 * `x` clears it. An `Other` or text field without text opens its editor on
+	 * Space or Enter; a text field's Space always does, as it has nothing to pick.
 	 */
 	#runRowCommand(question: AskQuestion, state: QuestionState, command: RowCommand): void {
 		const row = questionRows(question)[state.cursorIndex];
 		if (!row) return;
-		if (command === "edit" || (row.kind === "other" && !state.other && command !== "clear")) {
+		const opensEditor =
+			command === "edit" ||
+			(row.kind !== "option" && !rowText(state, row) && command !== "clear") ||
+			(row.kind === "text" && command === "space");
+		if (opensEditor) {
 			this.#editRow(question, state, row);
 			return;
 		}
 		if (command === "clear") {
 			if (row.kind === "other") setOther(question, state, undefined);
+			else if (row.kind === "text") setText(question, state, undefined);
 			else setNote(state, row.optionIndex ?? -1, undefined);
 			this.#requestRender();
 			return;
@@ -1551,7 +1659,7 @@ class Picker implements Component, Focusable {
 			this.#requestRender();
 			return;
 		}
-		if (!question.field.multi && !this.#pickRow(question, state, row)) {
+		if (row.kind !== "text" && !isMulti(question) && !this.#pickRow(question, state, row)) {
 			this.#requestRender();
 			return;
 		}
@@ -1574,8 +1682,16 @@ class Picker implements Component, Focusable {
 		else unpickOption(question, state, row.optionIndex ?? -1);
 	}
 
-	/** Open the row's editor: the option's Note, or the `Other` text (saving non-empty text picks it). */
+	/** Open the row's editor: the option's Note, the `Other` text (saving non-empty text picks it), or the text field's text. */
 	#editRow(question: AskQuestion, state: QuestionState, row: QuestionRow): void {
+		if (row.kind === "text") {
+			this.#openPrompt({
+				title: inlineText(displayText(question.question)) || question.field.name,
+				current: state.text,
+				apply: text => setText(question, state, text),
+			});
+			return;
+		}
 		if (row.kind === "other") {
 			this.#openPrompt({
 				title: "Other answer",
@@ -1743,7 +1859,7 @@ class Picker implements Component, Focusable {
 			const title = question.title.trim();
 			if (title) head.push(...wrapTextWithAnsi(theme.bold(theme.fg("muted", displayText(title))), innerWidth), "");
 			const row = questionRows(question)[state.cursorIndex];
-			if (row) tail.push("", ...this.#renderRow(question, state, row, true, innerWidth, false));
+			if (row && row.kind !== "text") tail.push("", ...this.#renderRow(question, state, row, true, innerWidth, false));
 		}
 		const text = question ? displayText(contextMarkdown(question)) : "";
 		const markdown = text ? this.#markdown(text, "text").render(innerWidth) : [];

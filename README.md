@@ -42,10 +42,11 @@ generate_image:
 `ask` takes one argument, `html`: one HTML `<form>`, as native `ask` does since
 OMP 18.18.3. The old `questions` argument is gone, with no alias. The
 model-facing description follows native's, except that it states no option
-count and, until the Picker has text fields, asks for choice controls only.
+count.
 
 In the interactive TUI the plugin answers the form in its own Picker. Each
-named radio group, checkbox group, `<select>`, and `<select multiple>` is a
+named radio group, checkbox group, `<select>`, `<select multiple>`, text
+input, number input, and `<textarea>` is a
 question with its own tab, in form order. A fieldset's legend names its tab;
 otherwise the control's name does. The context before a question shows above
 its options: headings, paragraphs, lists, preformatted text, tables, inline
@@ -55,16 +56,22 @@ scripts, styles, buttons, form actions, and file inputs never run or show.
 
 Values follow native: a radio group or `<select>` gives the chosen `value`, a
 checkbox group or `<select multiple>` gives an array, a lone checkbox gives
-its value (`on` by default) or nothing, and hidden inputs go back as they are.
-`checked` and `selected` options start picked. Disabled options show but
-cannot be picked. Radio and checkbox groups of two or more options get
+its value (`on` by default) or nothing, a number input gives a number, a text
+input or textarea gives its text (empty when you leave it), and hidden inputs
+go back as they are. `checked` and `selected` options start picked, and a
+`value` (or a textarea's content) starts in its field. Disabled options show
+but cannot be picked. Radio and checkbox groups of two or more options get
 `Other (type your own)` unless an option already starts with "Other". The
-Picker keeps the native structure: a Submit review for several or
-multi-select questions, `ask.timeout`, and `ask.notify`.
+Picker keeps the native structure: a Submit review for several, multi-select,
+or text questions, `ask.timeout`, and `ask.notify`.
 
-A form with a text, number, or textarea field fails with an error that names
-the field; the Picker does not show it yet, drops nothing, and does not fall
-back to native `ask`'s dialog.
+Every `<input>` type that is not a choice, hidden, button, or file input is a
+text field, as in native: `text`, `email`, `url`, `password`, `date`, and so
+on. There is no date picker and no `step` check. A text field's row shows its
+text, or its placeholder when empty. A password shows as one bullet per
+character in its row, on the Submit tab, and on the card, but in plain text in
+its open editor; the agent gets the text either way. A one-line field drops
+pasted line breaks, as a browser does.
 
 Tall questions scroll with PgUp/PgDn. After you scroll, the first move or
 action key brings the cursor back into view instead of acting on a hidden row.
@@ -77,26 +84,31 @@ Each key means the same thing in every Picker:
 |---|---|
 | j/k or ↑/↓ | Move between rows (on the Submit tab, scroll) |
 | h/l, ←/→, or Tab | Switch tabs (when there is a Submit tab) |
-| Space | Toggle the row and stay. Single-select un-picks the others |
+| Space | Toggle the row and stay. Single-select un-picks the others. On a text field, open its editor |
 | Enter | Finish the question. Single-select picks the row first, then goes to the next question. The last question goes to the Submit tab, or submits when there is none. On the Submit tab, submit |
-| n | Edit the row's text: the option's note, the `Other` answer, or, on the Submit tab, the Submit note |
+| n | Edit the row's text: the option's note, the `Other` answer, the text field, or, on the Submit tab, the Submit note |
 | x | Clear that text (on `Other`, also un-pick it) |
 | ? | Ask a Picker btw |
 | Ctrl+R (in an editor) | Search OMP's prompt history; the entry you pick replaces the editor's text |
 
-Space or Enter on an empty `Other` opens its editor. In an editor, Enter (or
-Ctrl+Q) saves and stays on the row, and Esc discards the edit. Saving `Other`
-text picks it. Above a note or `Other` editor, the Picker shows the question's
-title, its context, and the row you edit.
+Space or Enter on an empty `Other` or text field opens its editor. In an
+editor, Enter (or Ctrl+Q) saves and stays on the row, and Esc discards the
+edit. Saving `Other` text picks it. Above a note, `Other`, or text field
+editor, the Picker shows the question's title and its context, and for a note
+or `Other` the row you edit.
 
-Submit checks `required` choices as native does: an unanswered one blocks
-Submit, and the Picker opens it with native's reason.
+Submit checks each answer as native does: `required`, a number's `min` and
+`max`, `minlength` and `maxlength`, email and URL shapes, and `pattern`
+(matched whole). Like native, it ignores a `min` or `max` that is not a number
+and a pattern that does not compile. The first field that fails blocks Submit,
+and the Picker opens it with native's reason.
 
-Ctrl+R (`app.history.search`) in an `Other`, note, Submit note, or Picker btw
-editor opens OMP's prompt history search. The entry you pick replaces that
-editor's text, and you can edit it before saving. Esc in the search keeps the
-text, and either way the editor keeps focus. Nothing is sent, the main prompt
-keeps its text, and answers are not added to the history.
+Ctrl+R (`app.history.search`) in an `Other`, note, text field, Submit note,
+or Picker btw editor opens OMP's prompt history search. The entry you pick
+replaces that editor's text, and you can edit it before saving. Esc in the
+search keeps the text, and either way the editor keeps focus. Nothing is
+sent, the main prompt keeps its text, and answers are not added to the
+history.
 
 ### Differences from native `ask`
 
@@ -104,10 +116,11 @@ keeps its text, and answers are not added to the history.
   select and deselect. Un-picking `Other` keeps its text, and `n` then save
   picks it again.
 - The Submit tab has a Submit note for the whole ask.
-- On timeout, the Picker submits the form as it stands, as native does: picks
-  and defaults, with no recommendation filled in, even when a required choice
-  is empty. The result is marked as timed out, and the card says it was not
-  your choice.
+- On timeout, the Picker submits the form as it stands, as native does: picks,
+  defaults, and typed text, with no recommendation filled in and no checks,
+  even when a required field is empty or a number is out of bounds. The
+  result is marked as timed out (`details.timedOut`), and the card says it was
+  not your choice.
 - Plan mode does not turn off `ask.timeout`, and `speech.enabled` does not
   read the questions aloud.
 - Collaboration guests cannot answer.
@@ -121,11 +134,11 @@ keeps its text, and answers are not added to the history.
 
 ### Editors
 
-The `Other`, option-note, and Submit note editors are the main prompt's own
-editor, so they behave like it. They offer the same suggestions: `@` files, `^`
-models, `/` file commands and skills, internal URLs such as `skill://`,
-`rule://`, `local://`, `agent://`, `artifact://`, and `omp://`, emoji, GitHub
-refs, and other extensions' providers. They also have ghost-text word
+The `Other`, option-note, text field, and Submit note editors are the main
+prompt's own editor, so they behave like it. They offer the same suggestions:
+`@` files, `^` models, `/` file commands and skills, internal URLs such as
+`skill://`, `rule://`, `local://`, `agent://`, `artifact://`, and `omp://`,
+emoji, GitHub refs, and other extensions' providers. They also have ghost-text word
 completion, typo detection and autocorrect, vim mode, and multi-line input.
 Shift+Enter, Ctrl+J, or Alt+Enter inserts a newline. Ctrl+C clears the text and
 never exits omp from here. Ctrl+R searches the prompt history (see Keys).

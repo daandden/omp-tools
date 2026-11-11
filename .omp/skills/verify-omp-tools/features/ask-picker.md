@@ -1,6 +1,6 @@
 # Ask picker
 
-When the agent calls `ask` with an HTML `<form>`, the plugin shows its own picker in the composer's place. Each named radio group, checkbox group, `<select>`, and `<select multiple>` is a question tab; the form's context (headings, paragraphs, lists, `<pre>`, tables, `<img>`, inline `<svg>`) shows above the options. Each key has one meaning: j/k or arrows move, h/l, arrows, or Tab switch tabs, Space toggles the row, Enter finishes the question, `n` edits the row's note or `Other` text, `x` clears it. Several questions get a Submit tab. The agent receives native form data JSON, then labeled Notes, Other answers, the Submit note, and pasted images.
+When the agent calls `ask` with an HTML `<form>`, the plugin shows its own picker in the composer's place. Each named radio group, checkbox group, `<select>`, `<select multiple>`, text or number `<input>`, and `<textarea>` is a question tab; the form's context (headings, paragraphs, lists, `<pre>`, tables, `<img>`, inline `<svg>`) shows above the options. Each key has one meaning: j/k or arrows move, h/l, arrows, or Tab switch tabs, Space toggles the row (on a text field, opens its editor), Enter finishes the question, `n` edits the row's note, `Other` text, or text field, `x` clears it. Several questions, multi-select, or a text field get a Submit tab. The agent receives native form data JSON (a number input as a number), then labeled Notes, Other answers, the Submit note, and pasted images.
 
 ## Sub-features
 
@@ -10,14 +10,14 @@ When the agent calls `ask` with an HTML `<form>`, the plugin shows its own picke
 - `ask-note` saves a per-option note with `n` and Enter; a note on an unpicked option is still sent.
 - `ask-image` pastes an image into a note; it reaches the agent after its `[Image #N]` label.
 - `ask-submit` reviews and sends several answers from the Submit tab, with an optional Submit note.
-- `ask-required` refuses Submit while a `required` choice is empty and opens it.
+- `ask-required` refuses Submit while a field breaks native's rules (`required`, `min`/`max`, length, email, URL, `pattern`) and opens the first such field.
 - `ask-context` shows the form's context blocks and pictures above the options.
 - `ask-card` shows the answers in the transcript's `ask` card.
 - `ask-pointer` picks a row by click (Space) and finishes by double-click (Enter) in the Tern view.
 - `ask-timeout` submits the current answers of an idle picker when `ask.timeout` is set, marked as not the user's choice.
 - `ask-draft` keeps the answers through Esc and restores them on F5.
-- `ask-unsupported` fails a form with a text, number, or textarea field with an error naming it.
-- `ask-history` fills an open editor (note, `Other`, Submit note, Picker btw) from OMP's Ctrl+R prompt history search.
+- `ask-text` answers text, number, and textarea fields beside choices in the same editor as notes; a password shows as bullets outside its editor.
+- `ask-history` fills an open editor (note, `Other`, text field, Submit note, Picker btw) from OMP's Ctrl+R prompt history search.
 
 ## How to get to it (user POV)
 
@@ -38,9 +38,9 @@ Preconditions:
 - Required. Ask for a form with a `required` radio group and a second question. Press `h` to the Submit tab and Enter: the picker stays, opens the required question, and shows `Required`.
 - Context. Ask for a form with a heading, a list, a `<pre>`, a `<table>`, and an `<img src>` of a small PNG in the repository. The picker shows them above the options; in the classic TUI a picture the scroll window cuts shows as one `▣ <alt>` line.
 - Pointer (Tern view). Prompt for a two-option `ask` as in Single. Run `$C click '.sf-list-slot .sf-act:nth-child(3)'`. The second option is picked and the picker stays open. Run `$C dblclick '.sf-list-slot .sf-act:nth-child(3)'`. The picker closes and the form data holds the second option's value.
-- Timeout. Start a session with a `--config` file that holds the `advisor:` lines from `../SKILL.md` and `ask:` with `  timeout: 30`. Prompt for a form with a radio group `size` (small, and large `checked`) and press nothing for 45 seconds. The card shows `auto-selected after timeout — not a user choice`, the data is `{"size":"large"}`, and the answer text says the values were submitted automatically. With no option checked, the data omits `size`: nothing is invented.
+- Timeout. Start a session with a `--config` file that holds the `advisor:` lines from `../SKILL.md` and `ask:` with `  timeout: 30`. Prompt for a form with a radio group `size` (small, and large `checked`) and press nothing for 45 seconds. The card shows `auto-selected after timeout — not a user choice`, the data is `{"size":"large"}`, and the answer text says the values were submitted automatically. With no option checked, the data omits `size`: nothing is invented. With a `required` empty text field and `<input type="number" name="days" max="10" value="99">`, the timeout still submits `{"name":"","days":99}` with `details.timedOut`.
 - Esc and F5. Pick an option and add a note, press Esc, then F5. The picker reopens with `Restored your answers`, the pick and the note, and sends nothing until Enter.
-- Unsupported. Ask for a form with `<input type="number" name="days">`. The tool fails with an error naming `name="days"`, and no picker or native dialog opens.
+- Text fields (`ask-text`). Ask for a form with a radio group, `<input name="title">`, `<input type="number" name="days" min="1" max="90">`, `<textarea name="why">`, and `<input type="password" name="token">`. On the title row `$C key Enter` opens its editor; type, paste an image chip, `$C key Enter` saves. On days type `200`, save, go to the Submit tab, and `$C key Enter`: the picker opens Days with `Must be at most 90`. Fix it and submit. The data holds `days` as a number, the textarea's lines, and the token; the token row, the Submit tab, and the card show bullets. Esc before submitting and F5 restore the typed text.
 - Second view. The main session JSONL's `toolResult` for `ask` holds the text the agent received: `User answers:` (or the timeout line) and the form data JSON, then `Option notes:`, `Other answers`, and `Note on all answers:` lines when present. `details.answers` holds one entry per question.
 
 ## Gotchas

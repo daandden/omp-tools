@@ -134,6 +134,11 @@ function tuiSession(mode: "tui" | "rpc" = "tui") {
 			return marker;
 		},
 		picker: shown,
+		/** Pastes text the way the host does: into the focused component's paste contract. */
+		pasteText: async (text: string) => {
+			await shown();
+			focused?.pasteText?.(text);
+		},
 		render: async () => (await shown()).render(100).join("\n"),
 		reset: () => {
 			picker = undefined;
@@ -399,13 +404,237 @@ describe("ask in the Picker", () => {
 		expect((globalThis as { pwned?: boolean }).pwned).toBeUndefined();
 	});
 
-	test("a text, number or textarea field fails with an error naming it, opening nothing and not falling back to native", async () => {
+	test("a form with a text, number or textarea field opens in the Picker, never in native ask", async () => {
 		const { tool } = loadAsk();
 		const session = tuiSession();
-		const html = `<form>${STORE}<label>Days <input type="number" name="ttl_days" value="30"></label></form>`;
-		await expect(run(tool, html, session)).rejects.toThrow('name="ttl_days"');
-		expect(session.pickers()).toBe(0);
+		const result = run(tool, STORE.replace("</form>", `<label>Days <input type="number" name="ttl_days" value="30"></label></form>`), session);
+		await session.press("h", ENTER);
+		expect(formData(await result)).toEqual({ store: "sqlite", ttl_days: 30 });
+		expect(session.pickers()).toBe(1);
 		expect(session.nativeCalls).toEqual([]);
+	});
+});
+
+/** Whether `result` is still open after the Picker had time to act on the last key. */
+async function stillOpen(result: Promise<unknown>): Promise<boolean> {
+	return (await Promise.race([result.then(() => "settled"), Bun.sleep(20).then(() => "open")])) === "open";
+}
+
+const MIXED = `<form>
+  <p>Which store?</p>
+  <label><input type="radio" name="store" value="sqlite"> SQLite</label>
+  <label><input type="radio" name="store" value="pg"> Postgres</label>
+  <label>Title <input type="text" name="title" placeholder="One line"></label>
+  <label>Days <input type="number" name="days" min="1" max="90"></label>
+  <label>Why <textarea name="why"></textarea></label>
+</form>`;
+
+describe("text fields in the Picker", () => {
+	test("text, number and textarea answers come back as native form data beside the choices; a number as a number", async () => {
+		const { tool } = loadAsk();
+		const session = tuiSession();
+		const result = run(tool, MIXED, session);
+		await session.press("j", ENTER); // store: Postgres
+		await session.press(ENTER); // the empty title opens its editor
+		await session.type("Ship drafts");
+		await session.press(ENTER, ENTER); // save, next
+		await session.press(ENTER);
+		await session.type("14");
+		await session.press(ENTER, ENTER);
+		await session.press(ENTER);
+		await session.type("Users lose answers");
+		await session.press(ENTER, ENTER); // save, Submit tab
+		await session.press(ENTER);
+		const answered = await result;
+		expect(formData(answered)).toEqual({ store: "pg", title: "Ship drafts", days: 14, why: "Users lose answers" });
+		expect(answered.details?.answers.map(answer => answer.answer)).toEqual(["Postgres", "Ship drafts", "14", "Users lose answers"]);
+		expect(answered.details?.timedOut).toBeUndefined();
+	});
+
+	test("prefilled values submit as they opened, and an untouched empty field gives empty text", async () => {
+		const { tool } = loadAsk();
+		const session = tuiSession();
+		const result = run(
+			tool,
+			`<form>
+				<label>Title <input name="title" value="Draft fix"></label>
+				<label>Days <input type="number" name="days" value="30"></label>
+				<label>Why <textarea name="why">
+First line
+second line</textarea></label>
+				<label>Owner <input type="email" name="owner"></label>
+			</form>`,
+			session,
+		);
+		await session.press("h", ENTER); // Submit tab, Submit
+		expect(formData(await result)).toEqual({ title: "Draft fix", days: 30, why: "First line\nsecond line", owner: "" });
+	});
+
+	test("a form of one optional text field can be submitted empty", async () => {
+		const { tool } = loadAsk();
+		const session = tuiSession();
+		const result = run(tool, `<form><label>Anything else? <input name="extra"></label></form>`, session);
+		await session.press("l", ENTER);
+		expect(formData(await result)).toEqual({ extra: "" });
+	});
+
+	for (const [rule, control, fixed, value] of [
+		["required text", `<input name="v" required>`, "set", "set"],
+		["required textarea", `<textarea name="v" required></textarea>`, "set", "set"],
+		["a number below min", `<input type="number" name="v" min="1" max="10" value="0">`, "5", 5],
+		["a number above max", `<input type="number" name="v" min="1" max="10" value="11">`, "10", 10],
+		["a number field holding no number", `<input type="number" name="v" value="many">`, "7", 7],
+		["minlength", `<input name="v" minlength="3" value="ab">`, "abc", "abc"],
+		["maxlength", `<input name="v" maxlength="3" value="abcd">`, "abc", "abc"],
+		["an email field", `<input type="email" name="v" value="nobody">`, "a@b.co", "a@b.co"],
+		["a url field", `<input type="url" name="v" value="example.com">`, "https://example.com", "https://example.com"],
+		["a pattern", `<input name="v" pattern="[a-z]+" value="ABC">`, "abc", "abc"],
+	] as const) {
+		test(`Submit refuses ${rule} and opens the field; the corrected value then submits`, async () => {
+			const { tool } = loadAsk();
+			const session = tuiSession();
+			const result = run(tool, `<form><label>Value ${control}</label></form>`, session);
+			await session.press("l", ENTER); // Submit tab, Submit
+			expect(await stillOpen(result)).toBe(true);
+			await session.press("x", "n"); // on the refused field: clear it, type anew
+			await session.type(fixed);
+			await session.press(ENTER, "l", ENTER);
+			expect(formData(await result)).toEqual({ v: value });
+		});
+	}
+
+	for (const [constraint, control, value] of [
+		["a non-numeric min", `<input type="number" name="v" min="lots" value="-5">`, -5],
+		["an invalid pattern", `<input name="v" pattern="(" value="anything">`, "anything"],
+		["a step", `<input type="number" name="v" step="5" value="3">`, 3],
+		["a date type, which has no date widget or check", `<input type="date" name="v" value="next week">`, "next week"],
+	] as const) {
+		test(`${constraint} is ignored, as native ignores it`, async () => {
+			const { tool } = loadAsk();
+			const session = tuiSession();
+			const result = run(tool, `<form><label>Value ${control}</label></form>`, session);
+			await session.press("l", ENTER);
+			expect(formData(await result)).toEqual({ v: value });
+		});
+	}
+
+	test("Submit opens the first invalid field, then the next one", async () => {
+		const { tool } = loadAsk();
+		const session = tuiSession();
+		const result = run(
+			tool,
+			`<form>
+				<p>Which store?</p>
+				<label><input type="radio" name="store" value="sqlite" checked> SQLite</label>
+				<label><input type="radio" name="store" value="pg"> Postgres</label>
+				<label>Owner <input type="email" name="owner" value="nobody"></label>
+				<label>Days <input type="number" name="days" max="10" value="30"></label>
+			</form>`,
+			session,
+		);
+		await session.press("h", ENTER); // Submit: refused at Owner
+		await session.press("x", "n");
+		await session.type("a@b.co");
+		await session.press(ENTER, "l", "l", ENTER); // Submit again: refused at Days
+		expect(await stillOpen(result)).toBe(true);
+		await session.press("x", "n");
+		await session.type("9");
+		await session.press(ENTER, "l", ENTER);
+		expect(formData(await result)).toEqual({ store: "sqlite", owner: "a@b.co", days: 9 });
+	});
+
+	test("at the timeout an empty required field and an out-of-range number go back as they stand, marked automatic", async () => {
+		settings.writeValue(cfgAskTimeout, 1, "override");
+		const { tool } = loadAsk();
+		const session = tuiSession();
+		const answered = await run(
+			tool,
+			`<form>
+				<label>Name <input name="name" required></label>
+				<label>Days <input type="number" name="days" min="1" max="10" value="99"></label>
+			</form>`,
+			session,
+		);
+		expect(formData(answered)).toEqual({ name: "", days: 99 });
+		expect(answered.details?.timedOut).toBe(true);
+	});
+
+	test("typed text survives picks, unpicks, the Submit tab, other fields, and Esc then F5", async () => {
+		const { tool } = loadAsk();
+		const session = tuiSession();
+		const first = run(tool, MIXED, session);
+		await session.press("l", ENTER); // title
+		await session.type("Kept title");
+		await session.press(ENTER, "h"); // save, back to store
+		await session.press(" ", " ", "j", " "); // pick SQLite, unpick it, pick Postgres
+		await session.press("l", "l", "l", "l", "h", "h", "h"); // through Submit and back to title
+		await session.press(ESC);
+		await expect(first).rejects.toThrow();
+
+		const again = run(tool, MIXED, session);
+		expect(await session.render()).toContain("Restored your answers");
+		expect(await stillOpen(again)).toBe(true);
+		await session.press("l", "l", "l", ENTER); // title → Submit tab, Submit
+		expect(formData(await again)).toEqual({ store: "pg", title: "Kept title", days: "", why: "" });
+	});
+
+	test("a form whose text field changed does not get the old draft", async () => {
+		const { tool } = loadAsk();
+		const session = tuiSession();
+		const first = run(tool, MIXED, session);
+		await session.press("l", ENTER);
+		await session.type("Old title");
+		await session.press(ENTER, ESC);
+		await expect(first).rejects.toThrow();
+
+		const changed = run(tool, MIXED.replace('placeholder="One line"', 'placeholder="A short line"'), session);
+		expect(await session.render()).not.toContain("Restored your answers");
+		await session.press("h", ENTER);
+		expect(formData(await changed)).toEqual({ title: "", days: "", why: "" });
+	});
+
+	test("an image pasted into a text field arrives as labeled image content", async () => {
+		const { tool } = loadAsk();
+		const session = tuiSession();
+		const result = run(tool, `<form><label>Bug <textarea name="bug"></textarea></label></form>`, session);
+		await session.press(ENTER);
+		await session.type("looks like ");
+		expect(await session.pasteImage()).toBe("[Image #1]");
+		await session.press(ENTER, "l", ENTER);
+		const answered = await result;
+		expect(formData(answered)).toEqual({ bug: "looks like [Image #1]" });
+		expect(answered.content.filter(block => block.type === "image")).toEqual([IMAGE]);
+		expect(answered.content[answered.content.indexOf(IMAGE) - 1]).toEqual({ type: "text", text: "[Image #1]" });
+	});
+
+	test("pasted line breaks stay in a textarea and leave a one-line field", async () => {
+		const { tool } = loadAsk();
+		const session = tuiSession();
+		const result = run(tool, `<form><label>Title <input name="title"></label><label>Body <textarea name="body"></textarea></label></form>`, session);
+		await session.press(ENTER);
+		await session.pasteText("two\nlines");
+		await session.press(ENTER, ENTER, ENTER);
+		await session.pasteText("two\nlines");
+		await session.press(ENTER, ENTER, ENTER);
+		expect(formData(await result)).toEqual({ title: "twolines", body: "two\nlines" });
+	});
+
+	test("a password is masked on screen and still reaches the model", async () => {
+		const { tool } = loadAsk();
+		const session = tuiSession();
+		const result = run(tool, `<form><label>Token <input type="password" name="token"></label></form>`, session);
+		await session.press(ENTER);
+		await session.type("hunter2");
+		await session.press(ENTER);
+		const picker = (await session.picker()) as Component & { describe(cx: unknown): NativeNode };
+		const cx = { cols: 100, feature: () => false, supports: () => false };
+		expect(await session.render()).not.toContain("hunter2");
+		expect(viewText(picker.describe(cx))).not.toContain("hunter2");
+		await session.press("l");
+		expect(await session.render()).not.toContain("hunter2");
+		expect(viewText(picker.describe(cx))).not.toContain("hunter2");
+		await session.press(ENTER);
+		expect(formData(await result)).toEqual({ token: "hunter2" });
 	});
 });
 

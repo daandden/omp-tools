@@ -194,7 +194,6 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 			if (ctx.mode !== "tui" || !ctx.hasUI) return ctx.invokeTool<AskToolDetails>(params, { signal, onUpdate });
 			const read = readHtmlForm(params.html);
 			if (read.kind === "empty") return ctx.invokeTool<AskToolDetails>(params, { signal, onUpdate });
-			if (read.kind === "unsupported") throw new Error(read.error);
 			return askWithPicker(ctx, read.form, signal, pickerSession(ctx));
 		},
 	};
