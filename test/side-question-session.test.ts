@@ -1,6 +1,29 @@
 import { expect, test } from "bun:test";
+import { AgentRegistry } from "@oh-my-pi/pi-coding-agent";
 import { parseConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
+import { sideQuestionsAvailable } from "../extensions/side-question";
 import { callbacks, sideQuestionFixture } from "./helpers/side-question-session";
+
+test("a remote session handle in the registry makes Side questions unavailable without touching it", async () => {
+	const fixture = await sideQuestionFixture();
+	try {
+		expect(sideQuestionsAvailable(fixture.ctx)).toBe(true);
+		const reads: PropertyKey[] = [];
+		const remote = new Proxy({ instanceKey: "worker-7:1", model: fixture.main.model }, {
+			get(target, key) {
+				reads.push(key);
+				return Reflect.get(target, key);
+			},
+		}) as unknown as Parameters<AgentRegistry["attachSession"]>[1];
+		const id = fixture.ctx.agent.id;
+		expect(AgentRegistry.global().attachSession(id, remote)).toBe(true);
+
+		expect(sideQuestionsAvailable(fixture.ctx)).toBe(false);
+		await expect(fixture.open()).rejects.toThrow("Side questions need a saved main session.");
+		expect(reads).toEqual([]);
+		expect(fixture.requests).toEqual([]);
+	} finally { await fixture.dispose(); }
+}, 30_000);
 
 test("a failed main model uses native fallback and reports recovery to the Side question", async () => {
 	const fixture = await sideQuestionFixture({ fail: ["main"] });

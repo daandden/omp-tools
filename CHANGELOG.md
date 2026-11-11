@@ -89,6 +89,11 @@
   `auto` or dimensions divisible by 16 with an aspect ratio of 1:3 to 3:1;
   the API checks remaining limits. GIF dimensions describe each frame.
 
+- Updated the SDK types to OMP 18.18.8. Side questions and Picker btw now
+  check that the registry's main session is a local session of this process,
+  not a remote session handle; otherwise `/btw` goes to OMP's own and the
+  Picker btw stays off.
+
 - Updated the SDK types to OMP 18.13.3 and synchronized the `ask` description
   with upstream's instruction to show decision context before blocking.
 - The isolated Tern helper exports its shell for headless starts, where Tern

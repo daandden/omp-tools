@@ -2,8 +2,14 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ImageContent } from "@oh-my-pi/pi-ai";
-import type { AgentSession, CreateAgentSessionOptions, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
-import { AgentRegistry, createAgentSession, createSubagentSettings, SessionManager } from "@oh-my-pi/pi-coding-agent";
+import type { CreateAgentSessionOptions, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import {
+	AgentRegistry,
+	AgentSession,
+	createAgentSession,
+	createSubagentSettings,
+	SessionManager,
+} from "@oh-my-pi/pi-coding-agent";
 import { cfgDisplayCacheMissMarker } from "@oh-my-pi/pi-coding-agent/modes/settings";
 import type { SideQuestionRecovery } from "./side-question-recovery";
 import { sideQuestionModel } from "./side-question-model";
@@ -247,8 +253,14 @@ function assistantText(message: { content?: unknown } | undefined): string {
 		.trim();
 }
 
+/**
+ * The main agent's session when it lives in this process. The registry can
+ * hold a remote handle (a worker-homed or peer session) without the local
+ * transcript and services a mirror forks, so only the host's own class counts.
+ */
 function liveSession(ctx: ExtensionContext): AgentSession | undefined {
-	return AgentRegistry.global().get(ctx.agent.id)?.session ?? undefined;
+	const session = AgentRegistry.global().get(ctx.agent.id)?.session;
+	return session instanceof AgentSession ? session : undefined;
 }
 
 /** Whether a Side question can run here: a live main session with a saved transcript. */

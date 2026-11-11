@@ -18,7 +18,6 @@ import type {
 	ExtensionAPI,
 	ExtensionAskDialogQuestion,
 	ExtensionContext,
-	QuestionResult,
 	ToolDefinition,
 } from "@oh-my-pi/pi-coding-agent";
 import { askToolRenderer, discoverSlashCommands, logger, settings } from "@oh-my-pi/pi-coding-agent";
@@ -34,11 +33,29 @@ import { pickerBtwRunner } from "./picker-btw";
 import { openPicker, PickerDraftSlot, type PickerSession } from "./picker-draft";
 import flexibleAskDescription from "./flexible-ask.md" with { type: "text" };
 
-/** Native ask details plus the Submit note, which only the picker writes. */
-type FlexibleAskDetails = AskToolDetails & {
+/** One answered question, in the shape native ask recorded before HTML forms. */
+interface PickerQuestionResult {
+	id: string;
+	question: string;
+	options: string[];
+	multi: boolean;
+	selectedOptions: string[];
+	customInput?: string;
+	note?: string;
+	timedOut?: boolean;
+}
+
+/** Picker answers: one question inline, several under `results`. */
+type PickerAskDetails = Omit<PickerQuestionResult, "id"> | { results: PickerQuestionResult[] };
+
+/** Native ask details (from delegation) or Picker details, plus the Submit note, which only the picker writes. */
+type FlexibleAskDetails = (AskToolDetails | PickerAskDetails) & {
 	/** Shown on the Tern card; the model reads it in the result text. */
 	submitNote?: string;
 };
+
+/** Native ask's card reads only HTML form args, which a `questions` call never has. */
+const NO_FORM: Parameters<typeof askToolRenderer.describeCall>[0] = {};
 
 /** Result views, keyed by `details` so an unchanged card keeps its nodes. */
 const resultViews = new WeakMap<FlexibleAskDetails, NativeToolView | undefined>();
@@ -60,13 +77,15 @@ function withPlainTarget(view: NativeToolView | undefined): NativeToolView | und
 }
 
 /** The native ask card for the result, with the Submit note below the answers. */
-function describeAskResult(
-	result: AgentToolResult<FlexibleAskDetails>,
-	args: Parameters<typeof askToolRenderer.describeResult>[2],
-): NativeToolView | undefined {
+function describeAskResult(result: AgentToolResult<FlexibleAskDetails>): NativeToolView | undefined {
 	const details = result.details;
 	if (details && resultViews.has(details)) return resultViews.get(details);
-	const view = askToolRenderer.describeResult(result, undefined, args);
+	// Native draws answers only from its own details; Picker details fall back to the result text.
+	const view = askToolRenderer.describeResult(
+		details && "answers" in details ? { content: result.content, details } : { content: result.content },
+		undefined,
+		NO_FORM,
+	);
 	const note = details?.submitNote;
 	const withNote =
 		view && note
@@ -136,7 +155,7 @@ async function askWithMarkdownDialog(
 	}
 	const dialogResult = picked;
 
-	const results: QuestionResult[] = questions.map((question, index) => {
+	const results: PickerQuestionResult[] = questions.map((question, index) => {
 		const answer = dialogResult.results[index];
 		const note = joinOptionNotes(answer?.notes ?? []);
 		return {
@@ -256,8 +275,8 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 		// re-prompt/deny differently. Keep the tier.
 		approval: "read",
 		// Tern draws the card with native ask's views, so it reads the same as a native ask.
-		describeCall: args => withPlainTarget(askToolRenderer.describeCall(args)),
-		describeResult: (result, _options, args) => describeAskResult(result, args),
+		describeCall: () => withPlainTarget(askToolRenderer.describeCall(NO_FORM)),
+		describeResult: result => describeAskResult(result),
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			if (!ctx.invokeTool) throw new Error("Native ask tool unavailable for delegation");
 			const questions = sanitizeQuestions(params.questions);
