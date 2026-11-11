@@ -5,7 +5,6 @@ const {
 	cacheMissTokens,
 	forwardSideQuestionUsage,
 	recordSideQuestionUsage,
-	seedMessages,
 	sharedPrefixPrompt,
 	SideQuestionCache,
 	sideQuestionCacheKey,
@@ -198,58 +197,6 @@ describe("sideQuestionStreamOptions", () => {
 	test("works when the agent passes no options", () => {
 		const key = sideQuestionCacheKey("main-1");
 		expect(sideQuestionStreamOptions(key, undefined)).toEqual({ preferWebsockets: false, parentSessionId: key });
-	});
-});
-
-const user = (text: string) => ({ role: "user", content: [{ type: "text", text }], timestamp: 1 });
-const call = (id: string, name: string) => ({ type: "toolCall", id, name, arguments: {} });
-const assistant = (...calls: ReturnType<typeof call>[]) => ({
-	role: "assistant",
-	content: [{ type: "text", text: "working" }, ...calls],
-	stopReason: calls.length > 0 ? "toolUse" : "stop",
-	timestamp: 2,
-});
-const result = (id: string, name: string) => ({
-	role: "toolResult",
-	toolCallId: id,
-	toolName: name,
-	content: [{ type: "text", text: "ok" }],
-	isError: false,
-	timestamp: 3,
-});
-
-describe("seedMessages", () => {
-	test("copies a settled conversation unchanged", () => {
-		const messages = [user("hi"), assistant(call("c1", "read")), result("c1", "read"), assistant()];
-		expect(seedMessages(messages)).toEqual(messages);
-	});
-
-	test("changes to the copy never reach the main session's messages", () => {
-		const messages = [user("hi"), user("there")];
-		const copy = seedMessages(messages) as typeof messages;
-		copy[0]!.content[0]!.text = "changed";
-		copy.push(user("more"));
-		expect(messages[0]!.content[0]!.text).toBe("hi");
-		expect(messages).toHaveLength(2);
-	});
-
-	test("closes each call the main agent still waits on as still open, never as failed", () => {
-		const messages = [user("pick"), assistant(call("c1", "read"), call("c2", "ask"), call("c3", "bash")), result("c1", "read")];
-		const seeded = seedMessages(messages) as Record<string, unknown>[];
-		expect(seeded).toHaveLength(5);
-		expect(seeded.slice(0, 3)).toEqual(messages as never);
-		const pending = seeded.slice(3);
-		expect(pending.map(message => message.toolCallId)).toEqual(["c2", "c3"]);
-		for (const message of pending) expect(message).toMatchObject({ role: "toolResult", isError: false });
-		const texts = pending.map(message => (message.content as { text: string }[])[0]!.text);
-		// A pending ask is the user answering now, not a call still running.
-		expect(texts[0]).not.toBe(texts[1]);
-		for (const text of texts) expect(text).not.toMatch(/abort|fail/i);
-	});
-
-	test("leaves earlier replies alone; only the last one can be in flight", () => {
-		const messages = [user("a"), assistant(call("old", "read")), user("b"), assistant()];
-		expect(seedMessages(messages)).toEqual(messages);
 	});
 });
 

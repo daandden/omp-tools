@@ -242,8 +242,7 @@ A Side question is a full agent run in a mirror session built the way OMP's
   (`ctx.agent.kind === "main"`), a session file, and a live session in
   `AgentRegistry.global()` with a model. Without them `/btw` falls through to
   native and the Picker btw is off.
-- **Fork.** `SessionManager.forkFrom` copies the main transcript, with
-  `repairInterruptedTail` because the main agent may be mid-turn, into
+- **Fork.** `SessionManager.forkFrom` copies the main transcript into
   `$TMPDIR/omp-side-question-<random>/SideQuestion-<uuid>.jsonl`. It stays
   outside the sessions tree because omp-stats and the Agent Hub scan that
   tree and counted the fork's usage a second time. Dispose deletes it.
@@ -272,13 +271,19 @@ A Side question is a full agent run in a mirror session built the way OMP's
   Agent Hub so nothing can message or list the mirror. Its `get` and `list`
   fall back to `AgentRegistry.global()`, because `read agent://<id>` resolves
   a running agent with no output through the reader's registry.
-- **Seed.** `seedMessages` replaces the mirror's messages with a
-  `structuredClone` of `main.agent.state.messages`. The live copy is on the
-  selected branch, which the file does not record, and holds messages the file
-  lacks (the `eval-state-context` message after a `/tree` jump, #15933). Each
-  call the last reply still waits on gets a still-open result (`ask`: the user
-  is answering now; others: still running; both say not to call it again).
-  An "aborted" result made the model ask the user again.
+- **Seed.** The mirror's messages come only from the fork file. OMP persists
+  the eval state a history rewrite adds (`/tree`, compaction) since 18.18.2,
+  so the file holds what the main agent sees. `open` reads the main leaf
+  before the flush and moves the fork onto it with `branch()`, because
+  `forkFrom` ends on the file's last entry and a `/tree` move is not written
+  to the file. A leaf missing from the copy fails the open, so the mirror never
+  answers from another branch.
+- **Pending calls.** Each call the selected branch's last reply still waits on
+  gets a still-open result in the fork (`ask`: the user is answering now;
+  others: still running; both say not to call it again). An "aborted" result
+  made the model ask the user again. The fork skips `repairInterruptedTail`,
+  which repairs the file's last branch instead of the selected one and
+  returns an "outcome is unknown" error that does not say to wait.
 - **Model.** `side-question-model.ts` reads `sideQuestionModel` per thread
   with `getPluginSettings`, and resolves the role and thinking level with
   `resolveModelOverride`. The fork records the selected role so shared-model
@@ -291,7 +296,7 @@ A Side question is a full agent run in a mirror session built the way OMP's
   - The caller's signal, passed through `LazySideQuestionThread.get` and
     `open`, ends the wait without aborting the shared refresh.
   - Still unresolved, it warns with the missing model and uses the main model.
-  - Before the first request, the tokenizer checks the live history plus
+  - Before the first request, the tokenizer checks the mirror's history plus
     prompt and tool overhead. A known context window that is too small uses
     the main model. OMP owns overflow recovery after that.
 - **Thread rules.** A thread rejects a question while one runs, and `ask`
@@ -300,10 +305,11 @@ A Side question is a full agent run in a mirror session built the way OMP's
 - **Cache misses.** `SideQuestionCache` gives each thread a tracker that flags
   a request reading more than 2048 tokens below the expected cached prefix:
   the thread's previous request on that provider and model, or for a first
-  request, the earlier thread's first request on that route while the main
-  messages still start with the ones it saw (`sharedPrefixPrompt`). It counts
-  only when the request wrote cache (`cacheWrite > 0`, never on Codex) and
-  shows `⊘ cache miss · N tokens` only while `display.cacheMissMarker` is on.
+  request, the earlier thread's first request on that route while the
+  selected entries since the last compaction still start with the ones it saw
+  (`sharedPrefixPrompt`). It counts only when the request wrote cache
+  (`cacheWrite > 0`, never on Codex) and shows `⊘ cache miss · N tokens` only
+  while `display.cacheMissMarker` is on.
 - **Usage.** `recordSideQuestionUsage` writes each mirror request to the main
   session's ledger as `model_usage` with purpose `side-question`.
   `forwardSideQuestionUsage` wraps the fork's `appendModelUsage` and copies

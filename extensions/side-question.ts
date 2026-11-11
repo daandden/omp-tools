@@ -74,15 +74,16 @@ function requestPrompt(message: unknown): number | undefined {
 
 /** A Side question thread's first request, which the next thread's first one should find cached. */
 interface ThreadStart {
-	/** The main messages the thread was seeded from. */
+	/** The selected history the thread started from: one key per entry, compared by identity. */
 	messages: readonly unknown[];
 	prompt: number;
 }
 
 /**
  * The prompt a new thread's first request should find cached: the earlier
- * thread's first one, while the main messages still start with the ones that
- * thread saw. Compaction and a branch change replace them, so nothing is expected.
+ * thread's first one, while the selected history still starts with the
+ * entries that thread saw. Compaction and a branch change replace them, so
+ * nothing is expected.
  */
 export function sharedPrefixPrompt(earlier: ThreadStart | undefined, messages: readonly unknown[]): number | undefined {
 	if (!earlier || earlier.messages.length > messages.length) return undefined;
@@ -170,11 +171,7 @@ export function forwardSideQuestionUsage(fork: SessionManager, ledger: SessionMa
 	};
 }
 
-interface ToolCallBlock {
-	type: "toolCall";
-	id: string;
-	name: string;
-}
+type ForkEntry = ReturnType<SessionManager["getBranch"]>[number];
 
 const PENDING_ASK =
 	"The user is answering this question in the Picker now. The answer is not known here. Do not call ask again.";
@@ -182,36 +179,51 @@ const PENDING_CALL =
 	"This call is still running in the main conversation. Its result is not known here. Do not call it again.";
 
 /**
- * A copy of the main agent's messages for the mirror, so it sees what the
- * main agent sees (the transcript lacks messages the live session adds, such
- * as the eval state after a `/tree` jump). Each call the main agent still
- * waits on gets a result that says the call is still open, so the copy is a
- * valid conversation and the model does not take the call as failed.
+ * Moves the fork onto the main session's selected entry. The fork starts on
+ * the file's last entry, which after a `/tree` jump with no new prompt is on an
+ * abandoned branch. An entry the copied file lacks fails the open instead of
+ * answering from other history.
  */
-export function seedMessages<T>(messages: readonly T[]): T[] {
-	const copy = structuredClone(messages) as T[];
-	const answered = new Set<string>();
-	let last: { content?: unknown } | undefined;
-	for (const message of copy as { role?: string; toolCallId?: string; content?: unknown }[]) {
-		if (message.role === "toolResult" && message.toolCallId) answered.add(message.toolCallId);
-		if (message.role === "assistant") last = message;
+function selectMainBranch(fork: SessionManager, leafId: string | null): void {
+	if (leafId === null) return fork.resetLeaf();
+	if (!fork.getEntry(leafId)) {
+		throw new Error(`The main session's selected entry ${leafId} is not in its saved transcript.`);
 	}
-	const calls = Array.isArray(last?.content) ? (last.content as { type?: string }[]) : [];
-	for (const block of calls) {
-		if (block.type !== "toolCall") continue;
-		const call = block as ToolCallBlock;
-		if (answered.has(call.id)) continue;
-		copy.push({
+	fork.branch(leafId);
+}
+
+/** Ids of the selected entries the mirror's history starts from; a compaction replaces the ones before it. */
+function historyEntryIds(branch: readonly ForkEntry[]): string[] {
+	const compaction = branch.findLastIndex(entry => entry.type === "compaction");
+	return branch.slice(Math.max(compaction, 0)).map(entry => entry.id);
+}
+
+/**
+ * Gives each call the selected branch's last reply still waits on a result
+ * that says the call is still open, so the mirror neither takes it as failed
+ * nor makes it again. An "aborted" result made the model ask the user again.
+ */
+function closePendingCalls(fork: SessionManager): void {
+	const answered = new Set<string>();
+	let last: ForkEntry | undefined;
+	for (const entry of fork.getBranch()) {
+		if (entry.type !== "message") continue;
+		if (entry.message.role === "toolResult") answered.add(entry.message.toolCallId);
+		if (entry.message.role === "assistant") last = entry;
+	}
+	if (last?.type !== "message" || last.message.role !== "assistant") return;
+	for (const block of last.message.content) {
+		if (block.type !== "toolCall" || answered.has(block.id)) continue;
+		fork.appendMessage({
 			role: "toolResult",
-			toolCallId: call.id,
-			toolName: call.name,
-			content: [{ type: "text", text: call.name === "ask" ? PENDING_ASK : PENDING_CALL }],
+			toolCallId: block.id,
+			toolName: block.name,
+			content: [{ type: "text", text: block.name === "ask" ? PENDING_ASK : PENDING_CALL }],
 			details: { __synthetic: true, source: "side_question_pending", executed: false },
 			isError: false,
 			timestamp: Date.now(),
-		} as T);
+		});
 	}
-	return copy;
 }
 
 export interface SideQuestionToolCall {
@@ -355,14 +367,14 @@ export class SideQuestionThread {
 		file: string,
 		main: AgentSession,
 		ledgerSessionId: string,
-		seededFrom: readonly unknown[],
+		selectedEntries: readonly string[],
 		contextFallback: ContextFallback | undefined,
 	) {
 		this.#session = session;
 		this.#file = file;
 		this.#main = main;
 		this.#ledgerSessionId = ledgerSessionId;
-		this.#cache = cacheOf(main).thread(seededFrom);
+		this.#cache = cacheOf(main).thread(selectedEntries);
 		this.#contextFallback = contextFallback;
 	}
 
@@ -381,6 +393,8 @@ export class SideQuestionThread {
 					role: main.sessionManager.getLastModelChangeRole({ skipEphemeral: true }) ?? "default",
 				}
 			: undefined;
+		// Before the flush, so the copied file holds the selected entry.
+		const selectedLeaf = main.sessionManager.getLeafId();
 		await main.sessionManager.ensureOnDisk();
 		await main.sessionManager.flush();
 
@@ -401,7 +415,6 @@ export class SideQuestionThread {
 				suppressBreadcrumb: true,
 				sessionFile: file,
 				resetInheritedCost: true,
-				repairInterruptedTail: true,
 			});
 		} catch (error) {
 			await removeFork(file);
@@ -413,8 +426,11 @@ export class SideQuestionThread {
 		const parentPreparedExtensions = main.preparedExtensions;
 		const parentExtensionPaths = main.extensionPaths;
 		const parentExtensionRoots = main.effectiveExtensionRoots;
-		const seededFrom = [...main.agent.state.messages];
+		let selectedEntries: string[];
 		try {
+			selectMainBranch(fork, selectedLeaf);
+			selectedEntries = historyEntryIds(fork.getBranch());
+			closePendingCalls(fork);
 			if (selected?.model) fork.appendModelChange(`${selected.model.provider}/${selected.model.id}`, selected.role);
 			mirror = await createMirrorSession({
 				cwd: ctx.cwd,
@@ -439,7 +455,6 @@ export class SideQuestionThread {
 				extensionRoots: () => parentExtensionRoots,
 			});
 			if (selected?.model) mirror.setThinkingLevel(selected.thinkingLevel);
-			mirror.agent.replaceMessages(seedMessages(seededFrom));
 		} catch (error) {
 			try {
 				await mirror?.dispose();
@@ -448,7 +463,7 @@ export class SideQuestionThread {
 			}
 			throw error;
 		}
-		return new SideQuestionThread(mirror, file, main, parentLocalSessionId, seededFrom, contextFallback);
+		return new SideQuestionThread(mirror, file, main, parentLocalSessionId, selectedEntries, contextFallback);
 	}
 
 	/** Run one question to its answer; follow-ups see the earlier questions, answers, and tool results. */

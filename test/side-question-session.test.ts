@@ -1,8 +1,181 @@
 import { expect, test } from "bun:test";
-import { AgentRegistry } from "@oh-my-pi/pi-coding-agent";
+import { AgentRegistry, type SessionManager } from "@oh-my-pi/pi-coding-agent";
 import { parseConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
 import { sideQuestionsAvailable } from "../extensions/side-question";
 import { callbacks, sideQuestionFixture } from "./helpers/side-question-session";
+
+type Fixture = Awaited<ReturnType<typeof sideQuestionFixture>>;
+type Entry = Parameters<SessionManager["appendMessage"]>[0];
+
+const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+
+/** Writes main-session turns the way OMP persists them, keeping the live messages rebuilt from the file as OMP does. */
+function history(fixture: Fixture) {
+	const manager = fixture.main.sessionManager;
+	const model = fixture.main.model!;
+	const append = (message: Entry) => {
+		const id = manager.appendMessage(message);
+		fixture.main.agent.replaceMessages(manager.buildSessionContext().messages);
+		return id;
+	};
+	return {
+		manager,
+		user: (text: string) => append({ role: "user", content: [{ type: "text", text }], timestamp: Date.now() } as Entry),
+		assistant: (text: string, ...calls: [id: string, name: string, args: Record<string, unknown>][]) => append({
+			role: "assistant",
+			content: [
+				...(text ? [{ type: "text", text }] : []),
+				...calls.map(([id, name, args]) => ({ type: "toolCall", id, name, arguments: args })),
+			],
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage,
+			stopReason: calls.length ? "toolUse" : "stop",
+			timestamp: Date.now(),
+		} as Entry),
+		result: (toolCallId: string, toolName: string, text: string) => append({
+			role: "toolResult",
+			toolCallId,
+			toolName,
+			content: [{ type: "text", text }],
+			isError: false,
+			timestamp: Date.now(),
+		} as Entry),
+	};
+}
+
+/**
+ * The conversation a provider request carries, one line per message, without
+ * the system prompt and the date reminder OMP puts before the first user message.
+ */
+function transcript(request: Record<string, any> | undefined): string[] {
+	return (request?.messages as Record<string, any>[] ?? [])
+		.filter(message => message.role !== "system" && message.role !== "developer")
+		.map(message => {
+			const text = (typeof message.content === "string"
+				? message.content
+				: (message.content as Record<string, any>[] ?? []).map(part => part.text ?? `[${part.type}]`).join(""))
+				.replace(/^<system-reminder>\nToday: [^]*?<\/system-reminder>/, "");
+			if (message.role === "tool") return `tool ${message.tool_call_id}: ${text}`;
+			const calls = (message.tool_calls as Record<string, any>[] ?? []).map(call => `${call.function.name}#${call.id}`);
+			return [`${message.role}:`, text, calls.length ? `[${calls.join(", ")}]` : ""].filter(Boolean).join(" ");
+		});
+}
+
+/** Asks one Side question in a new thread and returns its first request's conversation. */
+async function firstSideRequest(fixture: Fixture): Promise<string[]> {
+	const before = fixture.requests.length;
+	const thread = await fixture.open();
+	expect(await thread.ask("side-question-prompt", callbacks(), AbortSignal.timeout(5_000))).toBe("answered by main");
+	return transcript(fixture.requests[before]);
+}
+
+/** OMP's eval runtime snapshot, persisted after a history rewrite of a branch with eval calls. */
+const evalState = expect.stringMatching(/^user: <system-reminder>\nEval runtime state is host-retained/);
+
+/**
+ * Browses the tree as a user does: an eval branch, then a later turn on
+ * another branch, then back to the eval branch. Revisiting moves onto the
+ * snapshot OMP persisted on the first visit, so the selected entry is not the
+ * file's last one.
+ */
+async function backToEvalBranch(fixture: Fixture) {
+	const turn = history(fixture);
+	turn.user("eval-branch-question");
+	turn.assistant("", ["call_eval_a", "eval", { language: "python", code: "x = 1" }]);
+	const evalResult = turn.result("call_eval_a", "eval", "eval-branch-result");
+	turn.manager.resetLeaf();
+	turn.user("abandoned-branch-question");
+	const abandoned = turn.assistant("abandoned-branch-answer");
+	await fixture.main.navigateTree(evalResult);
+	await fixture.main.navigateTree(abandoned);
+	await fixture.main.prompt("abandoned-follow-up");
+	await fixture.main.waitForIdle();
+	await fixture.main.navigateTree(evalResult);
+	const entries = turn.manager.getEntries();
+	expect(turn.manager.getLeafId()).not.toBe(entries.at(-1)?.id);
+}
+
+const evalBranch = [
+	"user: eval-branch-question",
+	"assistant: [eval#call_eval_a]",
+	"tool call_eval_a: eval-branch-result",
+	evalState,
+];
+
+test("a Side question after compaction sees the compacted history, kept turns, and the eval state persisted after it", async () => {
+	const fixture = await sideQuestionFixture();
+	try {
+		const turn = history(fixture);
+		turn.user("compacted-question");
+		turn.assistant("", ["call_eval_old", "eval", { language: "python", code: "x = 1" }]);
+		turn.result("call_eval_old", "eval", "compacted-eval-result");
+		turn.assistant(`compacted-answer ${"detail ".repeat(40_000)}`);
+		turn.user("kept-question");
+		turn.assistant("kept-answer");
+		await fixture.main.compact();
+
+		expect(await firstSideRequest(fixture)).toEqual([
+			expect.stringMatching(/^user: .*compacted-question.*compacted-eval-result.*compacted-answer/s),
+			"user: kept-question",
+			"assistant: kept-answer",
+			evalState,
+			"user: side-question-prompt",
+		]);
+	} finally { await fixture.dispose(); }
+}, 30_000);
+
+test("a Side question after a /tree jump to an eval branch and a prompt sees that branch, not the abandoned one", async () => {
+	const fixture = await sideQuestionFixture();
+	try {
+		await backToEvalBranch(fixture);
+		await fixture.main.prompt("after-the-jump");
+		await fixture.main.waitForIdle();
+
+		expect(await firstSideRequest(fixture)).toEqual([
+			...evalBranch,
+			"user: after-the-jump",
+			"assistant: answered by main",
+			"user: side-question-prompt",
+		]);
+	} finally { await fixture.dispose(); }
+}, 30_000);
+
+test("a Side question after a /tree jump with no new prompt follows the selected branch, not the file's last one", async () => {
+	const fixture = await sideQuestionFixture();
+	try {
+		await backToEvalBranch(fixture);
+
+		expect(await firstSideRequest(fixture)).toEqual([...evalBranch, "user: side-question-prompt"]);
+	} finally { await fixture.dispose(); }
+}, 30_000);
+
+test("a pending main ask and bash stay open to the Side question, with no repeat and no failure", async () => {
+	const fixture = await sideQuestionFixture();
+	try {
+		const turn = history(fixture);
+		turn.user("pick-a-target");
+		turn.assistant(
+			"",
+			["call_read", "read", { path: "deploy.md" }],
+			["call_ask", "ask", { html: "<form><input type=\"radio\" name=\"target\" value=\"prod\"></form>" }],
+			["call_bash", "bash", { command: "make build" }],
+		);
+		turn.result("call_read", "read", "deploy-notes");
+		// Mid-turn, the main agent still holds the calls it waits on.
+		fixture.main.agent.replaceMessages(turn.manager.buildSessionContext({ inFlightToolCallIds: new Set(["call_ask", "call_bash"]) }).messages);
+
+		expect(await firstSideRequest(fixture)).toEqual([
+			"user: pick-a-target",
+			"assistant: [read#call_read, ask#call_ask, bash#call_bash]",
+			"tool call_read: deploy-notes",
+			"tool call_ask: The user is answering this question in the Picker now. The answer is not known here. Do not call ask again.",
+			"tool call_bash: This call is still running in the main conversation. Its result is not known here. Do not call it again.",
+			"user: side-question-prompt",
+		]);
+	} finally { await fixture.dispose(); }
+}, 30_000);
 
 test("a remote session handle in the registry makes Side questions unavailable without touching it", async () => {
 	const fixture = await sideQuestionFixture();
@@ -64,14 +237,20 @@ test("a Side question follows its role chain after the live main model failed an
 	} finally { await fixture.dispose(); }
 }, 30_000);
 
-test("seeded live history that cannot fit the selected model uses the main model without losing its branch", async () => {
+test("persisted history that cannot fit the selected model uses the main model without losing its branch", async () => {
 	const fixture = await sideQuestionFixture({ spec: "@smol", window: 1_024 });
 	try {
-		fixture.main.agent.replaceMessages([{ role: "user", content: `live-selected-branch ${"history ".repeat(8_000)}`, timestamp: 1 }]);
+		const turn = history(fixture);
+		turn.user(`selected-branch ${"history ".repeat(8_000)}`);
+		turn.assistant("selected-answer");
 		const thread = await fixture.open();
 		expect(await thread.ask("Answer briefly.", callbacks(), AbortSignal.timeout(5_000))).toBe("answered by main");
-		expect(JSON.stringify(fixture.requests[0]?.messages)).toContain("live-selected-branch");
-		expect(fixture.main.agent.state.messages).toHaveLength(1);
+		expect(transcript(fixture.requests[0])).toEqual([
+			expect.stringMatching(/^user: selected-branch (history ){8000}$/),
+			"assistant: selected-answer",
+			"user: Answer briefly.",
+		]);
+		expect(fixture.main.agent.state.messages).toHaveLength(2);
 	} finally { await fixture.dispose(); }
 }, 30_000);
 

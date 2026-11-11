@@ -98,6 +98,14 @@
   check that the registry's main session is a local session of this process,
   not a remote session handle; otherwise `/btw` goes to OMP's own and the
   Picker btw stays off.
+- Side questions now build their history only from the saved main transcript,
+  not from a copy of the main agent's live messages. OMP saves the eval state
+  it adds after `/tree` and compaction since 18.18.2, and 18.18.8 is the
+  verified host. A Side question follows the branch selected in `/tree`, also
+  with no new prompt, rather than the transcript's last branch, and fails to
+  open if the selected entry is not in the saved transcript. A pending `ask`
+  or a running tool still shows to it as open, with an instruction not to call
+  it again.
 
 - Updated the SDK types to OMP 18.13.3 and synchronized the `ask` description
   with upstream's instruction to show decision context before blocking.

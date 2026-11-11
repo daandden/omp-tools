@@ -464,9 +464,12 @@ tool keeps its own size limits, and there is no cap on rounds. `read
 agent://<id>` reads the main session's agents, including one still running
 that has no output yet.
 
-Each thread copies the live conversation and uses OMP's default system prompt
-for its five tools. A call the main agent still waits on (a pending `ask`, or a
-tool still running) shows to the Side question as still open, not as failed.
+Each thread starts from the saved transcript on the branch you have selected,
+including after `/tree` with no new prompt, and uses OMP's default system
+prompt for its five tools. It sees the eval state OMP saves after `/tree` and
+compaction. A call the main agent still waits on (a pending `ask`, or a tool
+still running) shows to the Side question as still open, not as failed, with
+an instruction not to ask you again or repeat the call.
 Images attached to `/btw` go with the question and stay in the thread for
 follow-ups, as pasted images do in a Picker btw.
 
