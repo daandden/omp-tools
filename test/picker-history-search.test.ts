@@ -1,11 +1,12 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { CustomEditor, type ExtensionAskDialogQuestion, type ExtensionUIContext, Settings } from "@oh-my-pi/pi-coding-agent";
+import { CustomEditor, type ExtensionUIContext, Settings } from "@oh-my-pi/pi-coding-agent";
 import { SelectorController } from "@oh-my-pi/pi-coding-agent/modes/controllers/selector-controller";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
 import { type Component, Container, type Terminal, TUI } from "@oh-my-pi/pi-tui";
 import type { HistorySearchEntry } from "@oh-my-pi/pi-tui/overlays/history-search";
 import { getEditorTheme, initTheme } from "@oh-my-pi/pi-tui/theme";
-import { showMarkdownAskDialog } from "../extensions/ask-dialog";
+import { showPicker } from "../extensions/ask-dialog";
+import { type AskForm, readHtmlForm } from "../extensions/ask-form";
 import type { AskPickerBtw } from "../extensions/picker-btw";
 
 beforeAll(async () => {
@@ -17,22 +18,24 @@ const ESC = "\x1b";
 const ENTER = "\r";
 const CTRL_R = "\x12";
 
-const store: ExtensionAskDialogQuestion = {
-	id: "store",
-	question: "Where should drafts live?",
-	options: [{ label: "Memory" }, { label: "Disk" }],
-};
-const keep: ExtensionAskDialogQuestion = {
-	id: "keep",
-	question: "What should a draft keep?",
-	options: [{ label: "Picks" }, { label: "Notes" }],
-};
+const STORE = `<p>Where should drafts live?</p>
+	<label><input type="radio" name="store" value="memory"> Memory</label>
+	<label><input type="radio" name="store" value="disk"> Disk</label>`;
+const KEEP = `<p>What should a draft keep?</p>
+	<label><input type="radio" name="keep" value="picks"> Picks</label>
+	<label><input type="radio" name="keep" value="notes"> Notes</label>`;
+
+function form(...questions: string[]): AskForm {
+	const read = readHtmlForm(`<form>${questions.join("\n")}</form>`);
+	if (read.kind !== "form") throw new Error(`not a Picker form: ${read.kind}`);
+	return read.form;
+}
 
 /**
  * The Picker in the host's editor slot, with the host's own Ctrl+R history
  * search (`SelectorController.showHistorySearch`) over a fixed global history.
  */
-function openPicker(questions: ExtensionAskDialogQuestion[] = [store], askBtw?: AskPickerBtw) {
+function openPicker(questions: string[] = [STORE], askBtw?: AskPickerBtw) {
 	const terminal = new Proxy({ rows: 40, columns: 100 } as Record<string | symbol, unknown>, {
 		get: (target, key) => (key in target ? target[key] : () => {}),
 	}) as unknown as Terminal;
@@ -69,7 +72,7 @@ function openPicker(questions: ExtensionAskDialogQuestion[] = [store], askBtw?: 
 				ui.setFocus(picker);
 			}),
 	} as unknown as ExtensionUIContext;
-	const result = showMarkdownAskDialog(extensionUi, questions, {
+	const result = showPicker(extensionUi, form(...questions), {
 		cwd: process.cwd(),
 		notify() {},
 		autocomplete: () => undefined,
@@ -93,7 +96,10 @@ describe("Ctrl+R history search in a Picker editor", () => {
 		const submitted = await picker.result;
 		expect(submitted).toMatchObject({
 			kind: "submit",
-			results: [{ selectedOptions: ["Memory"], notes: [{ option: "Memory", note: "a prompt from history edited" }] }],
+			answer: {
+				data: { store: "memory" },
+				questions: [{ picked: [0], notes: [{ option: "Memory", text: "a prompt from history edited" }] }],
+			},
 		});
 		expect(picker.composer.getText()).toBe("half-typed main prompt");
 	});
@@ -103,7 +109,7 @@ describe("Ctrl+R history search in a Picker editor", () => {
 		picker.press("n", ..."draft", CTRL_R, ESC, ..." kept", ENTER, ENTER);
 		expect(await picker.result).toMatchObject({
 			kind: "submit",
-			results: [{ notes: [{ option: "Memory", note: "draft kept" }] }],
+			answer: { questions: [{ notes: [{ option: "Memory", text: "draft kept" }] }] },
 		});
 	});
 
@@ -112,7 +118,7 @@ describe("Ctrl+R history search in a Picker editor", () => {
 		picker.press("n", ..."draft", CTRL_R, ESC, CTRL_R, ENTER, ENTER, ENTER);
 		expect(await picker.result).toMatchObject({
 			kind: "submit",
-			results: [{ notes: [{ option: "Memory", note: "a prompt from history" }] }],
+			answer: { questions: [{ notes: [{ option: "Memory", text: "a prompt from history" }] }] },
 		});
 		expect(picker.composer.getText()).toBe("half-typed main prompt");
 	});
@@ -122,24 +128,24 @@ describe("Ctrl+R history search in a Picker editor", () => {
 		picker.press("j", "j", ENTER, ..."draft", CTRL_R, ENTER, ..." edited", ENTER, ENTER);
 		expect(await picker.result).toMatchObject({
 			kind: "submit",
-			results: [{ selectedOptions: [], customInput: "a prompt from history edited" }],
+			answer: { questions: [{ picked: [], other: { text: "a prompt from history edited" } }] },
 		});
 		expect(picker.composer.getText()).toBe("half-typed main prompt");
 	});
 
 	test("the Submit note takes the picked entry", async () => {
-		const picker = openPicker([store, keep]);
+		const picker = openPicker([STORE, KEEP]);
 		picker.press(ENTER, ENTER, "n", ..."draft", CTRL_R, ENTER, ENTER, ENTER);
 		expect(await picker.result).toMatchObject({
 			kind: "submit",
-			submitNote: { text: "a prompt from history" },
+			answer: { submitNote: { text: "a prompt from history" } },
 		});
 		expect(picker.composer.getText()).toBe("half-typed main prompt");
 	});
 
 	test("a Picker btw question takes the picked entry", async () => {
 		const asked: string[] = [];
-		const picker = openPicker([store], async request => {
+		const picker = openPicker([STORE], async request => {
 			asked.push(request.promptText);
 			return "an answer";
 		});
@@ -149,7 +155,7 @@ describe("Ctrl+R history search in a Picker editor", () => {
 		expect(asked[0]).not.toContain("draft");
 		await Bun.sleep(0);
 		picker.press(ESC, ENTER);
-		expect(await picker.result).toMatchObject({ kind: "submit", results: [{ selectedOptions: ["Memory"] }] });
+		expect(await picker.result).toMatchObject({ kind: "submit", answer: { questions: [{ picked: [0] }] } });
 		expect(picker.composer.getText()).toBe("half-typed main prompt");
 	});
 });

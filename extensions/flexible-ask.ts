@@ -1,93 +1,54 @@
-// Flexible Ask: shadow the built-in `ask` tool with option guidance that
-// states no count and a full-Markdown picker.
+// Flexible Ask: shadow the built-in `ask` tool. It takes native ask's HTML
+// form, and ./flexible-ask.md mirrors upstream's model-facing description
+// (`packages/coding-agent/src/prompts/tools/ask.md`) except where the Picker
+// differs (README "Differences from native `ask`").
 //
-// Minimal-diff contract: ./flexible-ask.md mirrors
-// `packages/coding-agent/src/prompts/tools/ask.md` verbatim except one
-// deviation: the option count ("2–5 distinct options each" -> "distinct
-// options", no number). Keep it that way; any other prose drift is a bug.
-// Prompt lives in a static .md, never built in code.
-//
-// Execution: in the interactive TUI the wrapper shows its own picker
-// (./ask-dialog.ts) because the native dialog flattens questions to one
-// inline paragraph and cannot be restyled from an extension. Everywhere else
-// (RPC/ACP/print, subagents) and for inputs the native tool rejects, it
-// delegates to the native tool through `ctx.invokeTool`.
-import type {
-	AgentToolResult,
-	AskToolDetails,
-	ExtensionAPI,
-	ExtensionAskDialogQuestion,
-	ExtensionContext,
-	ToolDefinition,
-} from "@oh-my-pi/pi-coding-agent";
+// Execution: in the interactive TUI the wrapper answers the form in its own
+// Picker (./ask-dialog.ts), which keeps Notes on unpicked options, pasted
+// images, the Submit note, Picker drafts, and the Picker btw. Everywhere else
+// (RPC/ACP/print, subagents) and for forms native answers with its own error,
+// it passes the HTML to the native tool through `ctx.invokeTool`.
+import type { AgentToolResult, AskToolDetails, ExtensionAPI, ExtensionContext, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
 import { askToolRenderer, discoverSlashCommands, logger, settings } from "@oh-my-pi/pi-coding-agent";
 import { cfgAskNotify, cfgAskTimeout } from "@oh-my-pi/pi-coding-agent/modes/settings";
 import { ToolAbortError } from "@oh-my-pi/pi-coding-agent/tools/tool-errors";
 import { type AutocompleteProvider, span, TERMINAL, text } from "@oh-my-pi/pi-tui";
 import type { NativeToolView } from "@oh-my-pi/pi-tui/tools/renderer";
-import type { MarkdownAskResult } from "./ask-dialog";
-import { nativeRejects, sanitizeQuestions } from "./ask-questions";
-import { formatAskAnswers, joinOptionNotes } from "./ask-result";
+import { type AskForm, readHtmlForm } from "./ask-form";
+import { type AskResultDetails, askToolResult } from "./ask-result";
 import { askInPicker, routeHostAskDialog } from "./host-ask-dialog";
 import { pickerBtwRunner } from "./picker-btw";
 import { openPicker, PickerDraftSlot, type PickerSession } from "./picker-draft";
 import flexibleAskDescription from "./flexible-ask.md" with { type: "text" };
 
-/** One answered question, in the shape native ask recorded before HTML forms. */
-interface PickerQuestionResult {
-	id: string;
-	question: string;
-	options: string[];
-	multi: boolean;
-	selectedOptions: string[];
-	customInput?: string;
-	note?: string;
-	timedOut?: boolean;
-}
-
-/** Picker answers: one question inline, several under `results`. */
-type PickerAskDetails = Omit<PickerQuestionResult, "id"> | { results: PickerQuestionResult[] };
-
-/** Native ask details (from delegation) or Picker details, plus the Submit note, which only the picker writes. */
-type FlexibleAskDetails = (AskToolDetails | PickerAskDetails) & {
-	/** Shown on the Tern card; the model reads it in the result text. */
-	submitNote?: string;
-};
-
-/** Native ask's card reads only HTML form args, which a `questions` call never has. */
-const NO_FORM: Parameters<typeof askToolRenderer.describeCall>[0] = {};
+/** Native ask details (from delegation) or the Picker's, which add the Picker's channels. */
+type FlexibleAskDetails = AskToolDetails & Partial<Omit<AskResultDetails, keyof AskToolDetails>>;
 
 /** Result views, keyed by `details` so an unchanged card keeps its nodes. */
 const resultViews = new WeakMap<FlexibleAskDetails, NativeToolView | undefined>();
-/** Views with a plain head target, keyed by the native view they rewrite. */
-const plainTargetViews = new WeakMap<NativeToolView, NativeToolView>();
 
-const HEADING_MARKER = /^\s*#{1,6}\s+/;
-
-/** Native ask heads the card with the question's first line; drop its Markdown heading marker. */
-function withPlainTarget(view: NativeToolView | undefined): NativeToolView | undefined {
-	const target = view?.tool?.target;
-	if (!view || typeof target !== "string" || !HEADING_MARKER.test(target)) return view;
-	let plain = plainTargetViews.get(view);
-	if (!plain) {
-		plain = { ...view, tool: { ...view.tool, target: target.replace(HEADING_MARKER, "") } };
-		plainTargetViews.set(view, plain);
-	}
-	return plain;
+/** What native ask's card draws: its answers, every Note (unpicked ones marked), and the timeout marker. */
+function cardDetails(details: FlexibleAskDetails | undefined): AskToolDetails | undefined {
+	if (!details) return undefined;
+	const unpicked = (details.unpickedNotes ?? []).map(note => ({ ...note, option: `${note.option} (not picked)` }));
+	const notes = [...(details.notes ?? []), ...unpicked];
+	return {
+		answers: details.answers,
+		...(notes.length > 0 ? { notes } : {}),
+		...(details.timedOut ? { timedOut: true } : {}),
+	};
 }
 
 /** The native ask card for the result, with the Submit note below the answers. */
-function describeAskResult(result: AgentToolResult<FlexibleAskDetails>): NativeToolView | undefined {
+function describeAskResult(
+	result: AgentToolResult<FlexibleAskDetails>,
+	args: { html?: string } | undefined,
+): NativeToolView | undefined {
 	const details = result.details;
 	if (details && resultViews.has(details)) return resultViews.get(details);
-	// Native draws answers only from its own details; Picker details fall back to the result text.
-	const view = askToolRenderer.describeResult(
-		details && "answers" in details ? { content: result.content, details } : { content: result.content },
-		undefined,
-		NO_FORM,
-	);
+	const view = askToolRenderer.describeResult({ content: result.content, details: cardDetails(details) }, undefined, args);
 	const note = details?.submitNote;
-	const withNote =
+	const described =
 		view && note
 			? {
 					...view,
@@ -100,9 +61,16 @@ function describeAskResult(result: AgentToolResult<FlexibleAskDetails>): NativeT
 					],
 				}
 			: view;
-	const described = withPlainTarget(withNote);
 	if (details) resultViews.set(details, described);
 	return described;
+}
+
+/** The classic card's details: native's, with the Submit note as a last answer row. */
+function classicDetails(details: FlexibleAskDetails | undefined): AskToolDetails | undefined {
+	const card = cardDetails(details);
+	const note = details?.submitNote;
+	if (!card || !note) return card;
+	return { ...card, answers: [...card.answers, { name: "", question: "Note on all answers", answer: note }] };
 }
 
 /**
@@ -121,12 +89,12 @@ async function loadFileCommandNames(cwd: string): Promise<ReadonlySet<string>> {
 	}
 }
 
-async function askWithMarkdownDialog(
+async function askWithPicker(
 	ctx: ExtensionContext,
-	questions: ExtensionAskDialogQuestion[],
+	form: AskForm,
 	signal: AbortSignal | undefined,
 	session: PickerSession,
-): Promise<AgentToolResult<FlexibleAskDetails>> {
+): Promise<AgentToolResult<AskResultDetails>> {
 	const timeoutSeconds = cfgAskTimeout.get(settings);
 	if (cfgAskNotify.get(settings) !== "off") {
 		TERMINAL.sendNotification({
@@ -138,9 +106,9 @@ async function askWithMarkdownDialog(
 		});
 	}
 
-	let picked: MarkdownAskResult | undefined;
+	let picked: Awaited<ReturnType<typeof openPicker>>;
 	try {
-		picked = await openPicker(ctx.ui, questions, session, {
+		picked = await openPicker(ctx.ui, form, session, {
 			timeout: timeoutSeconds > 0 ? timeoutSeconds * 1000 : undefined,
 			signal,
 			notify: message => ctx.ui.notify(message, "warning"),
@@ -153,72 +121,13 @@ async function askWithMarkdownDialog(
 		ctx.abort();
 		throw new ToolAbortError("Ask tool was cancelled by the user");
 	}
-	const dialogResult = picked;
-
-	const results: PickerQuestionResult[] = questions.map((question, index) => {
-		const answer = dialogResult.results[index];
-		const note = joinOptionNotes(answer?.notes ?? []);
-		return {
-			id: question.id,
-			question: question.question,
-			options: question.options.map(option => option.label),
-			multi: question.multi ?? false,
-			selectedOptions: answer?.selectedOptions ?? [],
-			customInput: answer?.customInput,
-			note,
-			timedOut: answer?.timedOut,
-		};
-	});
-	const submitNote = dialogResult.submitNote;
-	const text = formatAskAnswers(questions, dialogResult.results, submitNote?.text);
-	// Pasted images follow the answer text, each introduced by the label the
-	// user's text refers to (`[Image #N]`), plus its file path when pasted from disk.
-	const images = [...dialogResult.results.flatMap(answer => answer.images), ...(submitNote?.images ?? [])];
-	const imageBlocks: AgentToolResult<FlexibleAskDetails>["content"] = images.flatMap(({ label, image, source }) => [
-		{ type: "text" as const, text: source ? `${label} ${source}` : label },
-		image,
-	]);
-	const [single] = results;
-	if (results.length === 1 && single) {
-		// An empty multi-select submission is a valid "select none" answer;
-		// only an empty single-select counts as cancellation.
-		if (!single.timedOut && !single.multi && single.selectedOptions.length === 0 && single.customInput === undefined) {
-			ctx.abort();
-			throw new ToolAbortError("Ask tool was cancelled by the user");
-		}
-		const details: FlexibleAskDetails = {
-			question: single.question,
-			options: single.options,
-			multi: single.multi,
-			selectedOptions: single.selectedOptions,
-			customInput: single.customInput,
-			note: single.note,
-			timedOut: single.timedOut,
-			submitNote: submitNote?.text,
-		};
-		return { content: [{ type: "text", text }, ...imageBlocks], details };
-	}
-	return { content: [{ type: "text", text }, ...imageBlocks], details: { results, submitNote: submitNote?.text } };
+	return askToolResult(picked.answer);
 }
 
 export default function flexibleAsk(pi: ExtensionAPI) {
 	const type = pi.arktype;
-	const parameters = type({
-		questions: type({
-			id: "string",
-			question: "string",
-			"header?": "string",
-			options: type({
-				label: "string",
-				"description?": "string",
-				"preview?": "string",
-			}).array(),
-			"multi?": "boolean",
-			"recommended?": "number",
-		})
-			.array()
-			.atLeastLength(1),
-	});
+	// Native ask's schema; any other key (the old `questions`) is refused.
+	const parameters = type({ "+": "reject", html: type("string").describe("one HTML <form>") });
 
 	const drafts = new PickerDraftSlot();
 	const dropDraft = () => drafts.drop();
@@ -274,16 +183,19 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 		// Native ask is read-tier; omitted defaults to exec and would
 		// re-prompt/deny differently. Keep the tier.
 		approval: "read",
-		// Tern draws the card with native ask's views, so it reads the same as a native ask.
-		describeCall: () => withPlainTarget(askToolRenderer.describeCall(NO_FORM)),
-		describeResult: result => describeAskResult(result),
+		// The card is native ask's, so it reads the same as a native ask.
+		describeCall: args => askToolRenderer.describeCall(args),
+		describeResult: (result, _options, args) => describeAskResult(result, args),
+		renderCall: (args, options, theme) => askToolRenderer.renderCall(args, options, theme),
+		renderResult: (result, options, theme, args) =>
+			askToolRenderer.renderResult({ content: result.content, details: classicDetails(result.details) }, options, theme, args),
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			if (!ctx.invokeTool) throw new Error("Native ask tool unavailable for delegation");
-			const questions = sanitizeQuestions(params.questions);
-			if (ctx.mode !== "tui" || !ctx.hasUI || nativeRejects(questions)) {
-				return ctx.invokeTool<AskToolDetails>(params, { signal, onUpdate });
-			}
-			return askWithMarkdownDialog(ctx, questions, signal, pickerSession(ctx));
+			if (ctx.mode !== "tui" || !ctx.hasUI) return ctx.invokeTool<AskToolDetails>(params, { signal, onUpdate });
+			const read = readHtmlForm(params.html);
+			if (read.kind === "empty") return ctx.invokeTool<AskToolDetails>(params, { signal, onUpdate });
+			if (read.kind === "unsupported") throw new Error(read.error);
+			return askWithPicker(ctx, read.form, signal, pickerSession(ctx));
 		},
 	};
 	// `concurrency` and `mergeCallAndResult` are not part of the extension

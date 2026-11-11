@@ -18,6 +18,7 @@ beforeAll(async () => {
 
 const ESC = "\x1b";
 const ENTER = "\r";
+const IMAGE = { type: "image" as const, mimeType: "image/png", data: "iVBORw0KGgo=" };
 
 const approval: ExtensionAskDialogQuestion[] = [
 	{
@@ -34,11 +35,14 @@ const approval: ExtensionAskDialogQuestion[] = [
 
 function routedHost() {
 	let picker: Component | undefined;
+	let focused: (Component & { attachImage?(image: unknown): unknown; pasteText?(text: string): void }) | undefined;
 	const tui = {
 		terminal: { rows: 40, columns: 100, write() {} },
 		getShowHardwareCursor: () => false,
 		requestRender() {},
-		setFocus() {},
+		setFocus(component: Component) {
+			focused = component;
+		},
 	} as unknown as TUI;
 	const nativeCalls: ExtensionAskDialogQuestion[][] = [];
 	let pickers = 0;
@@ -56,6 +60,7 @@ function routedHost() {
 				pickers++;
 				options?.signal?.addEventListener("abort", () => reject(options.signal?.reason), { once: true });
 				picker = factory(tui, undefined, undefined, resolve);
+				focused = picker;
 			}),
 		notify() {},
 	} as unknown as ExtensionUIContext;
@@ -85,6 +90,11 @@ function routedHost() {
 		nativeCalls,
 		pickers: () => pickers,
 		render: () => picker?.render(100).join("\n") ?? "",
+		/** Pastes an image into the focused component, as the host's paste contract does. */
+		pasteImage: () => {
+			const marker = focused?.attachImage?.(IMAGE);
+			if (typeof marker === "string") focused?.pasteText?.(marker);
+		},
 	};
 }
 
@@ -178,6 +188,25 @@ describe("host askDialog in the picker", () => {
 		const result = await answer;
 		if (result?.kind !== "submit") throw new Error("the picker did not submit");
 		expect(result.results[0]).toMatchObject({ id: "step\r1", options: ["Ship\rit", "Wait"], selectedOptions: ["Ship\rit"] });
+	});
+
+	test("images pasted into a note and into the Other answer go back as noteImages and customInputImages", async () => {
+		const host = routedHost();
+		const answer = host.ask();
+		await host.press("n");
+		host.pasteImage();
+		await host.press(ENTER, "j", "j", "j", ENTER);
+		host.pasteImage();
+		await host.press(ENTER, ENTER);
+		const result = await answer;
+		if (result?.kind !== "submit") throw new Error("the picker did not submit");
+		expect(result.results[0]).toMatchObject({
+			selectedOptions: [],
+			customInput: "[Image #2]",
+			customInputImages: [IMAGE],
+			note: "Approve (not picked): [Image #1]",
+			noteImages: [IMAGE],
+		});
 	});
 
 	test("routes in any order never stack: one picker per ask, and the host's dialog once every route ended", async () => {

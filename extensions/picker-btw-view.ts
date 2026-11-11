@@ -11,8 +11,8 @@ import {
 	text,
 } from "@oh-my-pi/pi-tui";
 import { theme } from "@oh-my-pi/pi-tui/theme";
-import type { AskImage } from "./ask-dialog";
 import { AnswerEditor, externalEditorKey, scrollBox, withoutSideBorders } from "./ask-editor";
+import type { AskImage } from "./ask-form";
 import { loadImagePaths, type PasteOutcome, type PastedImage, readClipboardPaste } from "./ask-images";
 import { type AskPickerBtw, numberImagesByAppearance, renderPickerBtwPrompt } from "./picker-btw";
 import { answerInto, isInterruptKey, newTurn, type SideQuestionTurn, SideQuestionTurnView } from "./side-question-view";

@@ -1,21 +1,19 @@
-// Interactive ask dialog with full-Markdown questions, option descriptions,
-// and previews. Mirrors the native pi-tui AskDialogComponent (tabs, Submit
-// review tab, multi-select, "Other" custom input, notes, timeout countdown),
-// but renders the question as block Markdown inside the scrollable body
-// instead of a condensed inline header. In Tern (Surface Protocol terminals)
-// it describes the same state as native nodes instead (`describe`): each
-// option is a card with its Markdown, and pointer actions run the key paths.
+// The Picker: the interactive TUI's answer surface for an `ask` form and for
+// the host's structured askDialog. Mirrors the native pi-tui ask dialog (tabs,
+// Submit review tab, multi-select, "Other" custom input, notes, timeout
+// countdown), one tab per question with the question's context as block
+// Markdown and pictures in the scrollable body. In Tern (Surface Protocol
+// terminals) it describes the same state as native nodes instead
+// (`describe`): each option is a row, and pointer actions run the key paths.
+//
+// What a form means (fields, values, validation, the answer) lives in
+// `ask-form.ts`; this file draws it and turns keys into its state changes.
 //
 // Runtime imports resolve to the host's in-process pi-tui/coding-agent
-// modules through OMP's extension specifier shim; they must stay on exported
-// package subpaths (`@oh-my-pi/pi-tui`, `/chrome`, `/render`, `/theme`).
+// modules through OMP's extension specifier shim; they must stay on subpaths
+// the compiled host serves (see AGENTS.md "SDK imports").
 import type { ImageContent } from "@oh-my-pi/pi-ai";
-import type {
-	CustomEditor,
-	ExtensionAskDialogQuestion,
-	ExtensionAskDialogResultItem,
-	ExtensionUIContext,
-} from "@oh-my-pi/pi-coding-agent";
+import type { CustomEditor, ExtensionUIContext } from "@oh-my-pi/pi-coding-agent";
 import { getEditorCommand, openInEditor } from "@oh-my-pi/pi-coding-agent/utils/external-editor";
 import {
 	type AutocompleteProvider,
@@ -29,14 +27,12 @@ import {
 	kbd,
 	Markdown,
 	matchesKey,
-	md,
 	type NativeChild,
 	type NativeNode,
 	type NativeScroll,
 	type NativeUiEvent,
 	node,
 	padding,
-	renderInlineMarkdown,
 	replaceTabs,
 	ScrollView,
 	span,
@@ -58,17 +54,41 @@ import {
 	PanelDivider,
 	PanelRows,
 } from "@oh-my-pi/pi-tui/chrome";
-import { disambiguateDisplayLabels, sanitizeCarriageReturns } from "@oh-my-pi/pi-tui/render";
+import { sanitizeCarriageReturns } from "@oh-my-pi/pi-tui/render";
 import { getMarkdownTheme, highlightCode, theme } from "@oh-my-pi/pi-tui/theme";
 import { AnswerEditor, externalEditorKey, SCROLL_BOX_CSS, scrollBox, withoutSideBorders } from "./ask-editor";
+import {
+	type AnswerState,
+	type AnswerText,
+	type AskForm,
+	type AskFormAnswer,
+	type AskImage,
+	type AskPicture,
+	type AskQuestion,
+	answerParts,
+	type FormSpan,
+	firstInvalid,
+	formAnswer,
+	initialAnswer,
+	initialCursor,
+	isAnswered,
+	optionText,
+	pickOption,
+	pickOther,
+	setNote,
+	setOther,
+	unpickOption,
+} from "./ask-form";
 import { loadImagePaths, type PasteOutcome, type PastedImage, readClipboardPaste } from "./ask-images";
-import { OTHER_OPTION, RESERVED_LABELS } from "./ask-questions";
-import { formatAskAnswers } from "./ask-result";
+import { AskPictures } from "./ask-pictures";
+import { formatAskAnswer } from "./ask-result";
 import type { AskPickerBtw } from "./picker-btw";
 import { PickerBtwView } from "./picker-btw-view";
 import type { SideQuestionTurn } from "./side-question-view";
 
 const SUBMIT_OPTION = "Submit";
+/** The row of a question's Other answer. */
+export const OTHER_OPTION = "Other (type your own)";
 const RECOMMENDED_SUFFIX = " (Recommended)";
 /** Fraction of the terminal the dialog occupies (the native dialog's cap). */
 const DIALOG_HEIGHT_RATIO = 0.7;
@@ -90,48 +110,22 @@ const NATIVE_ROW_GAP_LINES = 0.5;
 /** The same with the picker's sheet: 2px of padding above and below each row, on a 16px line. */
 const NATIVE_STYLED_ROW_LINES = 0.25;
 
-/** An image attached to a custom answer or note, referenced by `label` in its text. */
-export interface AskImage extends PastedImage {
-	label: string;
-}
-
-/** A note on one option; every note is sent, `picked` tells whether its option is picked. */
-export interface OptionNote {
-	option: string;
-	note: string;
-	picked: boolean;
-}
-
-export interface MarkdownAskResultItem
-	extends Omit<ExtensionAskDialogResultItem, "note" | "noteImages" | "customInputImages"> {
-	/** Notes in option order, picked or not. */
-	notes: OptionNote[];
-	images: AskImage[];
-}
-
-/** Free text written on the Submit tab for the whole ask. */
-export interface SubmitNote {
-	text: string;
-	images: AskImage[];
-}
-
-export interface MarkdownAskResult {
+export interface PickerSubmit {
 	kind: "submit";
-	results: MarkdownAskResultItem[];
-	submitNote: SubmitNote | undefined;
+	answer: AskFormAnswer;
 }
 
 /** Esc (or Cancel) closed the Picker; `draft` is what it keeps. */
-export interface MarkdownAskCancel {
+export interface PickerCancel {
 	kind: "cancel";
 	draft: PickerDraft;
 }
 
-/** A Picker draft: what a Picker that Esc closed keeps, so the same questions open where it was left. */
+/** A Picker draft: what a Picker that Esc closed keeps, so the same form opens where it was left. */
 export interface PickerDraft {
 	states: QuestionState[];
 	activeTab: number;
-	submitNote: Draft | undefined;
+	submitNote: AnswerText | undefined;
 	/** `[Image #N]` labels given so far; new pastes continue after them. */
 	imageCount: number;
 	/** The Picker btw turns shown so far; the caller keeps the thread that answered them. */
@@ -140,9 +134,9 @@ export interface PickerDraft {
 
 interface DialogOptions {
 	timeout?: number;
-	/** Called once when the timeout expires, before it picks answers (native `onTimeout`). */
+	/** Called once when the timeout expires, before the Picker submits (native `onTimeout`). */
 	onTimeout?: () => void;
-	/** Resolves relative pasted image paths. */
+	/** Resolves relative pasted image paths and form pictures. */
 	cwd: string;
 	/** Surfaces paste failures (unsupported format, missing file, empty clipboard). */
 	notify(message: string): void;
@@ -152,54 +146,43 @@ interface DialogOptions {
 	fileCommands: ReadonlySet<string>;
 	/** Picker btw side questions; `undefined` when the host has no side turns (`?` is then off). */
 	askBtw: AskPickerBtw | undefined;
-	/** A Picker draft of these questions to open with. */
+	/** A Picker draft of this form to open with. */
 	draft?: PickerDraft;
 }
 
-/** Text written in the picker editor, with the images its labels refer to. */
-interface Draft {
-	text: string;
-	images: AskImage[];
-}
-
-interface QuestionState {
-	selectedOptions: Set<string>;
-	/** The `Other` text; kept when `Other` is un-picked. */
-	other: Draft | undefined;
-	otherPicked: boolean;
-	/** Notes by option index; kept through select and deselect. */
-	notes: Map<number, Draft>;
+/** One question's answer state plus where the Picker stands in it. */
+interface QuestionState extends AnswerState {
 	cursorIndex: number;
 	scrollOffset: number;
 	/** True after a cursor move: keep the cursor row in view. False after
 	 *  manual paging, so a long question can be read without snapping back. */
 	followCursor: boolean;
-	timedOut: boolean;
 }
 
 interface QuestionRow {
 	kind: "option" | "other";
 	key: string;
-	label: string;
 	optionIndex: number | undefined;
 }
 
 interface QuestionLayout {
 	lines: string[];
 	rowStarts: number[];
+	/** Line ranges of pictures, drawn only where they fit whole. */
+	pictures: { start: number; end: number; picture: AskPicture }[];
 }
 
 interface DialogCallbacks {
-	onSubmit(result: MarkdownAskResult): void;
+	onSubmit(result: PickerSubmit): void;
 	onCancel(draft: PickerDraft): void;
 }
 
 interface PromptRequest {
 	title: string;
 	/** Text and images already in this field; images stay while their label stays in the text. */
-	current: Draft | undefined;
+	current: AnswerText | undefined;
 	/** Receives the saved text; empty text clears the field. */
-	apply(draft: Draft | undefined): void;
+	apply(text: AnswerText | undefined): void;
 }
 
 /** What a key or a pointer action does to the highlighted row. */
@@ -219,14 +202,14 @@ function inlineText(text: string): string {
 	return replaceTabs(text).replace(/\s+/g, " ").trim();
 }
 
-function optionMarker(multi: boolean | undefined, checked: boolean): string {
+function optionMarker(multi: boolean, checked: boolean): string {
 	if (multi) return checked ? theme.checkbox.checked : theme.checkbox.unchecked;
 	return checked ? theme.radio.selected : theme.radio.unselected;
 }
 
-function tabLabel(question: ExtensionAskDialogQuestion, index: number): string {
-	const base = question.header?.trim() || sanitizeCarriageReturns(question.id) || `Q${index + 1}`;
-	return truncateToWidth(replaceTabs(base), MAX_TAB_LABEL_WIDTH, Ellipsis.Unicode);
+function tabLabel(question: AskQuestion, index: number): string {
+	const base = inlineText(displayText(question.tab)) || `Q${index + 1}`;
+	return truncateToWidth(base, MAX_TAB_LABEL_WIDTH, Ellipsis.Unicode);
 }
 
 /** `lines` cut to `room` rows (at least 1), the last row saying how many were left out. */
@@ -235,62 +218,83 @@ function fitLines(lines: readonly string[], room: number): string[] {
 	return [...lines.slice(0, room - 1), theme.fg("dim", `… ${lines.length - room + 1} more lines`)];
 }
 
-/** Sanitized, recommendation-badged, collision-free option labels (native parity). */
-function displayOptionLabels(question: ExtensionAskDialogQuestion): string[] {
-	const badged = question.options.map((option, index) => {
-		const base = sanitizeCarriageReturns(option.label);
-		return question.recommended === index && !base.endsWith(RECOMMENDED_SUFFIX) ? `${base}${RECOMMENDED_SUFFIX}` : base;
-	});
-	return disambiguateDisplayLabels(badged, RESERVED_LABELS);
-}
-
-function questionRows(question: ExtensionAskDialogQuestion): QuestionRow[] {
-	const display = displayOptionLabels(question);
-	const rows: QuestionRow[] = question.options.map((option, index) => ({
+/** The option rows, then `Other` when the question offers one. */
+function questionRows(question: AskQuestion): QuestionRow[] {
+	const rows: QuestionRow[] = question.options.map((_, index) => ({
 		kind: "option",
 		key: `option:${index}`,
-		label: display[index] ?? sanitizeCarriageReturns(option.label),
 		optionIndex: index,
 	}));
-	rows.push({ kind: "other", key: "other", label: OTHER_OPTION, optionIndex: undefined });
+	if (question.field.other) rows.push({ kind: "other", key: "other", optionIndex: undefined });
 	return rows;
 }
 
-function isAnswered(state: QuestionState): boolean {
-	return state.selectedOptions.size > 0 || state.otherPicked;
+/** Spans styled over `base`, as native ask's form rows draw them; code keeps the Markdown code color. */
+function styleSpans(spans: readonly FormSpan[], base: (text: string) => string): string {
+	let out = "";
+	for (const item of spans) {
+		const value = displayText(item.text).replace(/\n/g, " ");
+		if (item.style === "code") out += theme.fg("mdCode", value);
+		else if (item.style === "strong") out += theme.bold(base(value));
+		else if (item.style === "em") out += theme.italic(base(value));
+		else out += base(value);
+	}
+	return out;
+}
+
+/** Spans as Tern spans; `extra` tokens apply to every run. */
+function nativeSpans(spans: readonly FormSpan[], extra: string | undefined): Span[] {
+	return spans.map(item => {
+		const tokens = [item.style, extra].filter(Boolean).join(" ");
+		return span(displayText(item.text), tokens || undefined);
+	});
+}
+
+/** Whether the state differs from how the form opens. */
+function changedFromForm(question: AskQuestion, state: QuestionState): boolean {
+	const initial = initialAnswer(question).checked;
+	return (
+		state.otherPicked ||
+		state.other !== undefined ||
+		state.notes.size > 0 ||
+		initial.size !== state.checked.size ||
+		[...state.checked].some(index => !initial.has(index))
+	);
 }
 
 /** Whether a Picker draft holds anything you entered: a pick, text, a Submit note, or a Picker btw turn. */
-function hasAnswers(draft: PickerDraft): boolean {
+function hasAnswers(form: AskForm, draft: PickerDraft): boolean {
 	return (
 		draft.submitNote !== undefined ||
 		draft.btwTurns.length > 0 ||
-		draft.states.some(state => isAnswered(state) || state.other !== undefined || state.notes.size > 0)
+		draft.states.some((state, index) => {
+			const question = form.questions[index];
+			return question !== undefined && changedFromForm(question, state);
+		})
 	);
 }
 
 /** Every option note, in option order. */
-function optionNotes(question: ExtensionAskDialogQuestion, state: QuestionState): OptionNote[] {
-	return question.options.flatMap((option, index) => {
+function optionNotes(question: AskQuestion, state: QuestionState): { option: string; note: string; picked: boolean }[] {
+	return question.options.flatMap((_, index) => {
 		const note = state.notes.get(index);
-		return note ? [{ option: option.label, note: note.text, picked: state.selectedOptions.has(option.label) }] : [];
+		return note ? [{ option: optionText(question, index), note: note.text, picked: state.checked.has(index) }] : [];
 	});
 }
 
-/** Picked options, then the picked `Other` text, for both single and multi questions. */
-function answerParts(question: ExtensionAskDialogQuestion, state: QuestionState): string[] {
-	const display = displayOptionLabels(question);
-	const parts = question.options.flatMap((option, index) =>
-		state.selectedOptions.has(option.label) ? [display[index] ?? sanitizeCarriageReturns(option.label)] : [],
-	);
-	if (state.otherPicked && state.other) parts.push(`Other: “${inlineText(state.other.text)}”`);
-	return parts;
+/** Submit-tab summary line. */
+function answerSummary(question: AskQuestion, state: QuestionState): string {
+	const parts = answerParts(question, state);
+	if (parts.length > 0) return parts.join(", ");
+	return theme.fg("warning", question.field.required ? "unanswered (required)" : "unanswered");
 }
 
-/** Submit-tab summary line. */
-function answerSummary(question: ExtensionAskDialogQuestion, state: QuestionState): string {
-	const parts = answerParts(question, state);
-	return parts.length > 0 ? parts.join(", ") : theme.fg("warning", "unanswered");
+/** Markdown of a question's context, without its pictures. */
+function contextMarkdown(question: AskQuestion): string {
+	return question.context
+		.flatMap(part => (part.kind === "markdown" ? [part.text] : []))
+		.join("\n\n")
+		.trim();
 }
 
 /** Preview blocks: Markdown, with fenced code syntax-highlighted (native parity). */
@@ -397,17 +401,6 @@ function leafKey(path: string): string {
 	return path.slice(path.lastIndexOf("/") + 1);
 }
 
-/** A label with inline code as mono spans, as the classic row renders inline Markdown. */
-function labelSpans(label: string, style: string | undefined): Span[] {
-	return label.split(/(`[^`]+`)/).flatMap(piece => {
-		if (piece === "") return [];
-		if (piece.length > 2 && piece.startsWith("`") && piece.endsWith("`")) {
-			return [span(piece.slice(1, -1), style ? `code ${style}` : "code")];
-		}
-		return [span(piece, style)];
-	});
-}
-
 /** Name of the picker's Tern stylesheet (`s` verb, one per surface; resending replaces it in place). */
 const NATIVE_SHEET_NAME = "omp-tools-ask";
 // Tern program sheets reach only strict descendants of a region. Read
@@ -466,13 +459,15 @@ function actionBar(buttons: readonly (NativeNode | null)[]): NativeNode {
 	return node("row", { role: "omp.actions", gap: "sm", align: "center" }, children, "actions");
 }
 
-class MarkdownAskDialog implements Component, Focusable {
+class Picker implements Component, Focusable {
 	#focused = false;
-	readonly #questions: ExtensionAskDialogQuestion[];
+	readonly #form: AskForm;
+	readonly #questions: AskQuestion[];
 	readonly #states: QuestionState[];
 	readonly #tui: TUI;
 	readonly #callbacks: DialogCallbacks;
 	readonly #options: DialogOptions;
+	readonly #pictures: AskPictures;
 	readonly #panel = new OverlayPanel("Ask");
 	readonly #header = new PanelRows();
 	readonly #body = new PanelRows();
@@ -509,7 +504,7 @@ class MarkdownAskDialog implements Component, Focusable {
 	/** Cursor visibility from the last rendered question body. */
 	#renderedCursor: { questionIndex: number; cursorIndex: number; visible: boolean } | undefined;
 	/** Written on the Submit tab; sent once for the whole ask. */
-	#submitNote: Draft | undefined;
+	#submitNote: AnswerText | undefined;
 	/** PgUp/PgDn and Submit-tab j/k forwarded to Tern, which owns the scroller there. */
 	#nativeScroll: NativeScroll | undefined;
 	/** Whether Tern draws the picker (`describe`) rather than the classic rows (`render`). */
@@ -531,31 +526,27 @@ class MarkdownAskDialog implements Component, Focusable {
 	/** Tern: the first showing's cursor, unrevealed until it moves or a reveal is asked for; `size` is the box it was checked against. */
 	#nativeHold: { index: number; cursor: number; reveal: number; size: string } | undefined;
 
-	constructor(questions: ExtensionAskDialogQuestion[], tui: TUI, callbacks: DialogCallbacks, options: DialogOptions) {
-		this.#questions = questions;
+	constructor(form: AskForm, tui: TUI, callbacks: DialogCallbacks, options: DialogOptions) {
+		this.#form = form;
+		this.#questions = form.questions;
 		this.#tui = tui;
 		this.#callbacks = callbacks;
 		this.#options = options;
+		this.#pictures = new AskPictures(tui, options.cwd);
 		const timeoutMs = options.timeout;
 		const draft = options.draft;
 		this.#states =
 			draft?.states ??
-			questions.map(question => ({
-				selectedOptions: new Set<string>(),
-				other: undefined,
-				otherPicked: false,
-				notes: new Map<number, Draft>(),
-				cursorIndex: clamp(question.recommended ?? 0, 0, Math.max(0, question.options.length - 1)),
-				scrollOffset: 0,
-				followCursor: false,
-				timedOut: false,
-			}));
+			form.questions.map(question => {
+				const answer = initialAnswer(question);
+				return { ...answer, cursorIndex: initialCursor(question, answer), scrollOffset: 0, followCursor: false };
+			});
 		this.#btwTurns = draft?.btwTurns ?? [];
 		if (draft) {
 			this.#activeTab = draft.activeTab;
 			this.#submitNote = draft.submitNote;
 			this.#imageCount = draft.imageCount;
-			if (hasAnswers(draft)) this.#notice = { text: "Restored your answers", tone: "muted" };
+			if (hasAnswers(form, draft)) this.#notice = { text: "Restored your answers", tone: "muted" };
 		}
 		if (this.#hasSubmitTab()) {
 			this.#panel.addChild(this.#header);
@@ -617,6 +608,7 @@ class MarkdownAskDialog implements Component, Focusable {
 		this.#prompt = undefined;
 		this.#btw?.dispose();
 		this.#btw = undefined;
+		this.#pictures.dispose();
 		this.#panel.dispose();
 	}
 
@@ -683,7 +675,7 @@ class MarkdownAskDialog implements Component, Focusable {
 			turns: this.#btwTurns,
 			ask,
 			cwd: this.#options.cwd,
-			draftAnswers: () => formatAskAnswers(this.#questions, this.#results(), this.#submitNote?.text),
+			draftAnswers: () => formatAskAnswer(this.#answer(false)),
 			heightRatio: DIALOG_HEIGHT_RATIO,
 			autocomplete: this.#options.autocomplete,
 			fileCommands: this.#options.fileCommands,
@@ -771,9 +763,28 @@ class MarkdownAskDialog implements Component, Focusable {
 		return col(children, { role: "omp.editor", gap: "sm", min: { w: 1 }, max: { w: 1 } });
 	}
 
+	/** The question's Markdown and pictures in form order, under its title when `withTitle`. */
+	#describeContext(question: AskQuestion, withTitle: boolean): NativeChild[] {
+		const children: NativeChild[] = [];
+		const title = withTitle ? displayText(question.title).trim() : "";
+		if (title) {
+			const spans = [span(title, "muted strong")];
+			children.push(node("text", { spans, wrap: "word", role: "omp-tools.ask-title" }, undefined, "title"));
+		}
+		question.context.forEach((part, index) => {
+			if (part.kind !== "markdown") {
+				children.push({ ...this.#pictures.describe(part), key: `context:${index}` });
+				return;
+			}
+			const markdown = displayText(part.text).trim();
+			if (markdown) children.push(node("md", { text: markdown, role: "omp.ask.question" }, undefined, `context:${index}`));
+		});
+		return children;
+	}
+
 	/**
 	 * What the open editor annotates: for a note or `Other` text, the
-	 * question's title and Markdown over the row being edited (without its
+	 * question's title and context over the row being edited (without its
 	 * saved text, which the editor holds); for the Submit note, every answer.
 	 */
 	#describePromptContext(): NativeChild[] {
@@ -782,14 +793,7 @@ class MarkdownAskDialog implements Component, Focusable {
 		const question = this.#questions[index];
 		const state = this.#states[index];
 		if (!question || !state) return [];
-		const children: NativeChild[] = [];
-		const title = question.header?.trim();
-		if (title) {
-			const spans = [span(displayText(title), "muted strong")];
-			children.push(node("text", { spans, wrap: "word", role: "omp-tools.ask-title" }, undefined, "title"));
-		}
-		const questionText = displayText(question.question).trim();
-		if (questionText) children.push(node("md", { text: questionText, role: "omp.ask.question" }, undefined, "question"));
+		const children = this.#describeContext(question, true);
 		const row = questionRows(question)[state.cursorIndex];
 		if (row) children.push(this.#describeRow(question, state, row, state.cursorIndex, "none", false));
 		return children;
@@ -832,7 +836,7 @@ class MarkdownAskDialog implements Component, Focusable {
 			this.#stopRingTick();
 			return node("text", { spans: [span("timer paused", "dim")] }, undefined, "paused");
 		}
-		const title = "Picks the recommended option when the time runs out";
+		const title = "Submits the current answers when the time runs out";
 		if (!cx.supports("meter")) return node("row", { title }, [countdown.describe()], "elapsed");
 		this.#startRingTick();
 		const total = Math.max(1, this.#options.timeout ?? 1);
@@ -863,7 +867,7 @@ class MarkdownAskDialog implements Component, Focusable {
 	}
 
 	/**
-	 * The question as Markdown over its options, in one fixed-height box
+	 * The question's context over its options, in one fixed-height box
 	 * (PgUp/PgDn, j/k, and the wheel scroll it), then the buttons.
 	 */
 	#describeQuestionBody(
@@ -875,7 +879,6 @@ class MarkdownAskDialog implements Component, Focusable {
 		const question = this.#questions[index];
 		const state = this.#states[index];
 		if (!question || !state) return;
-		const questionText = displayText(question.question).trim();
 		const rows = questionRows(question);
 		// Keyed per question: a click aimed at one question's rows never lands on the next, and each tab starts at its top.
 		const key = `q${index}`;
@@ -901,7 +904,7 @@ class MarkdownAskDialog implements Component, Focusable {
 		}
 		const reveal = held ? "none" : mounted ? "mount" : "token";
 		this.#nativeShownBody = key;
-		const body: NativeChild[] = questionText ? [node("md", { text: questionText, role: "omp.ask.question" })] : [];
+		const body = this.#describeContext(question, false);
 		for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
 			body.push(this.#describeRow(question, state, rows[rowIndex]!, rowIndex, reveal));
 		}
@@ -914,7 +917,7 @@ class MarkdownAskDialog implements Component, Focusable {
 		const question = this.#questions[index];
 		if (!question) return true;
 		const layout = this.#questionLayout(index, size.width);
-		const headings = displayText(question.question)
+		const headings = contextMarkdown(question)
 			.split("\n")
 			.filter(line => /^\s*#{1,6}\s/.test(line)).length;
 		const end = (layout.rowStarts[cursor + 1] ?? layout.lines.length) + headings + this.#nativeRowExtra(cursor + 1);
@@ -940,7 +943,7 @@ class MarkdownAskDialog implements Component, Focusable {
 	 * text, for the row above its own editor.
 	 */
 	#describeRow(
-		question: ExtensionAskDialogQuestion,
+		question: AskQuestion,
 		state: QuestionState,
 		row: QuestionRow,
 		rowIndex: number,
@@ -948,28 +951,28 @@ class MarkdownAskDialog implements Component, Focusable {
 		showText = true,
 	): NativeNode {
 		const option = row.kind === "option" ? question.options[row.optionIndex ?? -1] : undefined;
-		const checked = this.#isPickedRow(question, state, row);
+		const checked = this.#isPickedRow(state, row);
 		const cursor = rowIndex === state.cursorIndex;
-		const recommended = row.kind === "option" && question.recommended === row.optionIndex;
-		const label =
-			recommended && row.label.endsWith(RECOMMENDED_SUFFIX) ? row.label.slice(0, -RECOMMENDED_SUFFIX.length) : row.label;
+		const disabled = option?.disabled === true;
 		// With the sheet, the highlighted row is a neutral fill and the label stays primary text, as native ask's items.
 		const styled = this.#nativeSheet;
-		const labelStyle = !styled && cursor ? "accent strong" : undefined;
+		const labelStyle = disabled ? "dim" : !styled && cursor ? "accent strong" : undefined;
 		const labelText = node(
 			"text",
-			{ spans: labelSpans(label, labelStyle), wrap: "word", role: "omp-tools.ask-label" },
+			{
+				spans: option ? nativeSpans(option.label, labelStyle) : [span(OTHER_OPTION, labelStyle)],
+				wrap: "word",
+				role: "omp-tools.ask-label",
+			},
 			undefined,
 			"label",
 		);
-		const labelLine = recommended
-			? node(
-					"row",
-					{ gap: "sm", align: "center", wrap: true },
-					[labelText, node("badge", { text: "Recommended", tone: "success" })],
-					"label-line",
-				)
-			: labelText;
+		const badges = [
+			...(option?.recommended ? [node("badge", { text: "Recommended", tone: "success" })] : []),
+			...(disabled ? [node("badge", { text: "Unavailable" })] : []),
+		];
+		const labelLine =
+			badges.length > 0 ? node("row", { gap: "sm", align: "center", wrap: true }, [labelText, ...badges], "label-line") : labelText;
 
 		const lines: NativeChild[] = [labelLine];
 		const description = option?.description ? displayText(option.description).trim() : "";
@@ -984,8 +987,9 @@ class MarkdownAskDialog implements Component, Focusable {
 					: [span("✎ ", "success"), span(inlineText(typed), "success")];
 			lines.push(node("text", { spans, wrap: "word", role: "omp-tools.ask-typed" }, undefined, "text"));
 		}
-		const markerStyle = checked ? (question.multi ? "success" : "strong") : !styled && cursor ? "accent" : "dim";
-		const marker = span(optionMarker(question.multi, checked), markerStyle);
+		const multi = question.field.multi;
+		const markerStyle = checked ? (multi ? "success" : "strong") : !styled && cursor ? "accent" : "dim";
+		const marker = span(optionMarker(multi, checked), markerStyle);
 		const role = cursor ? "omp-tools.ask-row.on" : "omp-tools.ask-row";
 		return {
 			...node(
@@ -1010,11 +1014,7 @@ class MarkdownAskDialog implements Component, Focusable {
 	}
 
 	/** The question tab's keys as buttons: `?`, Space, `n`, `x`, Esc, Enter. */
-	#describeQuestionActions(
-		question: ExtensionAskDialogQuestion,
-		state: QuestionState,
-		row: QuestionRow | undefined,
-	): NativeNode {
+	#describeQuestionActions(question: AskQuestion, state: QuestionState, row: QuestionRow | undefined): NativeNode {
 		const btw = this.#options.askBtw ? actionButton("Ask aside", "btw", "?", { title: "Picker btw: ask a side question  ?" }) : null;
 		const cancel = actionButton("Cancel", "cancel", "escape");
 		if (!row) return actionBar([btw, null, cancel]);
@@ -1025,12 +1025,14 @@ class MarkdownAskDialog implements Component, Focusable {
 		const noun = row.kind === "other" ? "answer" : "note";
 		const edit = actionButton(typed ? `Edit ${noun}` : `Add ${noun}`, "edit", "n");
 		const clear = typed ? actionButton(`Clear ${noun}`, "clear", "x") : null;
-		const pick = actionButton(this.#isPickedRow(question, state, row) ? "Unpick" : "Pick", "space", "space");
+		const disabled = row.kind === "option" && question.options[row.optionIndex ?? -1]?.disabled === true;
+		const pick = disabled ? null : actionButton(this.#isPickedRow(state, row) ? "Unpick" : "Pick", "space", "space");
 		const next = this.#hasSubmitTab() ? "next" : "submit";
-		const enterLabel = question.multi ? `${next[0]?.toUpperCase()}${next.slice(1)}` : `Pick & ${next}`;
+		const enterLabel = question.field.multi ? `${next[0]?.toUpperCase()}${next.slice(1)}` : `Pick & ${next}`;
 		const moves = this.#hasSubmitTab() ? "j/k move · h/l tabs" : "j/k move";
 		const enter = actionButton(enterLabel, "enter", "enter", { accent: true, title: `${enterLabel}  enter · ${moves}` });
-		return actionBar(clear ? [btw, null, pick, edit, clear, cancel, enter] : [btw, null, pick, edit, cancel, enter]);
+		const buttons = [btw, null, pick, edit, clear, cancel, enter].filter((button, index) => button !== null || index === 1);
+		return actionBar(buttons);
 	}
 
 	/** Submit tab: unanswered warning, every answer and note, the Submit note (in the scroller), then the buttons. */
@@ -1045,20 +1047,24 @@ class MarkdownAskDialog implements Component, Focusable {
 		children.push(actionBar(clear ? [btw, null, edit, clear, cancel, submit] : [btw, null, edit, cancel, submit]));
 	}
 
+	/** How many questions are unanswered, and how many of those Submit requires. */
+	#unansweredWarning(): string | undefined {
+		const unanswered = this.#questions.filter((question, index) => {
+			const state = this.#states[index];
+			return state !== undefined && !isAnswered(question, state);
+		});
+		if (unanswered.length === 0) return undefined;
+		const required = unanswered.filter(question => question.field.required).length;
+		if (required > 0) return `${required} required question${required === 1 ? "" : "s"} unanswered; Enter shows the first.`;
+		return `${unanswered.length} unanswered question${unanswered.length === 1 ? "" : "s"}; Enter still submits.`;
+	}
+
 	/** The unanswered warning, then every answer and note and the Submit note as key/value rows. */
 	#describeAnswers(): NativeNode[] {
 		const body: NativeNode[] = [];
-		const unanswered = this.#states.filter(state => !isAnswered(state)).length;
-		if (unanswered > 0) {
-			const noun = `question${unanswered === 1 ? "" : "s"}`;
-			body.push(
-				node(
-					"text",
-					{ spans: [span(`${unanswered} unanswered ${noun}; Enter still submits.`, "warning")], role: "omp-tools.ask-answers" },
-					undefined,
-					"warning",
-				),
-			);
+		const warning = this.#unansweredWarning();
+		if (warning) {
+			body.push(node("text", { spans: [span(warning, "warning")], role: "omp-tools.ask-answers" }, undefined, "warning"));
 		}
 		const items: { k: Span[]; v: Span[] }[] = [];
 		for (let index = 0; index < this.#questions.length; index++) {
@@ -1068,7 +1074,7 @@ class MarkdownAskDialog implements Component, Focusable {
 			const parts = answerParts(question, state);
 			items.push({
 				k: [span(`${index + 1}. ${tabLabel(question, index)}`, "dim")],
-				v: parts.length > 0 ? [span(parts.join(", "))] : [span("unanswered", "warning")],
+				v: parts.length > 0 ? [span(parts.join(", "))] : [span(question.field.required ? "unanswered (required)" : "unanswered", "warning")],
 			});
 			for (const { option, note, picked } of optionNotes(question, state)) {
 				items.push({
@@ -1145,7 +1151,7 @@ class MarkdownAskDialog implements Component, Focusable {
 	#hasSubmitTab(): boolean {
 		// Multi-select confirms on the Submit tab, so it forces the tab even for
 		// a single question (native parity).
-		return this.#questions.length > 1 || this.#questions.some(question => question.multi);
+		return this.#questions.length > 1 || this.#questions.some(question => question.field.multi);
 	}
 
 	#isSubmitTab(): boolean {
@@ -1170,31 +1176,39 @@ class MarkdownAskDialog implements Component, Focusable {
 		return clamp(chrome + body, MIN_DIALOG_ROWS, maxHeight);
 	}
 
-	/** Question Markdown, a blank separator, then every option row with its
-	 *  Markdown description and preview. `rowStarts` indexes each row's first line. */
+	/** The question's context (Markdown and pictures), a blank separator, then
+	 *  every option row. `rowStarts` indexes each row's first line. */
 	#questionLayout(index: number, width: number): QuestionLayout {
 		const question = this.#questions[index];
 		const state = this.#states[index];
-		if (!question || !state) return { lines: [], rowStarts: [] };
+		if (!question || !state) return { lines: [], rowStarts: [], pictures: [] };
 		const key = [
 			index,
 			width,
 			state.cursorIndex,
-			[...state.selectedOptions].join("\u0000"),
+			[...state.checked].join("\u0000"),
 			state.other?.text ?? "\u0001",
 			state.otherPicked,
 			[...state.notes].map(([option, note]) => `${option}\u0000${note.text}`).join("\u0000"),
+			this.#pictures.version,
 		].join("\u0002");
 		const cacheKey = `${index}:${width}`;
 		const cached = this.#layoutCache.get(cacheKey);
 		if (cached?.stateKey === key) return cached.layout;
 
 		const lines: string[] = [];
-		const questionText = displayText(question.question).trim();
-		if (questionText) {
-			lines.push(...this.#markdown(questionText, "text").render(Math.max(1, width)));
-			lines.push("");
+		const pictures: QuestionLayout["pictures"] = [];
+		for (const part of question.context) {
+			if (part.kind === "markdown") {
+				const markdown = displayText(part.text).trim();
+				if (markdown) lines.push(...this.#markdown(markdown, "text").render(Math.max(1, width)));
+				continue;
+			}
+			const start = lines.length;
+			lines.push(...this.#pictures.rows(part, Math.max(1, width)));
+			pictures.push({ start, end: lines.length, picture: part });
 		}
+		if (lines.length > 0) lines.push("");
 		const rowStarts: number[] = [];
 		const rows = questionRows(question);
 		for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
@@ -1203,28 +1217,23 @@ class MarkdownAskDialog implements Component, Focusable {
 			rowStarts.push(lines.length);
 			lines.push(...this.#renderRow(question, state, row, rowIndex === state.cursorIndex, width));
 		}
-		const layout = { lines, rowStarts };
+		const layout = { lines, rowStarts, pictures };
 		this.#layoutCache.set(cacheKey, { stateKey: key, layout });
 		return layout;
 	}
 
-	#renderRow(
-		question: ExtensionAskDialogQuestion,
-		state: QuestionState,
-		row: QuestionRow,
-		selected: boolean,
-		width: number,
-		showText = true,
-	): string[] {
+	#renderRow(question: AskQuestion, state: QuestionState, row: QuestionRow, selected: boolean, width: number, showText = true): string[] {
 		const option = row.kind === "option" ? question.options[row.optionIndex ?? -1] : undefined;
-		const checked = option ? state.selectedOptions.has(option.label) : state.otherPicked;
+		const checked = this.#isPickedRow(state, row);
+		const disabled = option?.disabled === true;
 		// No `❯` cursor column: the focused row shows as an accent, bold label
 		// with an accent marker; the marker glyph alone shows the checked state.
-		const color = selected ? "accent" : checked ? "toolOutput" : "text";
+		const color = disabled ? "dim" : selected ? "accent" : checked ? "toolOutput" : "text";
 		const markerColor = checked ? "success" : selected ? "accent" : "dim";
-		const marker = `${theme.fg(markerColor, optionMarker(question.multi, checked))} `;
+		const marker = `${theme.fg(markerColor, optionMarker(question.field.multi, checked))} `;
 		const style = (t: string) => (selected ? theme.bold(theme.fg(color, t)) : theme.fg(color, t));
-		const label = renderInlineMarkdown(row.label, getMarkdownTheme(), style);
+		const suffix = option?.recommended ? RECOMMENDED_SUFFIX : disabled ? " (unavailable)" : "";
+		const label = option ? `${styleSpans(option.label, style)}${suffix ? style(suffix) : ""}` : style(OTHER_OPTION);
 		const wrapped = wrapTextWithAnsi(label, Math.max(1, width - visibleWidth(marker)));
 		// Label wrap lines, descriptions, previews, notes, and custom answers all
 		// start at the label's text column so the option reads as one aligned block.
@@ -1234,25 +1243,24 @@ class MarkdownAskDialog implements Component, Focusable {
 		for (let i = 1; i < wrapped.length; i++) lines.push(`${indent}${wrapped[i] ?? ""}`);
 
 		const detailWidth = Math.max(1, width - labelColumn);
-		const detailIndent = indent;
 		const description = option?.description ? displayText(option.description).trim() : "";
 		if (description) {
-			for (const line of this.#markdown(description, "muted").render(detailWidth)) lines.push(`${detailIndent}${line}`);
+			for (const line of this.#markdown(description, "muted").render(detailWidth)) lines.push(`${indent}${line}`);
 		}
 		const preview = option?.preview ? sanitizeCarriageReturns(option.preview) : "";
 		if (preview.trim()) {
 			const previewWidth = Math.max(1, detailWidth - 2);
 			for (const line of this.#preview(preview, previewWidth)) {
-				lines.push(`${detailIndent}${theme.fg("border", "│")} ${line}`);
+				lines.push(`${indent}${theme.fg("border", "│")} ${line}`);
 			}
 		}
 		// Unpicked text stays visible (dim) so nothing typed looks lost.
-		const text = row.kind === "other" ? state.other?.text : state.notes.get(row.optionIndex ?? -1)?.text;
-		if (showText && text !== undefined) {
+		const typed = row.kind === "other" ? state.other?.text : state.notes.get(row.optionIndex ?? -1)?.text;
+		if (showText && typed !== undefined) {
 			const prefix = row.kind === "other" ? "" : "✎ ";
-			const shown = truncateToWidth(`${prefix}${inlineText(text)}`, detailWidth, Ellipsis.Unicode);
+			const shown = truncateToWidth(`${prefix}${inlineText(typed)}`, detailWidth, Ellipsis.Unicode);
 			const textColor = row.kind === "other" ? (checked ? "muted" : "dim") : "success";
-			lines.push(theme.fg(textColor, `${detailIndent}${shown}`));
+			lines.push(theme.fg(textColor, `${indent}${shown}`));
 		}
 		return lines;
 	}
@@ -1290,9 +1298,20 @@ class MarkdownAskDialog implements Component, Focusable {
 			visible: cursorStart >= offset && cursorStart < offset + rows,
 		};
 		return {
-			lines: this.#scrollWindow(layout.lines, offset, rows, width),
+			lines: this.#scrollWindow(this.#fitPictures(layout, offset, rows, scrollbar ? width - 1 : width), offset, rows, width),
 			indicator: this.#indicator(offset, rows, layout.lines.length),
 		};
+	}
+
+	/** The layout's lines with each picture the window cuts replaced by its one-line stand-in, keeping its height. */
+	#fitPictures(layout: QuestionLayout, offset: number, rows: number, width: number): string[] {
+		const cut = layout.pictures.filter(({ start, end }) => end > offset && start < offset + rows && (start < offset || end > offset + rows));
+		if (cut.length === 0) return layout.lines;
+		const lines = [...layout.lines];
+		for (const { start, end, picture } of cut) {
+			lines.splice(start, end - start, this.#pictures.placeholder(picture, width), ...Array<string>(end - start - 1).fill(""));
+		}
+		return lines;
 	}
 
 	#markdown(text: string, color: "text" | "muted"): Markdown {
@@ -1317,11 +1336,9 @@ class MarkdownAskDialog implements Component, Focusable {
 
 	#renderSubmitBody(width: number, rows: number): { lines: string[]; indicator: string } {
 		const lines: string[] = [];
-		const unanswered = this.#states.filter(state => !isAnswered(state)).length;
-		if (unanswered > 0) {
-			lines.push(
-				theme.fg("warning", `${unanswered} unanswered question${unanswered === 1 ? "" : "s"}; Enter still submits.`),
-			);
+		const warning = this.#unansweredWarning();
+		if (warning) {
+			lines.push(theme.fg("warning", warning));
 			lines.push("");
 		}
 		const noteLine = (label: string, text: string) => {
@@ -1395,25 +1412,24 @@ class MarkdownAskDialog implements Component, Focusable {
 		const row = question && state ? questionRows(question)[state.cursorIndex] : undefined;
 		if (!question || !state || !row) return `j/k move${tabs}${scroll}${btw} · ${cancel}`;
 		const next = this.#hasSubmitTab() ? "next" : "submit";
-		const text = row.kind === "other" ? state.other : state.notes.get(row.optionIndex ?? -1);
+		const typed = row.kind === "other" ? state.other : state.notes.get(row.optionIndex ?? -1);
 		const noun = row.kind === "other" ? "answer" : "note";
+		const disabled = row.kind === "option" && question.options[row.optionIndex ?? -1]?.disabled === true;
 		let keys: string;
-		if (row.kind === "other" && !text) {
+		if (row.kind === "other" && !typed) {
 			keys = "Space/Enter/n type answer";
 		} else {
-			const picked = this.#isPickedRow(question, state, row);
-			const enter = question.multi ? `Enter ${next}` : `Enter pick & ${next}`;
-			const edit = text ? `n edit ${noun} · x clear ${noun}` : `n add ${noun}`;
-			keys = `Space ${picked ? "unpick" : "pick"} · ${enter} · ${edit}`;
+			const edit = typed ? `n edit ${noun} · x clear ${noun}` : `n add ${noun}`;
+			const enter = question.field.multi ? `Enter ${next}` : `Enter pick & ${next}`;
+			keys = disabled ? `unavailable · ${edit}` : `Space ${this.#isPickedRow(state, row) ? "unpick" : "pick"} · ${enter} · ${edit}`;
 		}
 		return `${keys} · j/k move${tabs}${scroll}${btw} · ${cancel}`;
 	}
 
-	/** Whether `row` is picked: a selected option, or a picked `Other`. */
-	#isPickedRow(question: ExtensionAskDialogQuestion, state: QuestionState, row: QuestionRow): boolean {
+	/** Whether `row` is picked: a checked option, or a picked `Other`. */
+	#isPickedRow(state: QuestionState, row: QuestionRow): boolean {
 		if (row.kind === "other") return state.otherPicked;
-		const option = question.options[row.optionIndex ?? -1];
-		return option !== undefined && state.selectedOptions.has(option.label);
+		return state.checked.has(row.optionIndex ?? -1);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -1442,8 +1458,8 @@ class MarkdownAskDialog implements Component, Focusable {
 			this.#openPrompt({
 				title: "Submit note",
 				current: this.#submitNote,
-				apply: draft => {
-					this.#submitNote = draft;
+				apply: text => {
+					this.#submitNote = text;
 				},
 			});
 			return;
@@ -1513,10 +1529,10 @@ class MarkdownAskDialog implements Component, Focusable {
 
 	/**
 	 * One meaning per command: Space toggles the row, Enter finishes the
-	 * question (single-select picks the row first), `n` edits the row's text,
+	 * question (a single choice picks the row first), `n` edits the row's text,
 	 * `x` clears it. An `Other` without text opens its editor on Space or Enter.
 	 */
-	#runRowCommand(question: ExtensionAskDialogQuestion, state: QuestionState, command: RowCommand): void {
+	#runRowCommand(question: AskQuestion, state: QuestionState, command: RowCommand): void {
 		const row = questionRows(question)[state.cursorIndex];
 		if (!row) return;
 		if (command === "edit" || (row.kind === "other" && !state.other && command !== "clear")) {
@@ -1524,64 +1540,55 @@ class MarkdownAskDialog implements Component, Focusable {
 			return;
 		}
 		if (command === "clear") {
-			if (row.kind === "other") {
-				state.other = undefined;
-				state.otherPicked = false;
-			} else {
-				state.notes.delete(row.optionIndex ?? -1);
-			}
+			if (row.kind === "other") setOther(question, state, undefined);
+			else setNote(state, row.optionIndex ?? -1, undefined);
 			this.#requestRender();
 			return;
 		}
 		if (command === "space") {
-			if (this.#isPickedRow(question, state, row)) this.#unpickRow(question, state, row);
+			if (this.#isPickedRow(state, row)) this.#unpickRow(question, state, row);
 			else this.#pickRow(question, state, row);
 			this.#requestRender();
 			return;
 		}
-		if (!question.multi) this.#pickRow(question, state, row);
+		if (!question.field.multi && !this.#pickRow(question, state, row)) {
+			this.#requestRender();
+			return;
+		}
 		this.#advance();
 	}
 
-	/** Pick `row`; single-select un-picks every other row, keeping their text. */
-	#pickRow(question: ExtensionAskDialogQuestion, state: QuestionState, row: QuestionRow): void {
-		const option = question.options[row.optionIndex ?? -1];
-		if (!question.multi) {
-			state.selectedOptions.clear();
-			state.otherPicked = false;
+	/** Pick `row`; a single choice unpicks every other row, keeping their text. A disabled option says so. */
+	#pickRow(question: AskQuestion, state: QuestionState, row: QuestionRow): boolean {
+		if (row.kind === "other") {
+			pickOther(question, state);
+			return true;
 		}
-		if (row.kind === "other") state.otherPicked = true;
-		else if (option) state.selectedOptions.add(option.label);
+		if (pickOption(question, state, row.optionIndex ?? -1)) return true;
+		this.#notice = { text: "This option is unavailable", tone: "warning" };
+		return false;
 	}
 
-	#unpickRow(question: ExtensionAskDialogQuestion, state: QuestionState, row: QuestionRow): void {
-		const option = question.options[row.optionIndex ?? -1];
+	#unpickRow(question: AskQuestion, state: QuestionState, row: QuestionRow): void {
 		if (row.kind === "other") state.otherPicked = false;
-		else if (option) state.selectedOptions.delete(option.label);
+		else unpickOption(question, state, row.optionIndex ?? -1);
 	}
 
 	/** Open the row's editor: the option's Note, or the `Other` text (saving non-empty text picks it). */
-	#editRow(question: ExtensionAskDialogQuestion, state: QuestionState, row: QuestionRow): void {
+	#editRow(question: AskQuestion, state: QuestionState, row: QuestionRow): void {
 		if (row.kind === "other") {
 			this.#openPrompt({
 				title: "Other answer",
 				current: state.other,
-				apply: draft => {
-					state.other = draft;
-					if (draft) this.#pickRow(question, state, row);
-					else state.otherPicked = false;
-				},
+				apply: text => setOther(question, state, text),
 			});
 			return;
 		}
 		const optionIndex = row.optionIndex ?? -1;
 		this.#openPrompt({
-			title: `Note for ${inlineText(row.label)}`,
+			title: `Note for ${inlineText(optionText(question, optionIndex))}`,
 			current: state.notes.get(optionIndex),
-			apply: draft => {
-				if (draft) state.notes.set(optionIndex, draft);
-				else state.notes.delete(optionIndex);
-			},
+			apply: text => setNote(state, optionIndex, text),
 		});
 	}
 
@@ -1733,12 +1740,12 @@ class MarkdownAskDialog implements Component, Focusable {
 		const head: string[] = [];
 		const tail: string[] = [];
 		if (question && state) {
-			const title = question.header?.trim();
+			const title = question.title.trim();
 			if (title) head.push(...wrapTextWithAnsi(theme.bold(theme.fg("muted", displayText(title))), innerWidth), "");
 			const row = questionRows(question)[state.cursorIndex];
 			if (row) tail.push("", ...this.#renderRow(question, state, row, true, innerWidth, false));
 		}
-		const text = question ? displayText(question.question).trim() : "";
+		const text = question ? displayText(contextMarkdown(question)) : "";
 		const markdown = text ? this.#markdown(text, "text").render(innerWidth) : [];
 		// The row keeps at least two lines' room for the question; the question takes what is left.
 		const rowShown = fitLines(tail, Math.max(1, budget - head.length - 2));
@@ -1750,6 +1757,7 @@ class MarkdownAskDialog implements Component, Focusable {
 	// Completion
 	// ---------------------------------------------------------------------------
 
+	/** The deadline submits the answers as they stand, unvalidated and marked automatic, as native does. */
 	#handleTimeout(): void {
 		if (this.#closed) return;
 		if (this.#prompt) {
@@ -1757,47 +1765,28 @@ class MarkdownAskDialog implements Component, Focusable {
 			return;
 		}
 		this.#options.onTimeout?.();
-		for (let index = 0; index < this.#questions.length; index++) {
-			const question = this.#questions[index];
-			const state = this.#states[index];
-			if (!question || !state) continue;
-			if (isAnswered(state)) continue;
-			const fallback = question.options[clamp(question.recommended ?? 0, 0, Math.max(0, question.options.length - 1))];
-			if (fallback) state.selectedOptions.add(fallback.label);
-			state.timedOut = true;
-		}
-		this.#submit();
+		this.#finish({ kind: "submit", answer: this.#answer(true) });
 	}
 
+	/** A manual Submit: refused with native's reason, on the first question that fails, until every answer is valid. */
 	#submit(): void {
-		this.#finish({ kind: "submit", results: this.#results(), submitNote: this.#submitNote });
+		const invalid = firstInvalid(this.#form, this.#states);
+		if (invalid) {
+			const question = this.#questions[invalid.index];
+			this.#activeTab = invalid.index;
+			if (question) this.#notice = { text: `${tabLabel(question, invalid.index)}: ${invalid.error}`, tone: "warning" };
+			this.#requestRender();
+			return;
+		}
+		this.#finish({ kind: "submit", answer: this.#answer(false) });
 	}
 
-	/** Every question's answer as it stands; also the Picker btw's draft. */
-	#results(): MarkdownAskResultItem[] {
-		return this.#questions.flatMap((question, index) => {
-			const state = this.#states[index];
-			if (!state) return [];
-			const other = state.otherPicked ? state.other : undefined;
-			return [
-				{
-					id: question.id,
-					question: question.question,
-					options: question.options.map(option => option.label),
-					multi: question.multi ?? false,
-					selectedOptions: question.options
-						.map(option => option.label)
-						.filter(label => state.selectedOptions.has(label)),
-					customInput: other?.text,
-					notes: optionNotes(question, state),
-					timedOut: state.timedOut || undefined,
-					images: [...(other?.images ?? []), ...[...state.notes.values()].flatMap(note => note.images)],
-				},
-			];
-		});
+	/** The answer as it stands; also the Picker btw's draft. */
+	#answer(timedOut: boolean): AskFormAnswer {
+		return formAnswer(this.#form, this.#states, this.#submitNote, timedOut);
 	}
 
-	#finish(result: MarkdownAskResult | undefined): void {
+	#finish(result: PickerSubmit | undefined): void {
 		if (this.#closed) return;
 		this.#closed = true;
 		this.#countdown?.dispose();
@@ -1818,22 +1807,22 @@ class MarkdownAskDialog implements Component, Focusable {
 }
 
 /**
- * Show the Markdown ask dialog in place of the prompt editor. Resolves
- * `kind: "cancel"` on Esc; rejects with an `AbortError` when `signal` aborts.
+ * Show the Picker in place of the prompt editor. Resolves `kind: "cancel"`
+ * on Esc; rejects with an `AbortError` when `signal` aborts.
  */
-export function showMarkdownAskDialog(
+export function showPicker(
 	ui: Pick<ExtensionUIContext, "custom">,
-	questions: ExtensionAskDialogQuestion[],
+	form: AskForm,
 	options: DialogOptions & { signal?: AbortSignal },
-): Promise<MarkdownAskResult | MarkdownAskCancel> {
+): Promise<PickerSubmit | PickerCancel> {
 	// The host's custom-UI options do not declare `timeout`, but the host reads
 	// it: a dialog with a deadline settles by itself, so its time stays the
 	// agent's and the display stays awake, as with native timed ask.
 	const customOptions = { signal: options.signal, timeout: options.timeout };
-	return ui.custom<MarkdownAskResult | MarkdownAskCancel>(
+	return ui.custom<PickerSubmit | PickerCancel>(
 		(tui, _theme, _keybindings, done) =>
-			new MarkdownAskDialog(
-				questions,
+			new Picker(
+				form,
 				tui,
 				{ onSubmit: result => done(result), onCancel: draft => done({ kind: "cancel", draft }) },
 				options,

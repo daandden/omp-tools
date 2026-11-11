@@ -1,36 +1,30 @@
-// Model-facing text for answers from the Markdown ask picker. The model sees
-// only this text (result `details` never reach it), so every part is labeled,
-// compactly: picked options (with a short description, which otherwise lives
-// only in the model's own tool call), `Other` text, every option note with its
-// option and whether it was picked, unanswered questions, and the Submit note.
-import type { ExtensionAskDialogQuestion } from "@oh-my-pi/pi-coding-agent";
-import type { MarkdownAskResultItem, OptionNote } from "./ask-dialog";
+// The `ask` tool result: native form data first, as native ask writes it,
+// then the Picker's extra channels. The model sees only the content (details
+// never reach it), so every channel is labeled there: Notes on picked and
+// unpicked options, Other answers, the Submit note, and pasted images.
+import type { AgentToolResult, AskToolDetails } from "@oh-my-pi/pi-coding-agent";
+import type { OptionNote } from "@oh-my-pi/pi-tui/html-form/data";
+import {
+	type AskFormAnswer,
+	type AskNote,
+	type AskOtherAnswer,
+	answerImages,
+	imageContent,
+	otherAnswers,
+} from "./ask-form";
 
-/** Longest question title repeated in the result; the full text is in the tool call. */
-const MAX_TITLE_LENGTH = 100;
-/** Longest option description repeated next to a picked option. */
-const MAX_DESCRIPTION_LENGTH = 80;
-
-function flatten(text: string): string {
-	return text.replace(/\s+/g, " ").trim();
+/** Native ask details, plus what only the Picker answers. */
+export interface AskResultDetails extends AskToolDetails {
+	/** Notes on options left unpicked; `notes` holds the picked ones, as native does. */
+	unpickedNotes?: OptionNote[];
+	/** Other answers the user typed, which form data cannot tell from an option of the same value. */
+	other?: AskOtherAnswer[];
+	/** The Submit note. */
+	submitNote?: string;
 }
 
-function clip(text: string, max: number): string {
-	return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
-}
-
-/** First non-empty line of the question, without a Markdown heading marker. */
-function questionTitle(question: string): string {
-	const line = question.split("\n").find(candidate => candidate.trim() !== "") ?? "";
-	return clip(flatten(line.replace(/^\s*#{1,6}\s+/, "")), MAX_TITLE_LENGTH);
-}
-
-/** `label (description)`, the description clipped to its first sentence and a length cap. */
-function optionText(question: ExtensionAskDialogQuestion, label: string): string {
-	const description = flatten(question.options.find(option => option.label === label)?.description ?? "");
-	if (!description) return label;
-	const firstSentence = description.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? description;
-	return `${label} (${clip(firstSentence.replace(/[.!?]$/, ""), MAX_DESCRIPTION_LENGTH)})`;
+function optionNote({ name, question, option, value, text }: AskNote): OptionNote {
+	return { name, question, option, value, text };
 }
 
 /** `label: text`, or `label:` then indented lines when the text spans several lines. */
@@ -40,49 +34,48 @@ function labeledBlock(indent: string, label: string, text: string): string[] {
 	return [`${indent}${label}:`, ...lines.map(line => `${indent}  ${line}`)];
 }
 
-function isAnswered(answer: MarkdownAskResultItem | undefined): boolean {
-	return (answer?.selectedOptions.length ?? 0) > 0 || answer?.customInput !== undefined;
-}
-
-function answerLines(question: ExtensionAskDialogQuestion, answer: MarkdownAskResultItem | undefined, indent: string): string[] {
-	const lines: string[] = [];
-	const selected = answer?.selectedOptions ?? [];
-	if (selected.length > 0) {
-		const label = answer?.timedOut ? "Selected (auto, timed out)" : "Selected";
-		lines.push(`${indent}${label}: ${selected.map(option => optionText(question, option)).join(", ")}`);
+/** Labeled answer text: the form data, every Note, every Other answer, and the Submit note. */
+export function formatAskAnswer(answer: AskFormAnswer): string {
+	const lines = [
+		answer.timedOut
+			? "No answer before the timeout; submitted the form's current values automatically (not the user's choice; required fields may be empty):"
+			: "User answers:",
+		JSON.stringify(answer.data, null, 2),
+	];
+	const notes = answer.questions.flatMap(question => question.notes);
+	if (notes.length > 0) {
+		lines.push("Option notes:");
+		for (const note of notes) {
+			const picked = note.picked ? "" : " (not picked)";
+			const label = `- ${note.question}: ${note.option} [${note.name}=${JSON.stringify(note.value)}]${picked}`;
+			lines.push(...labeledBlock("", label, note.text));
+		}
 	}
-	if (answer?.customInput !== undefined) lines.push(...labeledBlock(indent, "Other", answer.customInput));
-	for (const { option, note, picked } of answer?.notes ?? []) {
-		lines.push(...labeledBlock(indent, `Note (${option}${picked ? "" : ", not picked"})`, note));
+	const other = otherAnswers(answer);
+	if (other.length > 0) {
+		lines.push("Other answers (typed by the user, not a listed option):");
+		for (const item of other) lines.push(...labeledBlock("", `- ${item.question} [${item.name}]`, item.text));
 	}
-	if (selected.length === 0 && answer?.customInput === undefined) lines.unshift(`${indent}Unanswered`);
-	return lines;
-}
-
-/** The note text native ask details hold for one question: every note, each after its option. */
-export function joinOptionNotes(notes: readonly OptionNote[]): string | undefined {
-	const text = notes.map(({ option, note, picked }) => `${option}${picked ? "" : " (not picked)"}: ${note}`).join("\n");
-	return text || undefined;
-}
-
-/** Labeled result text for every question, in order, then the Submit note. */
-export function formatAskAnswers(
-	questions: readonly ExtensionAskDialogQuestion[],
-	answers: readonly MarkdownAskResultItem[],
-	submitNote: string | undefined,
-): string {
-	const lines: string[] = [];
-	if (questions.length === 1) {
-		const [question] = questions;
-		if (question) lines.push("User's answer:", ...answerLines(question, answers[0], ""));
-	} else {
-		const answered = questions.filter((_, index) => isAnswered(answers[index])).length;
-		lines.push(`User answered ${answered}/${questions.length}:`);
-		questions.forEach((question, index) => {
-			lines.push(`- ${question.id}: ${questionTitle(question.question)}${question.multi ? " [multi]" : ""}`);
-			lines.push(...answerLines(question, answers[index], "  "));
-		});
-	}
-	if (submitNote !== undefined) lines.push(...labeledBlock("", "Note on all answers", submitNote));
+	if (answer.submitNote) lines.push(...labeledBlock("", "Note on all answers", answer.submitNote.text));
 	return lines.join("\n");
+}
+
+/** The tool result: the labeled answer, then each pasted image after its label. */
+export function askToolResult(answer: AskFormAnswer): AgentToolResult<AskResultDetails> {
+	const notes = answer.questions.flatMap(question => question.notes);
+	const picked = notes.filter(note => note.picked).map(optionNote);
+	const unpicked = notes.filter(note => !note.picked).map(optionNote);
+	const other = otherAnswers(answer);
+	const details: AskResultDetails = {
+		answers: answer.questions.map(({ name, question, answer: text }) => ({ name, question, answer: text })),
+		...(picked.length > 0 ? { notes: picked } : {}),
+		...(unpicked.length > 0 ? { unpickedNotes: unpicked } : {}),
+		...(other.length > 0 ? { other } : {}),
+		...(answer.submitNote ? { submitNote: answer.submitNote.text } : {}),
+		...(answer.timedOut ? { timedOut: true } : {}),
+	};
+	return {
+		content: [{ type: "text", text: formatAskAnswer(answer) }, ...imageContent(answerImages(answer))],
+		details,
+	};
 }

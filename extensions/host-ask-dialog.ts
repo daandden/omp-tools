@@ -6,10 +6,27 @@ import type {
 	ExtensionUIDialogOptions,
 } from "@oh-my-pi/pi-coding-agent";
 import { isRecord } from "@oh-my-pi/pi-utils";
-import type { AskImage, MarkdownAskResult, MarkdownAskResultItem, SubmitNote } from "./ask-dialog";
-import { nativeRejects, sanitizeQuestions } from "./ask-questions";
-import { joinOptionNotes } from "./ask-result";
+import { OTHER_OPTION } from "./ask-dialog";
+import { type AnswerText, type AskImage, type AskNote, hostQuestionsForm, type QuestionAnswer } from "./ask-form";
 import { openPicker, type PickerSession } from "./picker-draft";
+
+/** Native reserved action rows; option labels must disambiguate against them. */
+const RESERVED_LABELS = [OTHER_OPTION, "Chat about this", "Next →"];
+
+/** Questions native askDialog rejects: duplicate ids, or reserved or duplicate option labels. */
+function nativeRejects(questions: readonly ExtensionAskDialogQuestion[]): boolean {
+	const ids = new Set<string>();
+	for (const question of questions) {
+		if (ids.has(question.id)) return true;
+		ids.add(question.id);
+		const labels = new Set<string>();
+		for (const option of question.options) {
+			if (RESERVED_LABELS.includes(option.label) || labels.has(option.label)) return true;
+			labels.add(option.label);
+		}
+	}
+	return false;
+}
 
 type AskDialog = NonNullable<ExtensionUIContext["askDialog"]>;
 
@@ -71,34 +88,46 @@ export function routeHostAskDialog(ui: ExtensionUIContext, open: HostAskDialog):
 	};
 }
 
+/** The note text native askDialog holds for one question: every note, each after its option. */
+function joinNotes(notes: readonly AskNote[]): string | undefined {
+	const text = notes.map(({ option, text, picked }) => `${option}${picked ? "" : " (not picked)"}: ${text}`).join("\n");
+	return text || undefined;
+}
+
 function hostAnswer(
 	asked: ExtensionAskDialogQuestion,
-	shown: ExtensionAskDialogQuestion,
-	answer: MarkdownAskResultItem | undefined,
-	submitNote: SubmitNote | undefined,
+	answer: QuestionAnswer | undefined,
+	submitNote: AnswerText | undefined,
+	timedOut: boolean,
 ): ExtensionAskDialogResultItem {
-	const notes = [joinOptionNotes(answer?.notes ?? []), submitNote && `Submit note: ${submitNote.text}`].filter(
+	const notes = [joinNotes(answer?.notes ?? []), submitNote && `Submit note: ${submitNote.text}`].filter(
 		note => note !== undefined,
 	);
 	const images = answer?.images ?? [];
-	const inAnswer = (image: AskImage) => answer?.customInput?.includes(image.label) === true;
+	const inAnswer = (image: AskImage) => answer?.other?.text.includes(image.label) === true;
 	const customInputImages = images.filter(inAnswer).map(item => item.image);
 	const noteImages = [...images.filter(image => !inAnswer(image)), ...(submitNote?.images ?? [])].map(
 		item => item.image,
 	);
 	const labels = asked.options.map(option => option.label);
-	const shownLabels = shown.options.map(option => option.label);
+	let selectedOptions = (answer?.picked ?? []).flatMap(index => (labels[index] === undefined ? [] : [labels[index]]));
+	// The host dialog's own timeout picks the recommended option of each unanswered question.
+	const autoPicked = timedOut && selectedOptions.length === 0 && !answer?.other;
+	if (autoPicked) {
+		const fallback = labels[Math.min(Math.max(asked.recommended ?? 0, 0), Math.max(labels.length - 1, 0))];
+		selectedOptions = fallback === undefined ? [] : [fallback];
+	}
 	return {
 		id: asked.id,
 		question: asked.question,
 		options: labels,
 		multi: asked.multi ?? false,
-		selectedOptions: (answer?.selectedOptions ?? []).map(label => labels[shownLabels.indexOf(label)] ?? label),
-		...(answer?.customInput !== undefined ? { customInput: answer.customInput } : {}),
+		selectedOptions,
+		...(answer?.other ? { customInput: answer.other.text } : {}),
 		...(customInputImages.length > 0 ? { customInputImages } : {}),
 		...(notes.length > 0 ? { note: notes.join("\n") } : {}),
 		...(noteImages.length > 0 ? { noteImages } : {}),
-		...(answer?.timedOut ? { timedOut: true } : {}),
+		...(autoPicked ? { timedOut: true } : {}),
 	};
 }
 
@@ -132,12 +161,10 @@ export async function askInPicker(
 	host: HostDialogs,
 	session: PickerSession,
 ): Promise<ExtensionAskDialogResult | undefined> {
-	if (!wellFormed(questions)) return host.native(questions, options);
-	const shown = sanitizeQuestions(questions);
-	if (nativeRejects(shown)) return host.native(questions, options);
-	let result: MarkdownAskResult | undefined;
+	if (!wellFormed(questions) || nativeRejects(questions)) return host.native(questions, options);
+	let result: Awaited<ReturnType<typeof openPicker>>;
 	try {
-		result = await openPicker(host.ui, shown, session, {
+		result = await openPicker(host.ui, hostQuestionsForm(questions), session, {
 			timeout: options?.timeout,
 			onTimeout: options?.onTimeout,
 			signal: options?.signal,
@@ -149,12 +176,12 @@ export async function askInPicker(
 		throw error;
 	}
 	if (!result) return undefined;
-	const submitted = result;
-	const last = shown.length - 1;
+	const { answer } = result;
+	const last = questions.length - 1;
 	return {
 		kind: "submit",
-		results: shown.map((question, index) =>
-			hostAnswer(questions[index]!, question, submitted.results[index], index === last ? submitted.submitNote : undefined),
+		results: questions.map((question, index) =>
+			hostAnswer(question, answer.questions[index], index === last ? answer.submitNote : undefined, answer.timedOut),
 		),
 	};
 }

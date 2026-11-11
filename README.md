@@ -2,8 +2,8 @@
 
 An Oh My Pi (OMP) plugin that changes three tools:
 
-- `ask` shows questions as Markdown in its own Picker, with no fixed option
-  count, a note on every option, and answers kept when you press Esc.
+- `ask` takes native `ask`'s HTML form and answers it in its own Picker, with
+  a note on every option, pasted images, and answers kept when you press Esc.
 - `generate_image` has two Image generation modes: OpenAI mode (GPT Image 2.6
   Sunburst through the public OpenAI Images API) and Codex mode (the Codex
   Images endpoint with a ChatGPT login).
@@ -26,9 +26,9 @@ tool definitions they loaded.
 The plugin replaces the earlier `omp-ask` plugin. Do not load both, and do not
 install a second loose copy of the ask extension.
 
-Keep native `ask` enabled, because the plugin hands questions to it outside
-the TUI. Turn off native `generate_image`. The plugin's tool takes the name
-even when native is on.
+Keep native `ask` enabled, because the plugin hands forms to it outside the
+TUI. Turn off native `generate_image`. The plugin's tool takes the name even
+when native is on.
 
 ```yaml
 ask:
@@ -39,14 +39,32 @@ generate_image:
 
 ## `ask`
 
-The model-facing description asks for distinct options without a number
-(native says 2–5). The rest matches native `ask`, including when to ask.
+`ask` takes one argument, `html`: one HTML `<form>`, as native `ask` does since
+OMP 18.18.3. The old `questions` argument is gone, with no alias. The
+model-facing description follows native's, except that it states no option
+count and, until the Picker has text fields, asks for choice controls only.
 
-In the interactive TUI the plugin shows its own Picker, so questions keep their
-Markdown: headings, lists, paragraph breaks, and code blocks. Option
-descriptions and previews are Markdown too. The Picker keeps the native
-structure: tabs and a Submit review for several or multi-select questions,
-`Other (type your own)`, `ask.timeout` auto-selection, and `ask.notify`.
+In the interactive TUI the plugin answers the form in its own Picker. Each
+named radio group, checkbox group, `<select>`, and `<select multiple>` is a
+question with its own tab, in form order. A fieldset's legend names its tab;
+otherwise the control's name does. The context before a question shows above
+its options: headings, paragraphs, lists, preformatted text, tables, inline
+code, bold and italic, and `<img>` and inline `<svg>` pictures (display only,
+loaded as native loads them). Markup native ignores is ignored here too:
+scripts, styles, buttons, form actions, and file inputs never run or show.
+
+Values follow native: a radio group or `<select>` gives the chosen `value`, a
+checkbox group or `<select multiple>` gives an array, a lone checkbox gives
+its value (`on` by default) or nothing, and hidden inputs go back as they are.
+`checked` and `selected` options start picked. Disabled options show but
+cannot be picked. Radio and checkbox groups of two or more options get
+`Other (type your own)` unless an option already starts with "Other". The
+Picker keeps the native structure: a Submit review for several or
+multi-select questions, `ask.timeout`, and `ask.notify`.
+
+A form with a text, number, or textarea field fails with an error that names
+the field; the Picker does not show it yet, drops nothing, and does not fall
+back to native `ask`'s dialog.
 
 Tall questions scroll with PgUp/PgDn. After you scroll, the first move or
 action key brings the cursor back into view instead of acting on a hidden row.
@@ -69,7 +87,10 @@ Each key means the same thing in every Picker:
 Space or Enter on an empty `Other` opens its editor. In an editor, Enter (or
 Ctrl+Q) saves and stays on the row, and Esc discards the edit. Saving `Other`
 text picks it. Above a note or `Other` editor, the Picker shows the question's
-title (its `header`), the question, and the row you edit with its description.
+title, its context, and the row you edit.
+
+Submit checks `required` choices as native does: an unanswered one blocks
+Submit, and the Picker opens it with native's reason.
 
 Ctrl+R (`app.history.search`) in an `Other`, note, Submit note, or Picker btw
 editor opens OMP's prompt history search. The entry you pick replaces that
@@ -83,21 +104,20 @@ keeps its text, and answers are not added to the history.
   select and deselect. Un-picking `Other` keeps its text, and `n` then save
   picks it again.
 - The Submit tab has a Submit note for the whole ask.
-- On timeout, unanswered questions get the recommended option.
+- On timeout, the Picker submits the form as it stands, as native does: picks
+  and defaults, with no recommendation filled in, even when a required choice
+  is empty. The result is marked as timed out, and the card says it was not
+  your choice.
 - Plan mode does not turn off `ask.timeout`, and `speech.enabled` does not
   read the questions aloud.
 - Collaboration guests cannot answer.
-- The agent gets a compact labeled summary instead of `id: value` lines:
-  - each question's id and first line
-  - `Selected:` with a short description of each option
-  - `Other:` for your own text
-  - `Note (<option>):` for every note, or `Note (<option>, not picked):` on an
-    option you did not pick
-  - `Unanswered` for a skipped question
+- The agent gets native's form data first, then what native does not send:
+  - `Option notes:` for every note, `(not picked)` on an option you did not
+    pick (native sends notes on picked options only)
+  - `Other answers` for each `Other` text, so an `Other` answer equal to an
+    option's value is still yours
   - `Note on all answers:` for the Submit note
-
-  Checkbox questions send ticked options and `Other` text together. Native
-  `ask` drops the ticks.
+  - pasted images, each after its `[Image #N]` label
 
 ### Editors
 
@@ -179,34 +199,39 @@ sends nothing by itself. With `ask.timeout` set, the countdown starts again in
 full. An Esc before you answer anything keeps only the tab and row, and the
 Picker reopens there without the message.
 
-The draft opens for any ask with the same questions: the same ids, question
-text, option labels, and single or multi-select. It also opens when you tell
-the agent to go on and it asks the same questions again. Each session keeps one
-draft. A Picker with other questions drops it, and so do a submit, `/new`,
-`/resume`, `/fork`, a branch, a tree jump, and quitting omp.
+The draft opens for any ask with the same form: the same questions, options,
+values, defaults, `required`, hidden values, and context. Whitespace and layout
+markup do not count, so the agent can re-ask the same form after "go on". Each
+session keeps one draft. A Picker with another form drops it, and so do a
+submit, `/new`, `/resume`, `/fork`, a branch, a tree jump, and quitting omp.
 
 ### Questions from OMP itself
 
-Some OMP features ask you directly instead of through the `ask` tool, such as
-Ratchet's approvals and an ask answered again from `/tree`. In the interactive
-TUI these questions open in the same Picker, with notes, `Other`, the Picker
-btw, and the Picker draft.
+Some OMP features ask you directly with structured questions instead of the
+`ask` tool, such as Ratchet's approvals. In the interactive TUI these
+questions open in the same Picker, with notes, `Other`, the Picker btw, and
+the Picker draft.
 
 The feature gets the answer in its native form: your picks and `Other` text,
 and one note per question that lists each note after its option, with the
 Submit note last. Esc answers nothing, as in the native dialog, and keeps a
 Picker draft. The same question opens with it again and waits for Enter.
 
-A timeout counts down only when the feature sets one. `ask.timeout` and
-`ask.notify` apply to the `ask` tool only. A question that the native dialog
-would refuse (a reserved label, or a repeated id or label) opens the native
-dialog. Collaboration guests cannot answer these questions.
+A timeout counts down only when the feature sets one, and on expiry it picks
+each unanswered question's recommended option, as the native dialog does.
+`ask.timeout` and `ask.notify` apply to the `ask` tool only. A question that
+the native dialog would refuse (a reserved label, or a repeated id or label)
+opens the native dialog. Collaboration guests cannot answer these questions.
+
+An ask answered again from `/tree` runs native `ask` in OMP 18.18.8, not the
+Picker.
 
 ### Outside the TUI
 
-Outside the interactive TUI (RPC, ACP, print mode, and subagents), and for
-inputs that native `ask` rejects, the plugin runs native `ask` with the same
-arguments.
+Outside the interactive TUI (RPC, ACP, print mode, and subagents) the plugin
+passes the form unchanged to native `ask`, which prompts where the transport
+can and otherwise returns its own headless or unavailable outcome. A form with
+no named control also goes to native `ask`, which answers with its own error.
 
 ### The Picker in Tern
 
@@ -242,9 +267,10 @@ The keys stay the same, and the pointer runs the same actions:
 | Double-click an option | Moving to it, then Enter |
 | Click a button | Its key (`?`, Space, `n`, `x`, Esc, Enter) |
 
-The `ask` tool card in the transcript uses native `ask`'s Tern view: the
-question and its answers with a check on each pick, plus the Submit note.
-`PI_TUI_NATIVE=0` keeps the text Picker.
+The `ask` tool card uses native `ask`'s card in both renderers: each question
+with its answer and notes, an unpicked note marked `(not picked)`, an `Other`
+answer as `Other: …`, the Submit note, and the timeout notice. Pasted images
+follow the card. `PI_TUI_NATIVE=0` keeps the text Picker.
 
 ## `generate_image`
 

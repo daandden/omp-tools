@@ -25,7 +25,7 @@ Free text for the whole `ask`, written on the Submit tab and not tied to any que
 _Avoid_: general note, global note
 
 **Picker draft**:
-The picks, **Notes**, **Other answers**, **Submit note**, and **Picker btw** thread of a **Picker** that Esc closed without submitting, kept until a **Picker** with the same questions opens again.
+The picks, **Notes**, **Other answers**, **Submit note**, and **Picker btw** thread of a **Picker** that Esc closed without submitting, kept until a **Picker** with the same form opens again.
 _Avoid_: saved state, saved answers, cancelled answers
 
 **Side question**:

@@ -4,8 +4,8 @@
 
 `omp-tools` is an Oh My Pi (OMP) plugin with three parts:
 
-- `ask`: a shadow of native `ask` with no model-facing option count. In the
-  TUI it shows the Picker; elsewhere it delegates to native `ask`.
+- `ask`: a shadow of native `ask` that takes the same HTML form. In the TUI
+  it answers the form in the Picker; elsewhere it delegates to native `ask`.
 - `generate_image`: replaces native `generate_image` with two Image generation
   modes, OpenAI mode (the default) and Codex mode.
 - `/btw <question>` and the Picker btw: Side questions answered by a read-only
@@ -26,11 +26,12 @@ default-exported initializer that registers tools and event handlers on the
 `skills/*/SKILL.md` from the plugin root (the `omp-plugins` discovery
 provider, priority 90).
 
-- **`ask`.** `flexible-ask.ts` picks a path per call. In the TUI it opens the
-  Picker (`ask-dialog.ts`) through `openPicker` (`picker-draft.ts`) and
-  formats a native-shaped result with `ask-result.ts`. Elsewhere it calls
-  native `ask` through `ctx.invokeTool`. `host-ask-dialog.ts` sends OMP's own
-  `askDialog` calls to the same Picker.
+- **`ask`.** `flexible-ask.ts` picks a path per call. In the TUI it reads the
+  form with `ask-form.ts`, opens the Picker (`ask-dialog.ts`) through
+  `openPicker` (`picker-draft.ts`), and builds the result with
+  `ask-result.ts`. Elsewhere it calls native `ask` through `ctx.invokeTool`.
+  `host-ask-dialog.ts` sends OMP's own structured `askDialog` calls to the
+  same Picker.
 - **Side questions.** `side-question.ts` forks the main transcript into a
   mirror session. `btw.ts` (panel in `btw-panel.ts`) and `picker-btw.ts`
   (view in `picker-btw-view.ts`) each own a `LazySideQuestionThread`, and
@@ -44,45 +45,60 @@ provider, priority 90).
 ### SDK imports
 
 Runtime value imports of `@oh-my-pi/*` resolve to the host's in-process
-modules through OMP's extension specifier shim. Compiled binaries serve only
-exported subpaths:
+modules through OMP's extension specifier shim. A compiled binary serves only
+the keys in its module registry; any other subpath can load a second SDK copy
+and fail. The compiled OMP 18.18.8 registry serves (keys read from the binary
+for #45):
 
-- `@oh-my-pi/pi-tui`, `/chrome`, `/render`, `/theme`, `/thinking`
+- `@oh-my-pi/pi-tui`, `/chrome`, `/render`, `/theme`, `/thinking`, and every
+  nested module, including `/html-form/*`, `/chat/svg-figure`,
+  `/native/blobs`, `/overlays/*`, and `/tools/*`
 - `@oh-my-pi/pi-coding-agent`, `/judgment`, `/modes/*`, `/tools/*`,
-  `/utils/*`, and the exact subpaths `/config/model-resolver`,
-  `/extensibility/plugins/loader`, and `/session/settings` (import probe,
-  compiled OMP 18.13.3)
-- the `@oh-my-pi/pi-utils` root
+  `/utils/*`, `/session/*`, `/config/model-resolver`,
+  `/extensibility/plugins/loader`, and `/session/settings`
+- `@oh-my-pi/pi-utils` and its flat subpaths, such as `/dom`
 
-Any other subpath can load a second SDK copy and fail
-(`@oh-my-pi/pi-tui/overlays/*` does). The `pi-tui` root exports the describe
-builders (`node`, `col`, `md`, `span`, `text`, `kbd`). `actionButton` and
-`hintsRow` live in the unserved `/native/overlay`, so `ask-dialog.ts` and
-`ask-editor.ts` mirror them. Type-only imports such as
-`@oh-my-pi/pi-tui/tools/renderer` are erased and safe. `@oh-my-pi/pi-catalog`
-is not served either, so `codex-images.ts` reimplements what it needs.
+Check a new subpath against the deployed binary before you import it. The
+`pi-tui` root exports the describe builders (`node`, `col`, `md`, `span`,
+`text`, `kbd`). `ask-dialog.ts` and `ask-editor.ts` mirror `actionButton` and
+`hintsRow` from `/native/overlay`, which OMP 18.13.3 did not serve. Type-only
+imports such as `@oh-my-pi/pi-tui/tools/renderer` are erased and safe.
+`@oh-my-pi/pi-catalog` is not served, so `codex-images.ts` reimplements what
+it needs.
 
 ### `ask` and the Picker
 
-- `flexible-ask.ts` opens the Picker through `ctx.ui.custom` when
-  `ctx.mode === "tui"` and `ctx.hasUI`. It requires `ctx.invokeTool` even on
-  that path, and fails with an explicit error when native delegation is
+- `flexible-ask.ts` takes native's one argument, `html`, and refuses any other
+  key (`"+": "reject"`), so the old `questions` input gets a schema error, with
+  no alias. In the TUI (`ctx.mode === "tui"` and `ctx.hasUI`) it opens the
+  Picker through `ctx.ui.custom`. It requires `ctx.invokeTool` even on that
+  path, and fails with an explicit error when native delegation is
   unavailable. An extension cannot restyle the native dialog, because
   `ctx.invokeTool` runs it with the session UI.
-- Outside the TUI (RPC, ACP, print, subagents), and for inputs native rejects
-  (reserved or duplicate labels, duplicate ids), it calls
-  `ctx.invokeTool(params, { signal, onUpdate })` so native errors and
-  fallbacks apply unchanged. `ask-questions.ts` holds the reserved labels,
-  `sanitizeQuestions`, and `nativeRejects`, shared with host dialogs. Keep
-  native `ask` enabled for this, and replace legacy `omp-ask` installs instead
-  of loading two wrappers.
-- An empty single-select submission cancels the call; an empty multi-select
-  is a valid answer.
+- Outside the TUI (RPC, ACP, print, subagents), and for a form with no named
+  control, it calls `ctx.invokeTool(params, { signal, onUpdate })` so native
+  prompting, errors, and headless outcomes apply unchanged. Keep native `ask`
+  enabled for this, and replace legacy `omp-ask` installs instead of loading
+  two wrappers.
+- `ask-form.ts` is the one place a form is interpreted. It parses with the
+  host's `html-form/parse` and uses `html-form/data` for values
+  (`choiceValue`), validation (`fieldError`), and question names
+  (`fieldQuestions`), so no widget parses HTML. It also holds the form
+  identity (`AskForm.key`, the parsed model, so layout whitespace never
+  matters), the rich answer state (picks, Other answers, Notes, images), and
+  `formAnswer`, which the result builder, the host dialog adapter, and the
+  Picker btw read. Host askDialog questions enter as `hostQuestionsForm`:
+  choice fields named by id whose values are their labels.
+- Until the Picker has text fields, a named text, number, or textarea control
+  fails the call with an error naming it. It never drops the field or falls
+  back to the native dialog.
+- Manual Submit runs native `fieldError` and opens the first refused
+  question. The timeout submits the state as it stands with `timedOut`, with
+  no validation and no recommendation filled in, as native does.
 - Unlike native `ask` (`tools/ask.ts`), the Picker keeps `ask.timeout` in
   plan mode and does not speak the questions under `speech.enabled`.
 - Preserve `approval: "read"`, `concurrency: "exclusive"`, cancellation
-  (`ctx.abort()` plus `ToolAbortError`), `ask.timeout` auto-selection, and
-  `ask.notify`.
+  (`ctx.abort()` plus `ToolAbortError`), `ask.timeout`, and `ask.notify`.
 - Pass the timeout to `ui.custom` as `{ signal, timeout }` (`timeout` is not
   in `ExtensionCustomOptions`). Since OMP 18.12 the host treats an extension
   dialog without a positive `timeout` as a wait for the user, which ends the
@@ -90,13 +106,19 @@ is not served either, so `codex-images.ts` reimplements what it needs.
 - `ask-dialog.ts` keeps pi-tui `AskDialogComponent`'s structure (tabs, Submit
   review, multi-select, Other, timeout) with its own key flow, one meaning
   per key in every Picker (README keys table). Diff the structure against
-  upstream when OMP changes the native dialog.
-- `ask-result.ts` writes the labeled answer text, the only part the model
-  sees, and `joinOptionNotes`, the one note string native details hold per
-  question.
+  upstream when OMP changes the native dialog. `ask-pictures.ts` draws form
+  pictures as native's form dialog does (`loadFormImage`, `Image`,
+  `SvgFigure`, `nativeImageNode`); a classic picture the scroll window cuts
+  shows as one placeholder line.
+- `ask-result.ts` writes the result: native's form data JSON, then labeled
+  Option notes (unpicked ones marked), Other answers, and the Submit note,
+  the only part the model sees. `details` are native `AskToolDetails`
+  (`answers`, picked `notes`, `timedOut`) plus `unpickedNotes`, `other`, and
+  `submitNote`. Images go only in `content`, after their labels.
 - `flexible-ask.md` is the model-facing description. Keep it aligned with
   upstream `packages/coding-agent/src/prompts/tools/ask.md`, except that it
-  states no option count where upstream says 2–5.
+  states no option count where upstream says 2–5 and, until the Picker has
+  text fields, asks for choice controls only.
 
 #### Editors and paste
 
@@ -169,11 +191,15 @@ instead of `render()`.
 - `AnswerEditor` and the Picker btw view describe the `CustomEditor` as a child
   component. `AnswerEditor` replaces the composer layout and placeholder so no
   model chip or send bar shows.
-- Tool cards come from `describeCall` and `describeResult`. An extension tool
-  never gets the built-in renderer of its name, so `ask` reuses the exported
-  `askToolRenderer` plus the Submit note (`details.submitNote`).
-  `mergeCallAndResult` is forwarded from the definition like `concurrency`.
-  The host appends result images from `content` after the view's body.
+- Tool cards come from `describeCall`/`describeResult` (Tern) and
+  `renderCall`/`renderResult` (classic). An extension tool never gets the
+  built-in renderer of its name, so `ask` reuses the exported
+  `askToolRenderer` with the call's `html` (password masking, the pending
+  form). Its details carry unpicked notes as `notes` marked `(not picked)`;
+  the Tern card adds the Submit note as a row, the classic card as a last
+  answer. `mergeCallAndResult` is forwarded from the definition like
+  `concurrency`. The host appends result images from `content` after the
+  card in both renderers.
 
 #### Picker draft
 
@@ -186,13 +212,16 @@ instead of `render()`.
   again. No key is bound. Since OMP 18.14, a custom message after the abort
   other than an eval-state snapshot (a background job result between Esc and
   F5) makes F5 drop the aborted turn and call the model. A re-ask with the
-  same questions still gets the draft.
-- `take` hands the draft to a Picker whose question ids, text, option labels,
-  and `multi` match, and disposes the thread on other questions. A main
-  prompt keeps the draft: a manual retry fires no `before_agent_start`, and a
-  re-ask after "go on" should match.
-- A restored Picker shows `Restored your answers` only when the draft holds a
-  pick, text, a Submit note, or a turn, and restarts the full `ask.timeout`.
+  same form still gets the draft.
+- `take` hands the draft to a Picker whose `AskForm.key` matches: the parsed
+  form (questions, option values and labels, defaults, `required`, `multi`,
+  hidden values, context), so whitespace and layout markup never decide it.
+  Another form disposes the thread. A main prompt keeps the draft: a manual
+  retry fires no `before_agent_start`, and a re-ask after "go on" should
+  match.
+- A restored Picker shows `Restored your answers` only when the draft differs
+  from how the form opens (a pick, text, a Submit note, or a turn), and
+  restarts the full `ask.timeout`.
 - The slot ends every Picker btw thread (`end`): dropped, mismatched,
   submitted, or failed. `drop` waits for all of them.
   `session_before_switch`, `session_before_branch`, `session_tree`, and
@@ -202,11 +231,14 @@ instead of `render()`.
 
 #### Host dialogs
 
-OMP code that asks without the `ask` tool calls the shared UI context's
-`askDialog`: Ratchet approvals (`ratchet/prelude-definition.ts`) and the
-`/tree` ask re-answer. `host-ask-dialog.ts` routes it to the Picker in the
-TUI. The route relies on undocumented OMP internals, proved live with OMP
-18.12.6; recheck it when OMP changes the extension runner.
+OMP code that asks with structured questions instead of the `ask` tool calls
+the shared UI context's `askDialog`, such as Ratchet approvals
+(`ratchet/prelude-definition.ts`).
+`host-ask-dialog.ts` routes it to the Picker in the TUI. Since OMP 18.18.3
+the `/tree` ask re-answer runs native `AskTool`, which calls `formDialog`, not
+`askDialog`, so it shows native's HTML form dialog, not the Picker. The route
+relies on undocumented OMP internals, proved live with OMP 18.12.6; recheck
+it when OMP changes the extension runner.
 
 - `session_start` replaces `askDialog` on the context object itself. The
   runner's context and the tool context store's wrapper (`trackUserWaits`)
@@ -219,15 +251,19 @@ TUI. The route relies on undocumented OMP internals, proved live with OMP
 - One wrapper lives under `Symbol.for("omp-tools.host-ask-dialog")`, shared by
   every module load. Further routes stack in its list, and the last one to end
   (`session_shutdown`) restores the native method.
-- `askInPicker` answers in the native `ExtensionAskDialogResult` shape: the
-  caller's ids, question text, and labels (shown without `\r`), picks, `Other`
-  text, one note per question (each option note after its option; the Submit
-  note goes after the last question's notes), and images split by whether
-  `customInput` names their label.
+- `askInPicker` normalizes the questions with `hostQuestionsForm` and
+  answers in the native `ExtensionAskDialogResult` shape: the caller's ids,
+  question text, and labels (shown without `\r`), picks, `Other` text, one
+  note per question (each option note after its option; the Submit note goes
+  after the last question's notes), and images split by whether `customInput`
+  names their label.
 - Esc and an aborted signal give `undefined`, and Esc keeps a Picker draft in
   the same slot as `ask`.
-- Only the caller's `timeout` counts down. Its `onTimeout` runs once on expiry
-  before answers are picked, as native does, and no notification is sent.
+- Only the caller's `timeout` counts down. Its `onTimeout` runs once on
+  expiry, as native does, and no notification is sent. Each question still
+  unanswered then gets its recommended option with `timedOut`, as native
+  `timedOutAskDialogResult` does; this is the host dialog's contract, not the
+  `ask` tool's.
 - Malformed questions, which native coerces, and `nativeRejects` questions go
   to the native method.
 - Collaboration guests cannot answer, because the native method's guest race

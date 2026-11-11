@@ -106,6 +106,29 @@
   open if the selected entry is not in the saved transcript. A pending `ask`
   or a running tool still shows to it as open, with an instruction not to call
   it again.
+- `ask` now takes native `ask`'s HTML form (`html`, one `<form>`), as OMP
+  does since 18.18.3, and its description follows native's. The Picker shows
+  each radio group, checkbox group, `<select>`, and `<select multiple>` as a
+  question, with the form's headings, paragraphs, lists, preformatted text,
+  tables, inline emphasis, and pictures (`<img>`, inline `<svg>`) above its
+  options, and with native's defaults, disabled options, hidden values, and
+  `required` check on Submit. The agent gets native's form data, then every
+  Note (unpicked ones marked), `Other` answers named as yours even when they
+  equal an option's value, the Submit note, and pasted images after their
+  labels. The card is native's in both renderers, with those additions.
+- On `ask.timeout` the Picker now submits the form as it stands, as native
+  does: picks and defaults only, even with a required choice empty, marked as
+  timed out and shown as not your choice. It no longer picks a recommended
+  option. Host dialogs (Ratchet) keep their own native timeout, which picks
+  the recommended option.
+- A Picker draft now matches on the form itself: the same questions, values,
+  defaults, `required`, hidden values, and context. Whitespace and layout
+  markup no longer matter.
+- A form with a text, number, or textarea field fails with an error naming
+  the field until the Picker supports them; it is not dropped and does not
+  fall back to the native dialog.
+- An ask answered again from `/tree` shows OMP's own form dialog: since OMP
+  18.18.3 the re-answer no longer goes through the dialog the plugin routes.
 
 - Updated the SDK types to OMP 18.13.3 and synchronized the `ask` description
   with upstream's instruction to show decision context before blocking.
@@ -142,6 +165,9 @@
 
 ### Removed
 
+- Removed `ask`'s `questions` argument and its `recommended`, `header`,
+  `description`, `preview`, and `multi` fields, with no alias. Older saved
+  sessions keep their `questions` calls as they are.
 - Removed the Advisor wake and the release of deferred advisor concerns at a
   Picker answer. Since OMP 18.12.1, OMP itself continues the run for a concern
   or blocker that arrives after the final answer (`advisor.continueSeverity`,
