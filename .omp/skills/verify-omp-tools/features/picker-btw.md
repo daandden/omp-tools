@@ -10,6 +10,9 @@ While the ask picker waits for an answer, `?` swaps the options for a thread whe
 - `pbtw-back` cancels a running answer with Esc, then returns to the options with answers kept.
 - `pbtw-end` ends the thread when the picker closes.
 - `pbtw-irc` answers about a subagent while an `ask` that the subagent's IRC message started waits, without asking the user again and with every message's text shown.
+- `pbtw-mixed` offers the thread on a form with text, number, and textarea fields too.
+- `pbtw-pending` sends the waiting `ask` call to the Side question as still open, so it does not call `ask` again.
+- `pbtw-kept` keeps the thread through Esc on the `ask`, and F5 shows it again with the restored answers.
 
 ## How to get to it (user POV)
 
@@ -33,10 +36,11 @@ Preconditions:
 - Answer. Run `$C key j`, `$C key Enter`, `sleep 12`, `$C shot pbtw-answered`. The ask card shows `blue` checked and the agent replies `blue`. The main session's `ask` tool result holds the form data with `color` set to the `blue` option's value.
 - End. The Side question listing shows no new `SideQuestion-*.jsonl`, and `grep -c '<btw>'` on the main session JSONL prints 0.
 - IRC. In a new session, run `$C type '"Use the task tool to spawn exactly one subagent named AskRelay (agent: task). Its task, verbatim: You cannot ask the user yourself. Send the main agent one IRC message with the write tool, path agent://Main, content: Please ask the user: for the new parser tests in this repo, should I use bun test or vitest? Then call the wait tool for the reply and yield it. -- After spawning, call wait. When its message arrives, ask the user that exact question with the ask tool (options bun test and vitest)."'` and `$C key Enter`. When `$C tree` contains `Ask aside`, the transcript shows `IRC ← AskRelay` above the `Ask` card. Run `$C key '?'`, then `$C type '"First write one short line saying what you will check. Then read agent://AskRelay and package.json. Then tell me what AskRelay is waiting for, which test runner this repo uses, and whether I should pick bun test."'` and `$C key Enter`. When `Answering` is gone, run `$C shot pbtw-irc`. The thread shows the short line, then `2 tool calls`, then the answer; `$C click '.sf-section-head'` shows `read agent://AskRelay` and `read package.json` with no `(failed)`. No second `Ask` card appears in the transcript.
+- Mixed form, pending call, and kept thread (`pbtw-mixed`, `pbtw-pending`, `pbtw-kept`). In a new session, use the local provider from `ask-picker.md` (How to get to it), with an `ask` whose form has a radio group, a text field, a number field, and a textarea. Answer a field, press `?`, ask `What have I answered so far?`, and wait for the answer. The provider's JSONL holds one request with only the read-only tools; its last tool result for the `ask` call reads `The user is answering this question in the Picker now. The answer is not known here. Do not call ask again.`, and no later request calls `ask`. Press Esc twice (thread, then Picker): the call ends cancelled. Press F5: the Picker shows `Restored your answers`, and `?` shows the earlier turn.
 
 ## Gotchas
 
-- `?` only works in the options, not inside the note or `Other` editor.
+- `?` only works in the options, not inside an open editor (note, `Other`, or text field).
 - The Picker btw is not offered when the session has no saved transcript, in a subagent, or when the main session has no model.
 - The tool-call line opens only by click in the Tern view; the classic picker has no key for it, because the question box owns the keys.
 - Esc while an answer streams cancels it first; a second Esc goes back to the options.

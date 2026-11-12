@@ -675,6 +675,21 @@ smoke only.
 
 Last live proof, newest first:
 
+- 2026-11-12, final acceptance of the HTML `ask` migration: OMP source at
+  `8ed79a8` (`feat/extension-ask-replay`), headless Tern 0.9.16, local SSE
+  provider, fresh agent dir. In both renderers: a mixed form with context
+  blocks; Submit refused on a number above `max`; `ask.timeout` sending an
+  empty required field and an out-of-range number marked not the user's
+  choice; an image Note on an unpicked option, `Other`, and the Submit note;
+  Esc then F5 restoring the answers and the Picker btw thread; Ctrl+R in a
+  textarea; a ratchet `askDialog` with a Note; `/tree` re-answer, where Esc
+  changes neither the session file nor the request count and Submit saves the
+  rich answer once. Side question requests after compaction, after `/tree`
+  with and without a new prompt, and during a pending `ask` hold the selected
+  saved history. RPC-UI hands the form to native `ask`; RPC and print return
+  `Native ask tool unavailable for delegation`. OMP source at `v18.18.8`
+  (Tern 0.9.17) and installed 18.18.9 show the required-host error at
+  session start and on `ask`.
 - OMP source at `8ed79a8` (`feat/extension-ask-replay`), headless Tern
   0.9.16, local SSE provider, in both renderers: `/tree` re-answer opens the
   Picker with no model request; Esc leaves the session file unchanged and a

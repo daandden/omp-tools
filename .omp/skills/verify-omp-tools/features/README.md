@@ -30,7 +30,7 @@ Each feature file starts with an H1 title and one paragraph of user-visible beha
 
 ## Features
 
-- [Side question with /btw](./side-question-btw.md): answer with read-only tools, the tool-call fold, follow-ups, cancel, and the thread ending at the next main prompt.
-- [Picker btw](./picker-btw.md): a Side question from inside the ask picker, while `ask` waits.
-- [Ask picker](./ask-picker.md): HTML form questions and context, keys, Other and notes, images, Submit and `required`, timeout, the draft, and the answer the agent gets.
+- [Side question with /btw](./side-question-btw.md): answer with read-only tools, the tool-call fold, follow-ups, cancel, the thread ending at the next main prompt, and the thread's start from the saved transcript.
+- [Picker btw](./picker-btw.md): a Side question from inside the ask picker, while `ask` waits, on choice and mixed forms.
+- [Ask picker](./ask-picker.md): HTML form questions and context, keys, Other and notes, images, Submit and `required`, timeout, the draft, `/tree` re-answer, the required host, host dialogs, other transports, and the answer the agent gets.
 - [generate_image](./generate-image.md): each Image generation mode's schema, generations and edits (OpenAI mode also `n`, formats, streaming, and masks), and the tool card.
