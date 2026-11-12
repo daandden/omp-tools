@@ -13,7 +13,6 @@ import { openPicker, type PickerSession } from "./picker-draft";
 /** Native reserved action rows; option labels must disambiguate against them. */
 const RESERVED_LABELS = [OTHER_OPTION, "Chat about this", "Next →"];
 
-/** Questions native askDialog rejects: duplicate ids, or reserved or duplicate option labels. */
 function nativeRejects(questions: readonly ExtensionAskDialogQuestion[]): boolean {
 	const ids = new Set<string>();
 	for (const question of questions) {
@@ -88,7 +87,6 @@ export function routeHostAskDialog(ui: ExtensionUIContext, open: HostAskDialog):
 	};
 }
 
-/** The note text native askDialog holds for one question: every note, each after its option. */
 function joinNotes(notes: readonly AskNote[]): string | undefined {
 	const text = notes.map(({ option, text, picked }) => `${option}${picked ? "" : " (not picked)"}: ${text}`).join("\n");
 	return text || undefined;

@@ -9,7 +9,6 @@ type Entry = Parameters<SessionManager["appendMessage"]>[0];
 
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 
-/** Writes main-session turns the way OMP persists them, keeping the live messages rebuilt from the file as OMP does. */
 function history(fixture: Fixture) {
 	const manager = fixture.main.sessionManager;
 	const model = fixture.main.model!;
@@ -45,10 +44,7 @@ function history(fixture: Fixture) {
 	};
 }
 
-/**
- * The conversation a provider request carries, one line per message, without
- * the system prompt and the date reminder OMP puts before the first user message.
- */
+// Without the system prompt and the date reminder OMP puts before the first user message.
 function transcript(request: Record<string, any> | undefined): string[] {
 	return (request?.messages as Record<string, any>[] ?? [])
 		.filter(message => message.role !== "system" && message.role !== "developer")
@@ -63,7 +59,6 @@ function transcript(request: Record<string, any> | undefined): string[] {
 		});
 }
 
-/** Asks one Side question in a new thread and returns its first request's conversation. */
 async function firstSideRequest(fixture: Fixture): Promise<string[]> {
 	const before = fixture.requests.length;
 	const thread = await fixture.open();
@@ -71,15 +66,9 @@ async function firstSideRequest(fixture: Fixture): Promise<string[]> {
 	return transcript(fixture.requests[before]);
 }
 
-/** OMP's eval runtime snapshot, persisted after a history rewrite of a branch with eval calls. */
 const evalState = expect.stringMatching(/^user: <system-reminder>\nEval runtime state is host-retained/);
 
-/**
- * Browses the tree as a user does: an eval branch, then a later turn on
- * another branch, then back to the eval branch. Revisiting moves onto the
- * snapshot OMP persisted on the first visit, so the selected entry is not the
- * file's last one.
- */
+// Revisiting moves onto the snapshot OMP persisted on the first visit, so the selected entry is not the file's last one.
 async function backToEvalBranch(fixture: Fixture) {
 	const turn = history(fixture);
 	turn.user("eval-branch-question");
@@ -152,6 +141,42 @@ test("a Side question after a /tree jump with no new prompt follows the selected
 }, 30_000);
 
 test("a pending main ask and bash stay open to the Side question, with no repeat and no failure", async () => {
+	const calls: [string, string, Record<string, unknown>][] = [
+		["call_read", "read", { path: "deploy.md" }],
+		["call_ask", "ask", { html: "<form><input type=\"radio\" name=\"target\" value=\"prod\"></form>" }],
+		["call_bash", "bash", { command: "make build" }],
+	];
+	const fixture = await sideQuestionFixture({
+		toolCalls: body => (body.messages as Record<string, any>[]).some(message => message.role === "tool") ? undefined : calls,
+		tools: { read: "deploy-notes", ask: null, bash: null },
+	});
+	try {
+		// The main turn runs: read has its result, ask waits on the user and bash still runs.
+		const run = fixture.main.prompt("pick-a-target");
+		const deadline = Date.now() + 5_000;
+		const readDone = () => fixture.main.sessionManager.getBranch().some(entry => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolCallId === "call_read");
+		while (!readDone()) {
+			if (Date.now() > deadline) throw new Error("the main turn never ran its read call");
+			await Bun.sleep(10);
+		}
+		expect(fixture.main.isStreaming).toBe(true);
+		const sideRequest = await firstSideRequest(fixture);
+		fixture.release();
+		await run;
+		await fixture.main.waitForIdle();
+
+		expect(sideRequest).toEqual([
+			"user: pick-a-target",
+			"assistant: [read#call_read, ask#call_ask, bash#call_bash]",
+			"tool call_read: deploy-notes",
+			"tool call_ask: The user is answering this question in the Picker now. The answer is not known here. Do not call ask again.",
+			"tool call_bash: This call is still running in the main conversation. Its result is not known here. Do not call it again.",
+			"user: side-question-prompt",
+		]);
+	} finally { await fixture.dispose(); }
+}, 30_000);
+
+test("calls the idle main session left without results read as interrupted to the Side question, not still open", async () => {
 	const fixture = await sideQuestionFixture();
 	try {
 		const turn = history(fixture);
@@ -163,15 +188,12 @@ test("a pending main ask and bash stay open to the Side question, with no repeat
 			["call_bash", "bash", { command: "make build" }],
 		);
 		turn.result("call_read", "read", "deploy-notes");
-		// Mid-turn, the main agent still holds the calls it waits on.
-		fixture.main.agent.replaceMessages(turn.manager.buildSessionContext({ inFlightToolCallIds: new Set(["call_ask", "call_bash"]) }).messages);
+		expect(fixture.main.isStreaming).toBe(false);
 
 		expect(await firstSideRequest(fixture)).toEqual([
 			"user: pick-a-target",
-			"assistant: [read#call_read, ask#call_ask, bash#call_bash]",
+			"assistant: [read#call_read]",
 			"tool call_read: deploy-notes",
-			"tool call_ask: The user is answering this question in the Picker now. The answer is not known here. Do not call ask again.",
-			"tool call_bash: This call is still running in the main conversation. Its result is not known here. Do not call it again.",
 			"user: side-question-prompt",
 		]);
 	} finally { await fixture.dispose(); }

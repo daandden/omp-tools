@@ -1,7 +1,3 @@
-// Pictures an `ask` form shows (`<img>` and inline `<svg>`), drawn as native
-// ask's form dialog draws them: rows through `Image` or `SvgFigure` in the
-// classic TUI, an image blob in Tern. Display only: nothing here reaches the
-// answer.
 import { Image, measureRender, type NativeNode, node, span, type TUI, truncateToWidth } from "@oh-my-pi/pi-tui";
 import { SvgFigure } from "@oh-my-pi/pi-tui/chat/svg-figure";
 import { type FormMedia, isSvgMedia, loadFormImage, svgMedia } from "@oh-my-pi/pi-tui/html-form/media";
@@ -10,7 +6,6 @@ import { sanitizeCarriageReturns } from "@oh-my-pi/pi-tui/render";
 import { theme } from "@oh-my-pi/pi-tui/theme";
 import type { AskPicture } from "./ask-form";
 
-/** Most rows one picture fills, and its share of the terminal (native form dialog values). */
 const MAX_PICTURE_ROWS = 16;
 const PICTURE_SHARE = 0.35;
 
@@ -29,7 +24,6 @@ export class AskPictures {
 	readonly #cwd: string;
 	readonly #slots = new Map<AskPicture, Slot>();
 	readonly #abort = new AbortController();
-	/** Bumped whenever a picture lands or fails, so cached layouts redraw. */
 	#version = 0;
 
 	constructor(tui: TUI, cwd: string) {
@@ -41,7 +35,6 @@ export class AskPictures {
 		return this.#version;
 	}
 
-	/** Rows of a picture in the classic TUI: its graphic once loaded, else one dim line saying why not. */
 	rows(picture: AskPicture, width: number): string[] {
 		const slot = this.#slot(picture);
 		if (slot.state === "ready") {
@@ -51,14 +44,12 @@ export class AskPictures {
 		return [theme.fg("dim", truncateToWidth(this.#note(picture, slot), width))];
 	}
 
-	/** The picture as a Tern node. */
 	describe(picture: AskPicture): NativeNode {
 		const slot = this.#slot(picture);
 		if (slot.state === "ready") return slot.native;
 		return node("text", { spans: [span(this.#note(picture, slot), "muted")], truncate: "end" });
 	}
 
-	/** A one-line stand-in for a picture that is loading, failed, or does not fit where it would be drawn. */
 	placeholder(picture: AskPicture, width: number): string {
 		return theme.fg("dim", truncateToWidth(`▣ ${pictureName(picture)}`, width));
 	}

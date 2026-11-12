@@ -19,7 +19,6 @@ export class PickerDraftSlot {
 		this.#kept = { key: form.key, picker };
 	}
 
-	/** The kept Picker when `form` is the one it answered; any Picker that opens empties the slot. */
 	take(form: AskForm): KeptPicker | undefined {
 		const kept = this.#kept;
 		this.#kept = undefined;

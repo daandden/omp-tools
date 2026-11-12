@@ -116,11 +116,6 @@ export class PickerBtwView {
 		this.#options.tui.requestRender();
 	}
 
-	/** The question box, which holds focus while the view is open. */
-	get editor(): AnswerEditor | undefined {
-		return this.#editor;
-	}
-
 	setUseTerminalCursor(useTerminalCursor: boolean): void {
 		this.#editor?.setUseTerminalCursor(useTerminalCursor);
 	}

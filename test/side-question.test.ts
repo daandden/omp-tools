@@ -50,8 +50,8 @@ describe("cacheMissTokens", () => {
 });
 
 describe("SideQuestionCache", () => {
-	const a = { role: "user" };
-	const b = { role: "assistant" };
+	const a = "entry-a";
+	const b = "entry-b";
 
 	test("a first thread's first request reports nothing, and a short follow-up reports a miss", () => {
 		const tracker = new SideQuestionCache().thread([a, b]);
@@ -75,9 +75,9 @@ describe("SideQuestionCache", () => {
 			first.observe(reply(27_640, 200));
 			return cache;
 		};
-		expect(opened().thread([a, b, { role: "user" }]).observe(reply(27_520, 124))).toBeUndefined();
-		expect(opened().thread([a, b, { role: "user" }]).observe(reply(10_624, 17_020))).toBe(17_020);
-		expect(opened().thread([{ role: "user" }, b]).observe(reply(10_624, 17_020))).toBeUndefined();
+		expect(opened().thread([a, b, "entry-c"]).observe(reply(27_520, 124))).toBeUndefined();
+		expect(opened().thread([a, b, "entry-c"]).observe(reply(10_624, 17_020))).toBe(17_020);
+		expect(opened().thread(["entry-c", b]).observe(reply(10_624, 17_020))).toBeUndefined();
 	});
 
 	test("a thread opened before the earlier one's first request finished expects nothing", () => {
@@ -108,16 +108,16 @@ describe("SideQuestionCache", () => {
 });
 
 describe("sharedPrefixPrompt", () => {
-	const a = { role: "user" };
-	const b = { role: "assistant" };
-	const earlier = { messages: [a, b], prompt: 27_644 };
+	const a = "entry-a";
+	const b = "entry-b";
+	const earlier = { entryIds: [a, b], prompt: 27_644 };
 
-	test("expects the earlier first prompt while the main messages still start with the ones it saw", () => {
-		expect(sharedPrefixPrompt(earlier, [a, b, { role: "user" }, { role: "assistant" }])).toBe(27_644);
+	test("expects the earlier first prompt while the selected entries still start with the ones it saw", () => {
+		expect(sharedPrefixPrompt(earlier, [a, b, "entry-c", "entry-d"])).toBe(27_644);
 	});
 
 	test("expects nothing after compaction or a branch change, or with no earlier thread", () => {
-		expect(sharedPrefixPrompt(earlier, [{ role: "user" }, b])).toBeUndefined();
+		expect(sharedPrefixPrompt(earlier, ["entry-c", b])).toBeUndefined();
 		expect(sharedPrefixPrompt(earlier, [a])).toBeUndefined();
 		expect(sharedPrefixPrompt(undefined, [a, b])).toBeUndefined();
 		expect(sharedPrefixPrompt(earlier, [a, b])).toBe(27_644);

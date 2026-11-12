@@ -23,15 +23,6 @@ The link uses the working tree, so edits need no reinstall. Start a new OMP
 session after you link the plugin or change its code. Running sessions keep the
 tool definitions they loaded.
 
-omp-tools needs an OMP whose `/tree` re-answer runs the plugin's `ask`, so
-that answering a past `ask` again keeps everything the Picker adds. No OMP
-release has it yet: it is commit `8ed79a8` on the OMP branch
-`feat/extension-ask-replay`, which serves
-`@oh-my-pi/pi-coding-agent/tools/ask-reanswer`. On an older OMP, such as
-18.18.8 or 18.18.9, the plugin reports an error naming that commit when a
-session starts, and every `ask` call fails with the same error. It does not
-fall back to native `ask`; disable the plugin to use native `ask` there.
-
 The plugin replaces the earlier `omp-ask` plugin. Do not load both, and do not
 install a second loose copy of the ask extension.
 
@@ -98,7 +89,6 @@ Each key means the same thing in every Picker:
 | n | Edit the row's text: the option's note, the `Other` answer, the text field, or, on the Submit tab, the Submit note |
 | x | Clear that text (on `Other`, also un-pick it) |
 | ? | Ask a Picker btw |
-| Ctrl+R (in an editor) | Search OMP's prompt history; the entry you pick replaces the editor's text |
 
 Space or Enter on an empty `Other` or text field opens its editor. In an
 editor, Enter (or Ctrl+Q) saves and stays on the row, and Esc discards the
@@ -111,13 +101,6 @@ Submit checks each answer as native does: `required`, a number's `min` and
 (matched whole). Like native, it ignores a `min` or `max` that is not a number
 and a pattern that does not compile. The first field that fails blocks Submit,
 and the Picker opens it with native's reason.
-
-Ctrl+R (`app.history.search`) in an `Other`, note, text field, Submit note,
-or Picker btw editor opens OMP's prompt history search. The entry you pick
-replaces that editor's text, and you can edit it before saving. Esc in the
-search keeps the text, and either way the editor keeps focus. Nothing is
-sent, the main prompt keeps its text, and answers are not added to the
-history.
 
 ### Differences from native `ask`
 
@@ -150,9 +133,7 @@ prompt's own editor, so they behave like it. They offer the same suggestions:
 emoji, GitHub refs, and other extensions' providers. They also have ghost-text word
 completion, typo detection and autocorrect, vim mode, and multi-line input.
 Shift+Enter, Ctrl+J, or Alt+Enter inserts a newline. Ctrl+C clears the text and
-never exits omp from here. Ctrl+R searches the prompt history (see Keys).
-Up/Down does not step through history, and there is no push-to-talk or draft
-saving.
+never exits omp from here. There is no history, push-to-talk, or draft saving.
 The external editor key (`app.editor.external`, Ctrl+G by default) opens the
 text in `$VISUAL` or `$EDITOR` and writes the result back.
 
@@ -247,20 +228,10 @@ opens the native dialog. Collaboration guests cannot answer these questions.
 
 ### Answering again from `/tree`
 
-Picking an `ask` result in `/tree` reopens its form in the Picker, with no
-model request in between. The new answer keeps everything an ordinary answer
-has: the form data, Notes on picked and unpicked options, `Other` answers,
-the Submit note, and pasted images. OMP saves it once, as a new branch beside
-the old answer, and the agent continues from it.
-
-Esc leaves the tree as it was and keeps a Picker draft. The next re-answer of
-the same form, or F5 on it, opens with that draft. Since no turn is running,
-Esc here stops nothing else in the session. If the Picker fails, OMP shows the
-error and leaves the tree as it was; it does not open its own form instead.
-
-An `ask` saved with the old `questions` argument has no form to reopen.
-`/tree` moves to it as to any other entry, its card shows the saved answer
-text, and the session file is not changed.
+Picking an `ask` result in `/tree` opens OMP's native form, not the Picker:
+OMP runs its own `ask` there, not the plugin's. The new answer keeps native's
+form data and Notes on picked options. It does not have Notes on unpicked
+options, pasted images, the Submit note, a Picker draft, or the Picker btw.
 
 ### Outside the TUI
 
@@ -529,9 +500,15 @@ that has no output yet.
 Each thread starts from the saved transcript on the branch you have selected,
 including after `/tree` with no new prompt, and uses OMP's default system
 prompt for its five tools. It sees the eval state OMP saves after `/tree` and
-compaction. A call the main agent still waits on (a pending `ask`, or a tool
-still running) shows to the Side question as still open, not as failed, with
-an instruction not to ask you again or repeat the call.
+compaction. A call the main agent is still running (a pending `ask`, or a tool
+still running in the current turn) shows to the Side question as still open,
+not as failed, with an instruction not to ask you again or repeat the call. A
+call left without a result while no turn runs (an interrupted turn, or a
+`/tree` jump) is dropped from the Side question's history, as OMP drops it
+from the main agent's. After the copied history, the Side question's own
+session adds notices about its own runtime that the main transcript lacks:
+that no eval runtime is kept for it, and that eval prelude tools such as
+`ratchet` are not available to it.
 Images attached to `/btw` go with the question and stay in the thread for
 follow-ups, as pasted images do in a Picker btw.
 

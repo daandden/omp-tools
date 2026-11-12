@@ -74,20 +74,14 @@ function requestPrompt(message: unknown): number | undefined {
 
 /** A Side question thread's first request, which the next thread's first one should find cached. */
 interface ThreadStart {
-	/** The selected history the thread started from: one key per entry, compared by identity. */
-	messages: readonly unknown[];
+	/** Ids of the selected entries the thread's history started from. */
+	entryIds: readonly string[];
 	prompt: number;
 }
 
-/**
- * The prompt a new thread's first request should find cached: the earlier
- * thread's first one, while the selected history still starts with the
- * entries that thread saw. Compaction and a branch change replace them, so
- * nothing is expected.
- */
-export function sharedPrefixPrompt(earlier: ThreadStart | undefined, messages: readonly unknown[]): number | undefined {
-	if (!earlier || earlier.messages.length > messages.length) return undefined;
-	return earlier.messages.every((message, i) => message === messages[i]) ? earlier.prompt : undefined;
+export function sharedPrefixPrompt(earlier: ThreadStart | undefined, entryIds: readonly string[]): number | undefined {
+	if (!earlier || earlier.entryIds.length > entryIds.length) return undefined;
+	return earlier.entryIds.every((id, i) => id === entryIds[i]) ? earlier.prompt : undefined;
 }
 
 class CacheMissTracker {
@@ -119,12 +113,12 @@ class CacheMissTracker {
 export class SideQuestionCache {
 	readonly #latest = new Map<string, ThreadStart>();
 
-	thread(messages: readonly unknown[]): CacheMissTracker {
+	thread(entryIds: readonly string[]): CacheMissTracker {
 		const snapshotAtOpen = new Map(
-			Array.from(this.#latest, ([route, earlier]) => [route, sharedPrefixPrompt(earlier, messages)]),
+			Array.from(this.#latest, ([route, earlier]) => [route, sharedPrefixPrompt(earlier, entryIds)]),
 		);
 		return new CacheMissTracker(snapshotAtOpen, (route, prompt) => {
-			this.#latest.set(route, { messages, prompt });
+			this.#latest.set(route, { entryIds, prompt });
 		});
 	}
 }
@@ -178,12 +172,7 @@ const PENDING_ASK =
 const PENDING_CALL =
 	"This call is still running in the main conversation. Its result is not known here. Do not call it again.";
 
-/**
- * Moves the fork onto the main session's selected entry. The fork starts on
- * the file's last entry, which after a `/tree` jump with no new prompt is on an
- * abandoned branch. An entry the copied file lacks fails the open instead of
- * answering from other history.
- */
+// The fork opens on the file's last entry, which after a `/tree` jump with no new prompt is on an abandoned branch.
 function selectMainBranch(fork: SessionManager, leafId: string | null): void {
 	if (leafId === null) return fork.resetLeaf();
 	if (!fork.getEntry(leafId)) {
@@ -192,18 +181,15 @@ function selectMainBranch(fork: SessionManager, leafId: string | null): void {
 	fork.branch(leafId);
 }
 
-/** Ids of the selected entries the mirror's history starts from; a compaction replaces the ones before it. */
 function historyEntryIds(branch: readonly ForkEntry[]): string[] {
 	const compaction = branch.findLastIndex(entry => entry.type === "compaction");
 	return branch.slice(Math.max(compaction, 0)).map(entry => entry.id);
 }
 
-/**
- * Gives each call the selected branch's last reply still waits on a result
- * that says the call is still open, so the mirror neither takes it as failed
- * nor makes it again. An "aborted" result made the model ask the user again.
- */
-function closePendingCalls(fork: SessionManager): void {
+// Only calls the main turn is still running get a result; the mirror's context
+// drops the others as the host drops interrupted calls. An "aborted" result made
+// the model ask the user again.
+function closePendingCalls(fork: SessionManager, running: ReadonlySet<string>): void {
 	const answered = new Set<string>();
 	let last: ForkEntry | undefined;
 	for (const entry of fork.getBranch()) {
@@ -213,7 +199,7 @@ function closePendingCalls(fork: SessionManager): void {
 	}
 	if (last?.type !== "message" || last.message.role !== "assistant") return;
 	for (const block of last.message.content) {
-		if (block.type !== "toolCall" || answered.has(block.id)) continue;
+		if (block.type !== "toolCall" || answered.has(block.id) || !running.has(block.id)) continue;
 		fork.appendMessage({
 			role: "toolResult",
 			toolCallId: block.id,
@@ -266,9 +252,9 @@ function assistantText(message: { content?: unknown } | undefined): string {
 }
 
 /**
- * The main agent's session when it lives in this process. The registry can
- * hold a remote handle (a worker-homed or peer session) without the local
- * transcript and services a mirror forks, so only the host's own class counts.
+ * The registry can hold a remote handle (a worker-homed or peer session)
+ * without the local transcript and services a mirror forks, so only the
+ * host's own class counts.
  */
 function liveSession(ctx: ExtensionContext): AgentSession | undefined {
 	const session = AgentRegistry.global().get(ctx.agent.id)?.session;
@@ -393,8 +379,8 @@ export class SideQuestionThread {
 					role: main.sessionManager.getLastModelChangeRole({ skipEphemeral: true }) ?? "default",
 				}
 			: undefined;
-		// Before the flush, so the copied file holds the selected entry.
 		const selectedLeaf = main.sessionManager.getLeafId();
+		const runningCalls = new Set(main.isStreaming ? main.runToolCallIds : []);
 		await main.sessionManager.ensureOnDisk();
 		await main.sessionManager.flush();
 
@@ -430,7 +416,7 @@ export class SideQuestionThread {
 		try {
 			selectMainBranch(fork, selectedLeaf);
 			selectedEntries = historyEntryIds(fork.getBranch());
-			closePendingCalls(fork);
+			closePendingCalls(fork, runningCalls);
 			if (selected?.model) fork.appendModelChange(`${selected.model.provider}/${selected.model.id}`, selected.role);
 			mirror = await createMirrorSession({
 				cwd: ctx.cwd,

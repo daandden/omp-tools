@@ -22,6 +22,10 @@ export async function sideQuestionFixture(options: {
 	window?: number;
 	maxCost?: number;
 	reply?: (body: Record<string, any>) => string | Promise<string>;
+	/** Tool calls the provider answers a request with, instead of text. */
+	toolCalls?: (body: Record<string, any>) => [id: string, name: string, args: Record<string, unknown>][] | undefined;
+	/** Main-session tools by name: the text each returns, or null to run until `release`. */
+	tools?: Record<string, string | null>;
 } = {}) {
 	const dir = await fs.mkdtemp(path.join(os.tmpdir(), "side-question-test-"));
 	const id = `SideMain-${crypto.randomUUID()}`;
@@ -30,9 +34,15 @@ export async function sideQuestionFixture(options: {
 	const trace: unknown[] = [];
 	const threads: SideQuestionThread[] = [];
 	let server: Bun.Server<undefined> | undefined;
+	// The provider extension runs in this process; held tools wait on this promise.
+	const holdKey = `__sideQuestionHold_${crypto.randomUUID()}`;
+	const hold = Promise.withResolvers<void>();
+	(globalThis as Record<string, unknown>)[holdKey] = hold.promise;
+	const release = () => hold.resolve();
 	let authStorage: AuthStorage | undefined;
 	let main: AgentSession | undefined;
 	const dispose = async () => {
+		release();
 		try {
 			await Promise.all(threads.map(thread => thread.dispose()));
 		} finally {
@@ -42,6 +52,7 @@ export async function sideQuestionFixture(options: {
 				authStorage?.close();
 				AgentRegistry.global().unregister(id);
 				await fs.rm(dir, { recursive: true, force: true });
+				delete (globalThis as Record<string, unknown>)[holdKey];
 			}
 		}
 	};
@@ -65,9 +76,15 @@ export async function sideQuestionFixture(options: {
 				}
 				const chunk = (delta: Record<string, unknown>, finish_reason: string | null = null) =>
 					`data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`;
+				const calls = options.toolCalls?.(body);
+				const message = calls
+					? chunk({
+							role: "assistant",
+							tool_calls: calls.map(([callId, name, args], index) => ({ index, id: callId, type: "function", function: { name, arguments: JSON.stringify(args) } })),
+						}) + chunk({}, "tool_calls")
+					: chunk({ role: "assistant", content: await options.reply?.(body) ?? `answered by ${body.model}` }) + chunk({}, "stop");
 				return new Response(
-					chunk({ role: "assistant", content: await options.reply?.(body) ?? `answered by ${body.model}` }) +
-					chunk({}, "stop") +
+					message +
 					`data: ${JSON.stringify({ id: "fixture", choices: [], usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } })}\n\ndata: [DONE]\n\n`,
 					{ headers: { "content-type": "text/event-stream" } },
 				);
@@ -98,6 +115,16 @@ export async function sideQuestionFixture(options: {
 				await fetch(${JSON.stringify(`http://127.0.0.1:${server.port}/events`)}, { method: "POST", body: JSON.stringify({ type, event: type === "before_provider_request" ? undefined : event, agent: ctx.agent.id, at: Date.now() }) });
 			});
 			pi.registerProvider(${JSON.stringify(provider)}, { baseUrl: ${JSON.stringify(`http://127.0.0.1:${server.port}/v1`)}, apiKey: "fixture-key", api: "openai-completions", models: ${JSON.stringify(models)} });
+			for (const [name, result] of Object.entries(${JSON.stringify(options.tools ?? {})})) pi.registerTool({
+				name,
+				label: name,
+				description: name,
+				parameters: pi.arktype({ "+": "ignore" }),
+				async execute() {
+					if (result === null) await globalThis[${JSON.stringify(holdKey)}];
+					return { content: [{ type: "text", text: result ?? "released" }] };
+				},
+			});
 		}`);
 		authStorage = await AuthStorage.create(":memory:");
 		const modelRegistry = new ModelRegistry(authStorage, path.join(dir, "models.yml"));
@@ -150,7 +177,7 @@ export async function sideQuestionFixture(options: {
 			threads.push(thread);
 			return thread;
 		};
-		return { main: session, ctx, requests, warnings, trace, settings, route, setSpec, open, dispose };
+		return { main: session, ctx, requests, warnings, trace, settings, route, setSpec, open, release, dispose };
 	} catch (error) {
 		await dispose();
 		throw error;

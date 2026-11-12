@@ -9,7 +9,6 @@ import {
 	type ToolDefinition,
 } from "@oh-my-pi/pi-coding-agent";
 import { cfgAskNotify, cfgAskTimeout } from "@oh-my-pi/pi-coding-agent/modes/settings";
-import { ToolAbortError } from "@oh-my-pi/pi-coding-agent/tools/tool-errors";
 import type { Component, NativeNode, TUI } from "@oh-my-pi/pi-tui";
 import { initTheme, theme } from "@oh-my-pi/pi-tui/theme";
 import flexibleAsk from "../extensions/flexible-ask";
@@ -151,12 +150,6 @@ function tuiSession(mode: "tui" | "rpc" = "tui") {
 function run(tool: ToolDefinition, html: string, session: ReturnType<typeof tuiSession>): Promise<AskResult> {
 	session.reset();
 	return tool.execute("call-1", { html }, undefined, undefined, session.ctx) as Promise<AskResult>;
-}
-
-/** Runs the call `/tree` makes when the user re-answers a past ask. */
-function reanswer(tool: ToolDefinition, html: string, session: ReturnType<typeof tuiSession>): Promise<AskResult> {
-	session.reset();
-	return tool.execute("tree-reanswer", { html }, undefined, undefined, session.ctx) as Promise<AskResult>;
 }
 
 /** The submitted form data: the JSON block of the result text. */
@@ -564,6 +557,9 @@ second line</textarea></label>
 		);
 		expect(formData(answered)).toEqual({ name: "", days: 99 });
 		expect(answered.details?.timedOut).toBe(true);
+		// The model learns which checks a timed-out answer may have skipped.
+		const told = textOf(answered).split("\n")[0]!;
+		for (const check of [/required/i, /bound/i, /pattern/i]) expect(told).toMatch(check);
 	});
 
 	test("typed text survives picks, unpicks, the Submit tab, other fields, and Esc then F5", async () => {
@@ -727,30 +723,6 @@ describe("Picker draft", () => {
 		await session.press(ENTER);
 		expect(formData(await again)).toEqual({ store: "sqlite" });
 	});
-
-	test("Esc in a /tree re-answer keeps the draft for the next re-answer and F5, and ends no turn", async () => {
-		const { tool } = loadAsk();
-		const session = tuiSession();
-		const first = reanswer(tool, TWO, session);
-		await session.press("j", ENTER, "n");
-		await session.type("not this");
-		await session.press(ENTER, ESC);
-		await expect(first).rejects.toBeInstanceOf(ToolAbortError);
-		expect(session.aborts()).toBe(0);
-
-		const second = reanswer(tool, TWO, session);
-		expect(await session.render()).toContain("Restored your answers");
-		await session.press(ESC);
-		await expect(second).rejects.toBeInstanceOf(ToolAbortError);
-		expect(session.aborts()).toBe(0);
-
-		const retried = run(tool, TWO, session);
-		expect(await session.render()).toContain("Restored your answers");
-		await session.press("l", ENTER);
-		const answered = await retried;
-		expect(formData(answered)).toEqual({ store: "pg", keep: [] });
-		expect(answered.details?.unpickedNotes?.[0]).toMatchObject({ option: "Picks", text: "not this" });
-	});
 });
 
 /** Every text run of a Tern view, in order. */
@@ -812,5 +784,25 @@ describe("ask card", () => {
 		const tern = viewText(tool.describeResult?.(saved as never, options as never, args as never) as NativeNode);
 		const classic = (tool.renderResult?.(saved as never, options as never, theme as never, args as never) as Component).render(120).join("\n");
 		for (const shown of [tern, classic]) expect(shown).toContain("User selected: Postgres");
+	});
+
+	test("old saved results with a Submit note read as their saved text in both renderers", () => {
+		const { tool } = loadAsk();
+		const args = { questions: [{ id: "store", question: "Which store?", options: [{ label: "SQLite" }, { label: "Postgres" }] }] };
+		const content = [{ type: "text", text: "User selected: Postgres" }];
+		const savedDetails = [
+			{
+				results: [{ id: "store", question: "Which store?", options: ["SQLite", "Postgres"], multi: false, selectedOptions: ["Postgres"] }],
+				submitNote: "ship it",
+			},
+			{ question: "Which store?", options: ["SQLite", "Postgres"], multi: false, selectedOptions: ["Postgres"], submitNote: "ship it" },
+		];
+		const options = { expanded: true, isPartial: false };
+		for (const details of savedDetails) {
+			const saved = { content, details };
+			const tern = viewText(tool.describeResult?.(saved as never, options as never, args as never) as NativeNode);
+			const classic = (tool.renderResult?.(saved as never, options as never, theme as never, args as never) as Component).render(120).join("\n");
+			for (const shown of [tern, classic]) expect(shown).toContain("User selected: Postgres");
+		}
 	});
 });

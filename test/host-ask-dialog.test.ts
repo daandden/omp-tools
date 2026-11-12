@@ -90,7 +90,6 @@ function routedHost() {
 		nativeCalls,
 		pickers: () => pickers,
 		render: () => picker?.render(100).join("\n") ?? "",
-		/** Pastes an image into the focused component, as the host's paste contract does. */
 		pasteImage: () => {
 			const marker = focused?.attachImage?.(IMAGE);
 			if (typeof marker === "string") focused?.pasteText?.(marker);

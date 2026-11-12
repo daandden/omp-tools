@@ -1,22 +1,9 @@
-// Flexible Ask: shadow the built-in `ask` tool. It takes native ask's HTML
-// form, and ./flexible-ask.md mirrors upstream's model-facing description
-// (`packages/coding-agent/src/prompts/tools/ask.md`) except where the Picker
-// differs (README "Differences from native `ask`").
-//
-// Execution: in the interactive TUI the wrapper answers the form in its own
-// Picker (./ask-dialog.ts), which keeps Notes on unpicked options, pasted
-// images, the Submit note, Picker drafts, and the Picker btw. Everywhere else
-// (RPC/ACP/print, subagents) and for forms native answers with its own error,
-// it passes the HTML to the native tool through `ctx.invokeTool`. `/tree`
-// re-answer runs this tool too; on a host that cannot (./ask-host.ts) every
-// call fails instead.
 import type { AgentToolResult, AskToolDetails, ExtensionAPI, ExtensionContext, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
 import { askToolRenderer, discoverSlashCommands, logger, settings } from "@oh-my-pi/pi-coding-agent";
 import { cfgAskNotify, cfgAskTimeout } from "@oh-my-pi/pi-coding-agent/modes/settings";
 import { ToolAbortError } from "@oh-my-pi/pi-coding-agent/tools/tool-errors";
 import { type AutocompleteProvider, span, TERMINAL, text } from "@oh-my-pi/pi-tui";
 import type { NativeToolView } from "@oh-my-pi/pi-tui/tools/renderer";
-import { type AskHost, loadAskHost } from "./ask-host";
 import { type AskForm, readHtmlForm } from "./ask-form";
 import { type AskResultDetails, askToolResult } from "./ask-result";
 import { askInPicker, routeHostAskDialog } from "./host-ask-dialog";
@@ -24,14 +11,10 @@ import { pickerBtwRunner } from "./picker-btw";
 import { openPicker, PickerDraftSlot, type PickerSession } from "./picker-draft";
 import flexibleAskDescription from "./flexible-ask.md" with { type: "text" };
 
-/** Native ask details (from delegation) or the Picker's, which add the Picker's channels. */
-type FlexibleAskDetails = AskToolDetails & Partial<Omit<AskResultDetails, keyof AskToolDetails>>;
-
 /** Result views, keyed by `details` so an unchanged card keeps its nodes. */
-const resultViews = new WeakMap<FlexibleAskDetails, NativeToolView | undefined>();
+const resultViews = new WeakMap<AskResultDetails, NativeToolView | undefined>();
 
-/** What native ask's card draws: its answers, every Note (unpicked ones marked), and the timeout marker. */
-function cardDetails(details: FlexibleAskDetails | undefined): AskToolDetails | undefined {
+function cardDetails(details: AskResultDetails | undefined): AskToolDetails | undefined {
 	if (!details) return undefined;
 	const unpicked = (details.unpickedNotes ?? []).map(note => ({ ...note, option: `${note.option} (not picked)` }));
 	const notes = [...(details.notes ?? []), ...unpicked];
@@ -44,7 +27,7 @@ function cardDetails(details: FlexibleAskDetails | undefined): AskToolDetails | 
 
 /** The native ask card for the result, with the Submit note below the answers. */
 function describeAskResult(
-	result: AgentToolResult<FlexibleAskDetails>,
+	result: AgentToolResult<AskResultDetails>,
 	args: { html?: string } | undefined,
 ): NativeToolView | undefined {
 	const details = result.details;
@@ -68,11 +51,11 @@ function describeAskResult(
 	return described;
 }
 
-/** The classic card's details: native's, with the Submit note as a last answer row. */
-function classicDetails(details: FlexibleAskDetails | undefined): AskToolDetails | undefined {
+function classicDetails(details: AskResultDetails | undefined): AskToolDetails | undefined {
 	const card = cardDetails(details);
 	const note = details?.submitNote;
-	if (!card || !note) return card;
+	// Results saved before HTML forms have no `answers`; the host renders their saved text.
+	if (!card || !note || !Array.isArray(card.answers)) return card;
 	return { ...card, answers: [...card.answers, { name: "", question: "Note on all answers", answer: note }] };
 }
 
@@ -97,7 +80,6 @@ async function askWithPicker(
 	form: AskForm,
 	signal: AbortSignal | undefined,
 	session: PickerSession,
-	reanswer: boolean,
 ): Promise<AgentToolResult<AskResultDetails>> {
 	const timeoutSeconds = cfgAskTimeout.get(settings);
 	if (cfgAskNotify.get(settings) !== "off") {
@@ -122,9 +104,7 @@ async function askWithPicker(
 		throw error;
 	}
 	if (!picked) {
-		// A `/tree` re-answer runs outside a turn: there is none to end, and
-		// ctx.abort() would stop the session's background work.
-		if (!reanswer) ctx.abort();
+		ctx.abort();
 		throw new ToolAbortError("Ask tool was cancelled by the user");
 	}
 	return askToolResult(picked.answer);
@@ -132,17 +112,9 @@ async function askWithPicker(
 
 export default function flexibleAsk(pi: ExtensionAPI) {
 	const type = pi.arktype;
-	// Native ask's schema; any other key (the old `questions`) is refused.
 	const parameters = type({ "+": "reject", html: type("string").describe("one HTML <form>") });
 
 	const drafts = new PickerDraftSlot();
-	const host: Promise<AskHost> = loadAskHost();
-	// On a host without the re-answer integration the plugin must not own
-	// `ask`: say so at session start, and fail every call below.
-	pi.on("session_start", async () => {
-		const loaded = await host;
-		if (loaded.kind === "missing") throw new Error(loaded.error);
-	});
 	const dropDraft = () => drafts.drop();
 	pi.on("session_before_switch", dropDraft);
 	pi.on("session_before_branch", dropDraft);
@@ -188,7 +160,7 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 		return drafts.drop();
 	});
 
-	const definition: ToolDefinition<typeof parameters, FlexibleAskDetails> = {
+	const definition: ToolDefinition<typeof parameters, AskResultDetails> = {
 		name: "ask",
 		label: "Ask",
 		description: flexibleAskDescription.trimEnd(),
@@ -196,20 +168,17 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 		// Native ask is read-tier; omitted defaults to exec and would
 		// re-prompt/deny differently. Keep the tier.
 		approval: "read",
-		// The card is native ask's, so it reads the same as a native ask.
 		describeCall: args => askToolRenderer.describeCall(args),
 		describeResult: (result, _options, args) => describeAskResult(result, args),
 		renderCall: (args, options, theme) => askToolRenderer.renderCall(args, options, theme),
 		renderResult: (result, options, theme, args) =>
 			askToolRenderer.renderResult({ content: result.content, details: classicDetails(result.details) }, options, theme, args),
-		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			const loaded = await host;
-			if (loaded.kind === "missing") throw new Error(loaded.error);
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			if (!ctx.invokeTool) throw new Error("Native ask tool unavailable for delegation");
 			if (ctx.mode !== "tui" || !ctx.hasUI) return ctx.invokeTool<AskToolDetails>(params, { signal, onUpdate });
 			const read = readHtmlForm(params.html);
 			if (read.kind === "empty") return ctx.invokeTool<AskToolDetails>(params, { signal, onUpdate });
-			return askWithPicker(ctx, read.form, signal, pickerSession(ctx), toolCallId === loaded.reanswerCallId);
+			return askWithPicker(ctx, read.form, signal, pickerSession(ctx));
 		},
 	};
 	// `concurrency` and `mergeCallAndResult` are not part of the extension

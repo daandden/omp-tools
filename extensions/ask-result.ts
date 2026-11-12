@@ -1,7 +1,4 @@
-// The `ask` tool result: native form data first, as native ask writes it,
-// then the Picker's extra channels. The model sees only the content (details
-// never reach it), so every channel is labeled there: Notes on picked and
-// unpicked options, Other answers, the Submit note, and pasted images.
+// The model sees only the content, never details, so every channel is labeled there.
 import type { AgentToolResult, AskToolDetails } from "@oh-my-pi/pi-coding-agent";
 import type { OptionNote } from "@oh-my-pi/pi-tui/html-form/data";
 import {
@@ -13,13 +10,9 @@ import {
 	otherAnswers,
 } from "./ask-form";
 
-/** Native ask details, plus what only the Picker answers. */
 export interface AskResultDetails extends AskToolDetails {
-	/** Notes on options left unpicked; `notes` holds the picked ones, as native does. */
 	unpickedNotes?: OptionNote[];
-	/** Other answers the user typed, which form data cannot tell from an option of the same value. */
 	other?: AskOtherAnswer[];
-	/** The Submit note. */
 	submitNote?: string;
 }
 
@@ -34,11 +27,10 @@ function labeledBlock(indent: string, label: string, text: string): string[] {
 	return [`${indent}${label}:`, ...lines.map(line => `${indent}  ${line}`)];
 }
 
-/** Labeled answer text: the form data, every Note, every Other answer, and the Submit note. */
 export function formatAskAnswer(answer: AskFormAnswer): string {
 	const lines = [
 		answer.timedOut
-			? "No answer before the timeout; submitted the form's current values automatically (not the user's choice; required fields may be empty):"
+			? "No answer before the timeout; submitted the form's current values automatically (not the user's choice; not validated, so required fields may be empty and values may break their bounds or pattern):"
 			: "User answers:",
 		JSON.stringify(answer.data, null, 2),
 	];
@@ -60,7 +52,6 @@ export function formatAskAnswer(answer: AskFormAnswer): string {
 	return lines.join("\n");
 }
 
-/** The tool result: the labeled answer, then each pasted image after its label. */
 export function askToolResult(answer: AskFormAnswer): AgentToolResult<AskResultDetails> {
 	const notes = answer.questions.flatMap(question => question.notes);
 	const picked = notes.filter(note => note.picked).map(optionNote);

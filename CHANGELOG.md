@@ -52,21 +52,9 @@
   btw, and the Picker draft. The feature gets OMP's native answer, so Ratchet
   still records an approval only when you pick Approve, and Esc answers
   nothing.
-- An `ask` answered again from `/tree` opens in the Picker, and OMP saves the
-  whole answer once as a new branch: the form data, Notes on picked and
-  unpicked options, `Other` answers, the Submit note, and pasted images. Esc
-  leaves the tree as it was and keeps a Picker draft that the next re-answer
-  or F5 restores; a Picker failure is reported, with no fallback to OMP's own
-  form. An `ask` saved with the old `questions` argument stays as it was and
-  has no form to reopen.
 
 ### Fixed
 
-- Ctrl+R in a Picker `Other`, note, Submit note, or Picker btw editor now puts
-  the prompt-history entry you pick into that editor, ready to edit. It went to
-  a hidden copy of the editor instead, and after the search closed, focus moved
-  from the editor to the Picker, so the next Ctrl+R or external-editor key
-  reached the hidden main prompt.
 - A Side question model that OMP's model list lost while running (after a
   denied Codex model discovery, for example) no longer falls back to the main
   model until a restart: the plugin refreshes that model's provider and looks
@@ -111,8 +99,12 @@
   verified host. A Side question follows the branch selected in `/tree`, also
   with no new prompt, rather than the transcript's last branch, and fails to
   open if the selected entry is not in the saved transcript. A pending `ask`
-  or a running tool still shows to it as open, with an instruction not to call
-  it again.
+  or a tool the main turn is still running shows to it as open, with an
+  instruction not to call it again. A call left without a result while no
+  turn runs is dropped from its history, as OMP drops it from the main
+  agent's. After the copied history, the Side question's own session adds
+  notices about its own runtime: no eval runtime is kept for it, and eval
+  prelude tools such as `ratchet` are not available to it.
 - `ask` now takes native `ask`'s HTML form (`html`, one `<form>`), as OMP
   does since 18.18.3, and its description follows native's. The Picker shows
   each radio group, checkbox group, `<select>`, and `<select multiple>` as a
@@ -123,10 +115,13 @@
   Note (unpicked ones marked), `Other` answers named as yours even when they
   equal an option's value, the Submit note, and pasted images after their
   labels. The card is native's in both renderers, with those additions.
+  Answers saved by earlier versions show their saved text.
 - On `ask.timeout` the Picker now submits the form as it stands, as native
   does: picks, defaults, and typed text only, even with a required field
   empty or a number out of bounds, marked as timed out (`details.timedOut`)
-  and shown as not your choice. It no longer picks a recommended option.
+  and shown as not your choice. The agent is told the answer was not
+  validated: required fields may be empty, and values may break their
+  bounds or pattern. It no longer picks a recommended option.
   Host dialogs (Ratchet) keep their own native timeout, which picks the
   recommended option.
 - A Picker draft now matches on the form itself: the same questions, values,
@@ -135,19 +130,17 @@
 - The Picker shows text inputs (`text`, `email`, `url`, `password`, `date`,
   and other types, as native), number inputs, and textareas as questions
   beside the choices, in both renderers. You type in the same editor as
-  Notes and `Other`, with paste, image chips, the external editor, and
-  Ctrl+R. A number comes back as a number. Submit checks native's rules
+  Notes and `Other`, with paste, image chips, and the external editor. A
+  number comes back as a number. Submit checks native's rules
   (`required`, `min`/`max`, `minlength`/`maxlength`, email, URL, `pattern`,
   ignoring invalid `min`/`max` and patterns as native does) and opens the
   first field that fails. A password shows as bullets outside its editor and
   still reaches the agent. No form with a supported control fails or falls
   back to native `ask`'s dialog.
-- omp-tools now needs an OMP whose `/tree` re-answer runs the plugin's `ask`
-  (`@oh-my-pi/pi-coding-agent/tools/ask-reanswer`). No OMP release has it
-  yet: it is commit `8ed79a8` on the OMP branch `feat/extension-ask-replay`.
-  On an older OMP, such as 18.18.8 or 18.18.9, the plugin reports an error
-  naming that commit at session start, and every `ask` call fails with the
-  same error instead of falling back to native `ask`.
+- An `ask` answered again from `/tree` opens OMP's native form, not the
+  Picker: OMP runs its own `ask` there. The new answer keeps native's form
+  data and Notes on picked options, but not Notes on unpicked options, pasted
+  images, the Submit note, a Picker draft, or the Picker btw.
 
 - Updated the SDK types to OMP 18.13.3 and synchronized the `ask` description
   with upstream's instruction to show decision context before blocking.
