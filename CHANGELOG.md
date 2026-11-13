@@ -55,6 +55,8 @@
 
 ### Fixed
 
+- HTML form defaults show as `Recommended` in both Picker renderers, and
+  keep that label when you change your picks.
 - A Side question model that OMP's model list lost while running (after a
   denied Codex model discovery, for example) no longer falls back to the main
   model until a restart: the plugin refreshes that model's provider and looks

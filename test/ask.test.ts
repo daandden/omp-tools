@@ -191,6 +191,26 @@ describe("ask schema", () => {
 });
 
 describe("ask in the Picker", () => {
+	test("recommended options stay labeled after the user changes the picks in both renderers", async () => {
+		const { tool } = loadAsk();
+		const session = tuiSession();
+		const result = run(tool, STORE, session);
+		try {
+			const picker = (await session.picker()) as Component & { describe(cx: unknown): NativeNode };
+			const cx = { cols: 100, feature: () => false, supports: () => false };
+			expect(await session.render()).toContain("(Recommended)");
+			expect(JSON.stringify(picker.describe(cx))).toContain('"text":"Recommended"');
+			await session.press("j", " ");
+			expect(await session.render()).toContain("(Recommended)");
+			expect(JSON.stringify(picker.describe(cx))).toContain('"text":"Recommended"');
+			await session.press(ENTER);
+			expect(formData(await result)).toEqual({ store: "pg" });
+		} finally {
+			await session.press(ESC);
+			await result.catch(() => {});
+		}
+	});
+
 	test("radio, checkbox group, select, multiple select, hidden and lone checkbox values come back as native form data", async () => {
 		const { tool } = loadAsk();
 		const session = tuiSession();

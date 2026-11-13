@@ -58,9 +58,10 @@ Values follow native: a radio group or `<select>` gives the chosen `value`, a
 checkbox group or `<select multiple>` gives an array, a lone checkbox gives
 its value (`on` by default) or nothing, a number input gives a number, a text
 input or textarea gives its text (empty when you leave it), and hidden inputs
-go back as they are. `checked` and `selected` options start picked, and a
-`value` (or a textarea's content) starts in its field. Disabled options show
-but cannot be picked. Radio and checkbox groups of two or more options get
+go back as they are. `checked` and `selected` options start picked and show a
+`Recommended` label that stays when you change your picks. A `value` (or a
+textarea's content) starts in its field. Disabled options show but cannot be
+picked. Radio and checkbox groups of two or more options get
 `Other (type your own)` unless an option already starts with "Other". The
 Picker keeps the native structure: a Submit review for several, multi-select,
 or text questions, `ask.timeout`, and `ask.notify`.

@@ -226,7 +226,7 @@ function htmlQuestions(form: HtmlForm): AskQuestion[] {
 						? field.options.map(option => ({
 								label: option.label.length > 0 ? option.label : [{ text: option.value }],
 								disabled: option.disabled,
-								recommended: false,
+								recommended: option.checked,
 							}))
 						: [],
 			});
