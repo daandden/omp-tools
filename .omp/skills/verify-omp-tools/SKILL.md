@@ -66,7 +66,7 @@ To check a worktree while the plugin link points at another checkout, leave the 
 
 For every start with a fresh config dir, use `helpers/tern-isolated`. This is the only fresh-config launcher, for both `tern serve` and native `tern --control` windows. Native windows are allowed when a check needs one, such as clipboard or paste.
 
-The helper assigns its own `TERN_CONFIG_DIR` and `TERN_DAEMON_SOCKET` and clears the calling pane's routing variables. It exports `SHELL=/opt/homebrew/bin/fish` for headless `tern serve`, which ignores `settings.shell` and uses the launcher's `$SHELL`. It also sets `shell` to that path in the isolated settings for native windows. This keeps omp on the pane's login `PATH` even when an agent launches Tern from bash. Before Tern starts, it writes `omp/state.json` with the state from **Not Now**. Without that state, a native window shows "Tern is better with omp. Install it?" on top of the user's screen. Tern 0.9.4 with omp on `PATH` instead shows "Let Tern keep omp up to date?". A shot does not show native alerts. Native starts wake the display, keep it awake for the window's lifetime, and wait for a shell prompt before reporting ready; headless starts need no display guard.
+The helper assigns its own `TERN_CONFIG_DIR` and `TERN_DAEMON_SOCKET` and clears the calling pane's routing variables. It exports `SHELL=/bin/zsh` for headless `tern serve`, which ignores `settings.shell` and uses the launcher's `$SHELL`. It also sets `shell` to that path in the isolated settings for native windows. zsh reads `~/.zprofile`, so omp stays on the pane's login `PATH` even when an agent launches Tern from bash. The first `omp` there is `~/.bun/bin/omp`, not `/opt/homebrew/bin/omp`, so a recipe that needs a specific omp names its path. Before Tern starts, it writes `omp/state.json` with the state from **Not Now**. Without that state, a native window shows "Tern is better with omp. Install it?" on top of the user's screen. Tern 0.9.4 with omp on `PATH` instead shows "Let Tern keep omp up to date?". A shot does not show native alerts. Native starts wake the display, keep it awake for the window's lifetime, and wait for a shell prompt before reporting ready; headless starts need no display guard.
 
 Use a new `$VERIFY_RUN_DIR` for each instance. Set `V` to this skill's absolute directory plus `/helpers/tern-isolated`:
 
@@ -81,7 +81,7 @@ sleep 5
 "$V" ctl "$VERIFY_RUN_DIR" system
 ```
 
-Require `"dialogs":[]` before the drive. The config starts with only the seeded omp state and the explicit fish shell; none of the user's Tern plugins or other settings are copied. Headless `tern serve` has none either. For proof that depends on Tern plugins or settings, configure the owned test instance explicitly and confirm what it loaded. Do not drive an existing user window.
+Require `"dialogs":[]` before the drive. The config starts with only the seeded omp state and the explicit zsh shell; none of the user's Tern plugins or other settings are copied. Headless `tern serve` has none either. For proof that depends on Tern plugins or settings, configure the owned test instance explicitly and confirm what it loaded. Do not drive an existing user window.
 
 Logs and pids stay in `$VERIFY_RUN_DIR/tern/`. Sockets live in a short `/tmp/omp-tools-tern.*` directory because macOS limits Unix socket paths to 104 bytes. Headless shots stay in `$VERIFY_RUN_DIR/serve/`. For native shots, use the paths returned by `$C shot <name>`.
 

@@ -39,7 +39,7 @@ iso() {
 	sockets=$(sockDir)
 	env -u TERN_PANE -u TERN_PANE_SOCKET -u TERN_WINDOW_KEY -u TERN_WINDOW_SOCKET \
 		-u TERN_IDENTITY -u TERN_EXE -u TERN_BLOB_DIR -u TERN_LENSES -u TERN_COMPLETE \
-		TERN_CONFIG_DIR="$cfg" TERN_DAEMON_SOCKET="$sockets/daemon.sock" SHELL=/opt/homebrew/bin/fish "$@"
+		TERN_CONFIG_DIR="$cfg" TERN_DAEMON_SOCKET="$sockets/daemon.sock" SHELL=/bin/zsh "$@"
 }
 
 ctl() {
@@ -83,7 +83,7 @@ start)
 	[ -d "$run" ] || die "$run does not exist"
 	mkdir "$state" 2>/dev/null || die "$state exists: another instance owns $run, so do not stop it"
 	mkdir "$cfg"
-	printf '{"shell":"/opt/homebrew/bin/fish"}\n' >"$cfg/settings.json"
+	printf '{"shell":"/bin/zsh"}\n' >"$cfg/settings.json"
 	mktemp -d /tmp/omp-tools-tern.XXXXXX >"$state/sock-dir"
 	sockets=$(sockDir)
 	# A config dir with no omp state makes a native Tern window show its omp alert on top of the
