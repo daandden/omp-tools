@@ -4,14 +4,22 @@
 
 ### Added
 
-- The English coach checks `/btw` questions once in either entry-point load
-  order, without changing Side question answers or replacing their panel.
-- The English coach checks only sentence arguments after `/skill:<name>` and
-  discovered prompt-file commands. Other commands and commands without
-  arguments clear its panel without a model request.
-- The English coach leaves code, file paths, and URLs out of model requests
-  and its token limit. Corrections restore inline code, paths, and URLs
-  verbatim, and show fenced code as `[code block, N lines]`.
+- The English coach checks interactive prompts with OMP's `@tiny` role in
+  the background. A private panel above the editor shows a natural rewrite,
+  named mistake patterns, or a reason the prompt was not checked. The main
+  prompt stays unchanged, and coaching usage counts toward the session cost.
+- New plugin settings `englishCoach` and `englishCoachMaxTokens` default to
+  `true` and `300`. Global values and project overrides apply at session
+  start and on session switch. Over-limit English makes no model request;
+  replies are capped at twice the limit plus 200 tokens.
+- The coach excludes code, file paths, and URLs from requests and its token
+  limit. Corrections restore inline code, paths, and URLs verbatim, and show
+  fenced code as `[code block, N lines]`. Only sentence arguments after
+  `/btw`, `/skill:<name>`, and discovered prompt-file commands are checked
+  among commands, with each `/btw` question checked once.
+- New submissions cancel stale checks. Session changes clear the panel.
+  Long corrections wrap within a 40% height cap, with wheel scrolling in Tern
+  and a remaining-line count in the classic terminal.
 - `generate_image` has two Image generation modes, set by the new plugin
   setting `imageGenerationMode`. `openai`, the default, uses GPT Image 2.6
   Sunburst through the public OpenAI Images API with the `openai` API key,

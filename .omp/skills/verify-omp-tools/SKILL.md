@@ -1,6 +1,6 @@
 ---
 name: verify-omp-tools
-description: Live proof for the omp-tools OMP plugin. Drives a fresh OMP session inside a headless Tern window (Tern views) or with PI_TUI_NATIVE=0 (classic text TUI), plus OMP RPC mode for checks that need no screen. Surfaces are the ask picker, the Picker btw, /btw Side questions, and generate_image. Use it for any change to registration, the picker, Side questions, tool cards, or extension event handling.
+description: Live proof for the omp-tools OMP plugin. Drives a fresh OMP session inside a headless Tern window (Tern views) or with PI_TUI_NATIVE=0 (classic text TUI), plus OMP RPC mode for checks that need no screen. Surfaces are the ask picker, the Picker btw, /btw Side questions, generate_image, and the English coach. Use it for any change to registration, the picker, Side questions, the English coach, tool cards, or extension event handling.
 ---
 
 # Verify omp-tools
@@ -60,7 +60,7 @@ For the classic text TUI, prefix the inner command with `env PI_TUI_NATIVE=0 `. 
 
 In the classic TUI, run `sleep 0.5` after `$C key Escape` before the next key or screenshot. With OMP 18.12.5 and Tern 0.9.5, Escape arrives as a bare byte after a user message. OMP holds it for about 200 ms. A following `k` in that window forms Alt+k instead of closing the Picker btw and moving the cursor.
 
-To check a worktree while the plugin link points at another checkout, leave the link alone and load the worktree's entry points instead: `--no-extensions -e <checkout>/extensions/flexible-ask.ts -e <checkout>/extensions/generate-image.ts -e <checkout>/extensions/btw.ts`. Doctor step 2 then checks those paths instead of the link.
+To check a worktree while the plugin link points at another checkout, leave the link alone and load the worktree's entry points instead: `--no-extensions -e <checkout>/extensions/flexible-ask.ts -e <checkout>/extensions/generate-image.ts -e <checkout>/extensions/english-coach.ts -e <checkout>/extensions/btw.ts`. Doctor step 2 then checks those paths instead of the link. For an isolated local-model English coach smoke, use `features/english-coach.md`.
 
 ### Isolated starts and native windows
 

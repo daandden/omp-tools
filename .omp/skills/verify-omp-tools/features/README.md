@@ -34,3 +34,4 @@ Each feature file starts with an H1 title and one paragraph of user-visible beha
 - [Picker btw](./picker-btw.md): a Side question from inside the ask picker, while `ask` waits, on choice and mixed forms.
 - [Ask picker](./ask-picker.md): HTML form questions and context, keys, Other and notes, images, Submit and `required`, timeout, the draft, `/tree` re-answer on OMP's native form, host dialogs, other transports, and the answer the agent gets.
 - [generate_image](./generate-image.md): each Image generation mode's schema, generations and edits (OpenAI mode also `n`, formats, streaming, and masks), and the tool card.
+- [English coach](./english-coach.md): private corrections, clean and over-limit prompts, protected fenced pastes, `/btw` delivery, skipped commands, and the panel height cap, with an isolated local provider in both renderers.
