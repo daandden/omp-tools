@@ -567,3 +567,168 @@ describe("bounded English coach panel", () => {
 		expect(coach.focus()).toBe(true);
 	});
 });
+
+describe("protected code and links", () => {
+	test("code, paths, and URLs stay out of the request and return verbatim in corrections", async () => {
+		const coach = await fixture({
+			reply: body => {
+				const input = body.messages.find((message: any) => message.role === "user").content as string;
+				return `Better: ${input.replace("it fail", "It fails")}\n${input} → ${input.replace("it fail", "It fails")} (Agreement)`;
+			},
+		});
+		const input = "it fail with `secretCall()` in src/private.ts at https://private.example/token";
+		expect(await coach.input(input)).toEqual([undefined]);
+		await until(() => !coach.lines().includes("Checking..."));
+		expect(coach.requests).toHaveLength(1);
+		const request = JSON.stringify(coach.requests[0]);
+		for (const secret of ["secretCall", "src/private.ts", "private.example", "/token"]) {
+			expect(request).not.toContain(secret);
+		}
+		const panel = [...coach.widgets.values()][0]!;
+		expect(panel.render(1000)).toEqual([
+			"English coach",
+			"Better: It fails with `secretCall()` in src/private.ts at https://private.example/token",
+			`- ${input} → It fails with \`secretCall()\` in src/private.ts at https://private.example/token (Agreement)`,
+		]);
+		const narrow = panel.render(30);
+		expect(narrow.every(line => Bun.stringWidth(line) <= 30)).toBe(true);
+		expect(narrow.length).toBeLessThanOrEqual(16);
+		expect(coach.native()[0]).toMatchObject({
+			c: [{ k: "text" }, { c: [{ c: [
+				{ p: { text: "Better: It fails with `secretCall()` in src/private.ts at https://private.example/token", wrap: "word" } },
+				{ p: { text: `- ${input} → It fails with \`secretCall()\` in src/private.ts at https://private.example/token (Agreement)`, wrap: "word" } },
+			] }] }],
+		});
+	});
+
+	test("a short sentence above a large fenced paste is checked and shows one counted marker line", async () => {
+		const coach = await fixture({
+			settings: { englishCoachMaxTokens: 4 },
+			reply: body => {
+				const input = body.messages.find((message: any) => message.role === "user").content as string;
+				return `Better: ${input.replace("it fail", "It fails").replace(/\s+/g, " ")}\nit fail → It fails (Agreement)`;
+			},
+		});
+		await coach.input(`it fail\n\`\`\`typescript\n${"const privateSecret = 123;\n".repeat(1000)}\`\`\``);
+		await until(() => !coach.lines().includes("Checking..."));
+		expect(coach.requests).toHaveLength(1);
+		expect(JSON.stringify(coach.requests)).not.toContain("privateSecret");
+		expect(JSON.stringify(coach.requests)).not.toContain("typescript");
+		expect(coach.lines()).toEqual([
+			"English coach", "Better: It fails", "[code block, 1000 lines]", "- it fail → It fails (Agreement)",
+		]);
+		expect(coach.native()[0]).toMatchObject({
+			c: [{ k: "text" }, { c: [{ c: [
+				{ p: { text: "Better: It fails" } },
+				{ p: { text: "[code block, 1000 lines]", wrap: "word" } },
+				{ p: { text: "- it fail → It fails (Agreement)" } },
+			] }] }],
+		});
+	});
+
+	test.each([
+		"`onlyCode()`",
+		"src/private.ts https://private.example/token",
+		"```ts\nonlyCode();\n```",
+		"`onlyCode()` /Users/private/file.ts C:\\private\\file.ts",
+	])("protected-only input %j skips the model and names the reason", async input => {
+		const coach = await fixture();
+		await coach.input(input);
+		await until(() => !coach.lines().includes("Checking..."));
+		expect(coach.requests).toEqual([]);
+		expect(coach.lines()).toEqual(["English coach", "Not checked: no English text"]);
+	});
+
+	test("protected-only input cancels an unfinished check without showing its late correction", async () => {
+		const answer = Promise.withResolvers<string>();
+		const coach = await fixture({ reply: () => answer.promise });
+		const credential = spyOn(coach.main.modelRegistry, "getApiKey");
+		try {
+			await coach.input("pending prompt");
+			await until(() => coach.requests.length === 1);
+			const signal = credential.mock.calls[0]![2]!.signal!;
+			expect(await coach.input("```ts\nprivateSecret();\n```")).toEqual([undefined]);
+			expect(signal.aborted).toBe(true);
+			expect(coach.lines()).toEqual(["English coach", "Not checked: no English text"]);
+			answer.resolve("Better: Pending prompt.\npending → Pending (Capitalization)");
+			await Bun.sleep(30);
+			expect(coach.requests).toHaveLength(1);
+			expect(coach.lines()).toEqual(["English coach", "Not checked: no English text"]);
+		} finally {
+			answer.resolve("No mistakes");
+			credential.mockRestore();
+		}
+	});
+
+	test("expanded pasted prose counts in full rather than as a compact paste chip", async () => {
+		const coach = await fixture();
+		await coach.input("This is the complete expanded prose from a large paste.\n".repeat(500));
+		await until(() => !coach.lines().includes("Checking..."));
+		expect(coach.requests).toEqual([]);
+		expect(coach.lines()).toEqual(["English coach", "Not checked: over 300 tokens"]);
+	});
+
+	test("protected text and its placeholder tokens do not consume the English budget", async () => {
+		const coach = await fixture({ settings: { englishCoachMaxTokens: 4 } });
+		await coach.input(`it fail ${"`privateCode()` ".repeat(30)}${"src/private.ts ".repeat(30)}https://private.example/${"secret".repeat(1000)}`);
+		await until(() => !coach.lines().includes("Checking..."));
+		expect(coach.requests).toHaveLength(1);
+		expect(JSON.stringify(coach.requests)).not.toContain("secret");
+		expect(coach.lines()).toEqual(["English coach", "No mistakes"]);
+	});
+
+	test.each([
+		["``privateCode(\n`nested`)\n``", "privateCode"],
+		["C:\\private\\file.ts \\\\server\\secret\\file.ts relative\\secret\\file.ts", "secret"],
+		["www.private.example/secret", "private"],
+	])("protected form %j stays out of the request and returns exactly", async (protectedText, secret) => {
+		const coach = await fixture({
+			reply: body => {
+				const input = body.messages.find((message: any) => message.role === "user").content as string;
+				return `Better: ${input.replace("it fail", "It fails")}\nit fail → It fails (Agreement)`;
+			},
+		});
+		await coach.input(`it fail ${protectedText}`);
+		await until(() => !coach.lines().includes("Checking..."));
+		expect(JSON.stringify(coach.requests)).not.toContain(secret);
+		expect(coach.lines()).toEqual([
+			"English coach", ...`Better: It fails ${protectedText}`.split("\n"), "- it fail → It fails (Agreement)",
+		]);
+	});
+
+	test.each([
+		["~~~js\r\nprivateSecret();\r\nnext();\r\n~~~", 2],
+		["````js\nprivateSecret();\n```\n````", 2],
+		["```js\nprivateSecret();", 1],
+		["```js\n```", 0],
+		["```js\n\n```", 1],
+	])("fenced form %j restores its line count without exposing the block", async (block, count) => {
+		const coach = await fixture({
+			reply: body => {
+				const input = body.messages.find((message: any) => message.role === "user").content as string;
+				return `Better: ${input.replace("it fail", "It fails").replace(/\s+/g, " ")}\nit fail → It fails (Agreement)`;
+			},
+		});
+		await coach.input(`it fail\n${block}`);
+		await until(() => !coach.lines().includes("Checking..."));
+		expect(coach.requests).toHaveLength(1);
+		expect(JSON.stringify(coach.requests)).not.toContain("privateSecret");
+		expect(coach.lines()).toEqual([
+			"English coach", "Better: It fails", `[code block, ${count} lines]`, "- it fail → It fails (Agreement)",
+		]);
+	});
+
+	test("literal placeholder-like text and code containing it restore without replacing either twice", async () => {
+		const coach = await fixture({
+			reply: body => {
+				const input = body.messages.find((message: any) => message.role === "user").content as string;
+				return `Better: ${input.replace("it fail", "It fails")}\nit fail → It fails (Agreement)`;
+			},
+		});
+		await coach.input("it fail [[COACH_1]] with `[[COACH__2]]`");
+		await until(() => !coach.lines().includes("Checking..."));
+		expect(coach.lines()).toEqual([
+			"English coach", "Better: It fails [[COACH_1]] with `[[COACH__2]]`", "- it fail → It fails (Agreement)",
+		]);
+	});
+});

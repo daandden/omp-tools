@@ -6,6 +6,7 @@ import { getPluginSettings } from "@oh-my-pi/pi-coding-agent/extensibility/plugi
 import type { TUI } from "@oh-my-pi/pi-tui";
 import instructions from "./english-coach.md" with { type: "text" };
 import { EnglishCoachPanel } from "./english-coach-panel";
+import { prepareCoachPrompt, restoreCoachReply, type PreparedCoachPrompt } from "./english-coach-prompt";
 
 const WIDGET_KEY = "omp-tools.english-coach";
 
@@ -84,7 +85,11 @@ export default function englishCoach(pi: ExtensionAPI) {
 	pi.on("session_tree", end);
 	pi.on("session_shutdown", end);
 
-	const check = async (ctx: ExtensionContext, input: string, signal: AbortSignal) => {
+	const check = async (ctx: ExtensionContext, input: PreparedCoachPrompt, signal: AbortSignal) => {
+		if (!/[\p{L}\p{N}]/u.test(input.englishText)) {
+			show(ctx, ["Not checked: no English text"]);
+			return;
+		}
 		const session = AgentRegistry.global().get(ctx.agent.id)?.session;
 		if (!(session instanceof AgentSession)) return;
 		const ledger = session.sessionManager;
@@ -102,7 +107,7 @@ export default function englishCoach(pi: ExtensionAPI) {
 				return;
 			}
 		}
-		if (!new Tokenizer(model).checkTokenBudget(input, maxTokens).fits) {
+		if (!new Tokenizer(model).checkTokenBudget(input.englishText, maxTokens).fits) {
 			show(ctx, [`Not checked: over ${maxTokens} tokens`]);
 			return;
 		}
@@ -121,14 +126,14 @@ export default function englishCoach(pi: ExtensionAPI) {
 		};
 		const result = await completeSimple(model, {
 			systemPrompt: [instructions],
-			messages: [{ role: "user", content: input, timestamp: Date.now() }],
+			messages: [{ role: "user", content: input.text, timestamp: Date.now() }],
 		}, { apiKey, maxTokens: 2 * maxTokens + 200, disableReasoning: true, signal, onAttempt });
 		if (signal.aborted) return;
 		if (result.stopReason === "error" || result.stopReason === "aborted") {
 			throw new Error(result.errorMessage || "model call failed");
 		}
 		const text = result.content.filter(part => part.type === "text").map(part => part.text).join("").trim();
-		show(ctx, replyLines(text));
+		show(ctx, restoreCoachReply(replyLines(text), input));
 	};
 
 	pi.on("input", (event, ctx) => {
@@ -142,7 +147,7 @@ export default function englishCoach(pi: ExtensionAPI) {
 			const abort = new AbortController();
 			pending = abort;
 			show(ctx, ["Checking..."]);
-			void check(ctx, event.text, abort.signal).catch(error => {
+			void check(ctx, prepareCoachPrompt(event.text), abort.signal).catch(error => {
 				if (!abort.signal.aborted) reportFailure(ctx, error);
 			});
 		} catch (error) {

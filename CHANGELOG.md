@@ -4,6 +4,9 @@
 
 ### Added
 
+- The English coach leaves code, file paths, and URLs out of model requests
+  and its token limit. Corrections restore inline code, paths, and URLs
+  verbatim, and show fenced code as `[code block, N lines]`.
 - `generate_image` has two Image generation modes, set by the new plugin
   setting `imageGenerationMode`. `openai`, the default, uses GPT Image 2.6
   Sunburst through the public OpenAI Images API with the `openai` API key,
