@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { Settings } from "@oh-my-pi/pi-coding-agent";
 import { initTheme } from "@oh-my-pi/pi-tui/theme";
 import { englishCoachFixture } from "./helpers/english-coach-session";
@@ -313,4 +313,194 @@ test.each([0, -1, "4", null, true])("an invalid token limit %j warns once and di
 	expect(coach.requests).toEqual([]);
 	expect(coach.renders()).toBe(renders);
 	expect([...coach.widgets.values()]).toEqual(widgets);
+});
+
+describe("English coach submission cancellation", () => {
+	test("a newer prompt aborts the pending request and keeps only its own outcome", async () => {
+		const first = Promise.withResolvers<string>();
+		const second = Promise.withResolvers<string>();
+		const coach = await fixture({
+			reply: body => body.messages.at(-1).content === "first prompt" ? first.promise : second.promise,
+		});
+		const credential = spyOn(coach.main.modelRegistry, "getApiKey");
+		try {
+			await coach.input("first prompt");
+			await until(() => coach.requests.length === 1);
+			const signal = credential.mock.calls[0]![2]!.signal!;
+			expect(signal.aborted).toBe(false);
+			expect(await coach.input("second prompt")).toEqual([undefined]);
+			expect(signal.aborted).toBe(true);
+			expect(coach.lines()).toEqual(["English coach", "Checking..."]);
+			await until(() => coach.requests.length === 2);
+			second.resolve("No mistakes");
+			await until(() => coach.lines().includes("No mistakes"));
+			first.resolve("Better: First prompt.\nfirst → First (Capitalization)");
+			await Bun.sleep(30);
+			expect(coach.lines()).toEqual(["English coach", "No mistakes"]);
+		} finally {
+			first.resolve("No mistakes");
+			second.resolve("No mistakes");
+			credential.mockRestore();
+		}
+	});
+
+	test.each(["/model sonnet", "/btw", ""])("an unchecked submission %j aborts the request and removes its panel", async text => {
+		const answer = Promise.withResolvers<string>();
+		const coach = await fixture({ reply: () => answer.promise });
+		const credential = spyOn(coach.main.modelRegistry, "getApiKey");
+		try {
+			await coach.input("pending prompt");
+			await until(() => coach.requests.length === 1);
+			const signal = credential.mock.calls[0]![2]!.signal!;
+			expect(await coach.input(text)).toEqual([undefined]);
+			expect(signal.aborted).toBe(true);
+			expect(coach.lines()).toEqual([]);
+			answer.resolve("No mistakes");
+			await Bun.sleep(30);
+			expect(coach.requests).toHaveLength(1);
+			expect(coach.lines()).toEqual([]);
+		} finally {
+			answer.resolve("No mistakes");
+			credential.mockRestore();
+		}
+	});
+
+	test("an unchecked command ends a completed correction, and the next prompt opens a new panel", async () => {
+		const coach = await fixture();
+		await coach.input("This works.");
+		await until(() => coach.lines().includes("No mistakes"));
+		await coach.input("/model sonnet");
+		expect(coach.lines()).toEqual([]);
+		await coach.input("This also works.");
+		expect(coach.lines()).toEqual(["English coach", "Checking..."]);
+		await until(() => coach.lines().includes("No mistakes"));
+		expect(coach.requests).toHaveLength(2);
+	});
+
+	test.each(["session_before_switch", "session_switch", "session_before_branch", "session_tree", "session_shutdown"])(
+		"%s aborts the pending request and removes its panel without a late outcome",
+		async event => {
+			const answer = Promise.withResolvers<string>();
+			const coach = await fixture({ reply: () => answer.promise });
+			const credential = spyOn(coach.main.modelRegistry, "getApiKey");
+			try {
+				await coach.input("pending prompt");
+				await until(() => coach.requests.length === 1);
+				const signal = credential.mock.calls[0]![2]!.signal!;
+				await coach.emit(event);
+				expect(signal.aborted).toBe(true);
+				expect(coach.lines()).toEqual([]);
+				answer.resolve("No mistakes");
+				await Bun.sleep(30);
+				expect(coach.lines()).toEqual([]);
+			} finally {
+				answer.resolve("No mistakes");
+				credential.mockRestore();
+			}
+		},
+	);
+
+	test("a session switch removes a completed outcome and permits a fresh panel", async () => {
+		const coach = await fixture();
+		await coach.input("This works.");
+		await until(() => coach.lines().includes("No mistakes"));
+		await coach.emit("session_switch");
+		expect(coach.lines()).toEqual([]);
+		await coach.input("This also works.");
+		expect(coach.lines()).toEqual(["English coach", "Checking..."]);
+		await until(() => coach.lines().includes("No mistakes"));
+		expect(coach.requests).toHaveLength(2);
+	});
+
+	test("a synchronous panel failure is reported without rejecting input dispatch", async () => {
+		const coach = await fixture();
+		const widget = spyOn(coach.ctx.ui, "setWidget").mockImplementationOnce(() => {
+			throw new Error("panel unavailable");
+		});
+		try {
+			expect(await coach.input("This works.")).toEqual([undefined]);
+			expect(coach.lines()).toEqual(["English coach", "Check failed: panel unavailable"]);
+			expect(coach.requests).toEqual([]);
+		} finally {
+			widget.mockRestore();
+		}
+	});
+
+	test("failure to remove an old panel is reported without rejecting input dispatch", async () => {
+		const coach = await fixture();
+		await coach.input("This works.");
+		await until(() => coach.lines().includes("No mistakes"));
+		const widget = spyOn(coach.ctx.ui, "setWidget").mockImplementationOnce(() => {
+			throw new Error("panel cleanup failed");
+		});
+		try {
+			expect(await coach.input("/model sonnet")).toEqual([undefined]);
+			expect(coach.lines()).toEqual(["English coach", "Check failed: panel cleanup failed"]);
+			expect(coach.requests).toHaveLength(1);
+		} finally {
+			widget.mockRestore();
+		}
+	});
+
+	test("a cancelled credential lookup cannot warn or disable the next check", async () => {
+		const lookup = Promise.withResolvers<string | undefined>();
+		const coach = await fixture();
+		const credential = spyOn(coach.main.modelRegistry, "getApiKey").mockImplementationOnce(() => lookup.promise);
+		try {
+			await coach.input("first prompt");
+			expect(credential).toHaveBeenCalledTimes(1);
+			const signal = credential.mock.calls[0]![2]!.signal!;
+			await coach.input("second prompt");
+			expect(signal.aborted).toBe(true);
+			await until(() => coach.lines().includes("No mistakes"));
+			lookup.resolve(undefined);
+			await Bun.sleep(30);
+			expect(coach.lines()).toEqual(["English coach", "No mistakes"]);
+			await coach.input("third prompt");
+			await until(() => coach.requests.length === 2 && coach.lines().includes("No mistakes"));
+		} finally {
+			lookup.resolve(undefined);
+			credential.mockRestore();
+		}
+	});
+
+	test("a cancelled credential error cannot replace the newest outcome", async () => {
+		const lookup = Promise.withResolvers<string | undefined>();
+		const coach = await fixture();
+		const credential = spyOn(coach.main.modelRegistry, "getApiKey").mockImplementationOnce(() => lookup.promise);
+		try {
+			await coach.input("first prompt");
+			await coach.input("second prompt");
+			await until(() => coach.lines().includes("No mistakes"));
+			lookup.reject(new Error("old credential error"));
+			await Bun.sleep(30);
+			expect(coach.lines()).toEqual(["English coach", "No mistakes"]);
+			expect(coach.requests).toHaveLength(1);
+		} finally {
+			lookup.resolve(undefined);
+			credential.mockRestore();
+		}
+	});
+
+	test("a cancelled provider refresh cannot warn or disable the next check", async () => {
+		const refresh = Promise.withResolvers<void>();
+		const coach = await fixture();
+		const tiny = coach.settings.getModelRole("tiny");
+		coach.settings.setModelRole("tiny", "missing-coach-provider/absent");
+		const discovery = spyOn(coach.main.modelRegistry, "refreshDiscoverableProviders").mockImplementationOnce(() => refresh.promise);
+		try {
+			await coach.input("first prompt");
+			expect(discovery).toHaveBeenCalledTimes(1);
+			coach.settings.setModelRole("tiny", tiny);
+			await coach.input("second prompt");
+			await until(() => coach.lines().includes("No mistakes"));
+			refresh.resolve();
+			await Bun.sleep(30);
+			expect(coach.lines()).toEqual(["English coach", "No mistakes"]);
+			expect(coach.requests).toHaveLength(1);
+		} finally {
+			refresh.resolve();
+			discovery.mockRestore();
+		}
+	});
 });

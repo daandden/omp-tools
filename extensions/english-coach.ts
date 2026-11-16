@@ -29,7 +29,9 @@ export default function englishCoach(pi: ExtensionAPI) {
 	let enabled = true;
 	let disabled = false;
 	let maxTokens = 300;
+	let pending: AbortController | undefined;
 	const configure = async (_event: unknown, ctx: ExtensionContext) => {
+		clear(ctx);
 		const settings = await getPluginSettings("omp-tools", ctx.cwd);
 		enabled = settings.englishCoach !== false;
 		disabled = false;
@@ -52,15 +54,37 @@ export default function englishCoach(pi: ExtensionAPI) {
 		lines = next.map(plainText);
 		if (shown) tui?.requestRender();
 		else {
-			shown = true;
 			ctx.ui.setWidget(WIDGET_KEY, host => {
 				tui = host;
 				return new EnglishCoachPanel(host, () => lines);
 			}, { placement: "aboveEditor" });
+			shown = true;
 		}
 	};
+	const reportFailure = (ctx: ExtensionContext, error: unknown) => {
+		try {
+			show(ctx, [`Check failed: ${error instanceof Error ? error.message : String(error)}`]);
+		} catch {
+			// A broken host widget must not reject input dispatch or detached checks.
+		}
+	};
+	const clear = (ctx: ExtensionContext) => {
+		pending?.abort();
+		pending = undefined;
+		lines = [];
+		tui = undefined;
+		if (shown) {
+			shown = false;
+			ctx.ui.setWidget(WIDGET_KEY, undefined);
+		}
+	};
+	const end = (_event: unknown, ctx: ExtensionContext) => clear(ctx);
+	pi.on("session_before_switch", end);
+	pi.on("session_before_branch", end);
+	pi.on("session_tree", end);
+	pi.on("session_shutdown", end);
 
-	const check = async (ctx: ExtensionContext, input: string) => {
+	const check = async (ctx: ExtensionContext, input: string, signal: AbortSignal) => {
 		const session = AgentRegistry.global().get(ctx.agent.id)?.session;
 		if (!(session instanceof AgentSession)) return;
 		const ledger = session.sessionManager;
@@ -70,6 +94,7 @@ export default function englishCoach(pi: ExtensionAPI) {
 		if (!model) {
 			const providers = patterns.flatMap(pattern => pattern.includes("/") ? [pattern.slice(0, pattern.indexOf("/"))] : []);
 			await ctx.modelRegistry.refreshDiscoverableProviders(providers, "online").catch(() => undefined);
+			if (signal.aborted) return;
 			model = ctx.models.resolve("@tiny");
 			if (!model) {
 				disabled = true;
@@ -81,8 +106,8 @@ export default function englishCoach(pi: ExtensionAPI) {
 			show(ctx, [`Not checked: over ${maxTokens} tokens`]);
 			return;
 		}
-		const abort = new AbortController();
-		const apiKey = await ctx.modelRegistry.getApiKey(model, owner.sessionId, { signal: abort.signal });
+		const apiKey = await ctx.modelRegistry.getApiKey(model, owner.sessionId, { signal });
+		if (signal.aborted) return;
 		if (!apiKey) {
 			disabled = true;
 			show(ctx, [`English coach: @tiny has no credential (${model.provider}/${model.id}). Coaching is off for this session.`]);
@@ -97,7 +122,8 @@ export default function englishCoach(pi: ExtensionAPI) {
 		const result = await completeSimple(model, {
 			systemPrompt: [instructions],
 			messages: [{ role: "user", content: input, timestamp: Date.now() }],
-		}, { apiKey, maxTokens: 2 * maxTokens + 200, disableReasoning: true, signal: abort.signal, onAttempt });
+		}, { apiKey, maxTokens: 2 * maxTokens + 200, disableReasoning: true, signal, onAttempt });
+		if (signal.aborted) return;
 		if (result.stopReason === "error" || result.stopReason === "aborted") {
 			throw new Error(result.errorMessage || "model call failed");
 		}
@@ -106,10 +132,22 @@ export default function englishCoach(pi: ExtensionAPI) {
 	};
 
 	pi.on("input", (event, ctx) => {
-		if (event.source !== "interactive" || ctx.mode !== "tui" || !ctx.hasUI || ctx.agent.kind !== "main") return undefined;
-		if (!enabled || disabled || !event.text.trim() || event.text.trimStart().startsWith("/")) return undefined;
-		show(ctx, ["Checking..."]);
-		void check(ctx, event.text).catch(error => show(ctx, [`Check failed: ${error instanceof Error ? error.message : String(error)}`]));
+		try {
+			if (event.source !== "interactive" || ctx.mode !== "tui" || !ctx.hasUI || ctx.agent.kind !== "main") return undefined;
+			if (!enabled || disabled || !event.text.trim() || event.text.trimStart().startsWith("/")) {
+				if (pending) clear(ctx);
+				return undefined;
+			}
+			pending?.abort();
+			const abort = new AbortController();
+			pending = abort;
+			show(ctx, ["Checking..."]);
+			void check(ctx, event.text, abort.signal).catch(error => {
+				if (!abort.signal.aborted) reportFailure(ctx, error);
+			});
+		} catch (error) {
+			reportFailure(ctx, error);
+		}
 		return undefined;
 	});
 }
