@@ -18,8 +18,11 @@
   `/btw`, `/skill:<name>`, and discovered prompt-file commands are checked
   among commands, with each `/btw` question checked once.
 - New submissions cancel stale checks. Session changes clear the panel.
-  Long corrections wrap within a 40% height cap, with wheel scrolling in Tern
-  and a remaining-line count in the classic terminal.
+  Esc from an empty editor, or a click on `esc to close` in Tern, closes the
+  panel early. In Tern the panel matches the `/btw` panel's width, with a
+  sans-serif body and muted labels and original wording. Long corrections
+  wrap within a 40% height cap, with wheel scrolling in Tern and a
+  remaining-line count in the classic terminal.
 - `generate_image` has two Image generation modes, set by the new plugin
   setting `imageGenerationMode`. `openai`, the default, uses GPT Image 2.6
   Sunburst through the public OpenAI Images API with the `openai` API key,

@@ -3,11 +3,12 @@ import { Tokenizer } from "@oh-my-pi/pi-agent-core";
 import { AgentRegistry, AgentSession, discoverSlashCommands, type ExtensionAPI, type ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { resolveConfiguredModelPatterns } from "@oh-my-pi/pi-coding-agent/config/model-resolver";
 import { getPluginSettings } from "@oh-my-pi/pi-coding-agent/extensibility/plugins/loader";
-import type { TUI } from "@oh-my-pi/pi-tui";
+import type { Component, TUI } from "@oh-my-pi/pi-tui";
 import instructions from "./english-coach.md" with { type: "text" };
 import { EnglishCoachPanel } from "./english-coach-panel";
 import { prepareCoachPrompt, restoreCoachReply, type PreparedCoachPrompt } from "./english-coach-prompt";
 import { forwardCoachInput, observeCoachInput } from "./english-coach-input";
+import { isInterruptKey } from "./side-question-view";
 
 const WIDGET_KEY = "omp-tools.english-coach";
 
@@ -34,10 +35,15 @@ export default function englishCoach(pi: ExtensionAPI) {
 	let pending: AbortController | undefined;
 	let promptCommandNames: ReadonlySet<string> = new Set();
 	let stopForwarding: (() => void) | undefined;
+	let stopKeys: (() => void) | undefined;
 	const configure = async (_event: unknown, ctx: ExtensionContext) => {
 		clear(ctx);
 		stopForwarding?.();
 		stopForwarding = observeCoachInput(ctx, observe);
+		stopKeys?.();
+		stopKeys = ctx.mode === "tui" && ctx.hasUI && ctx.agent.kind === "main"
+			? ctx.ui.onTerminalInput(data => closeOnInterrupt(ctx, data))
+			: undefined;
 		promptCommandNames = new Set();
 		const settings = await getPluginSettings("omp-tools", ctx.cwd);
 		enabled = settings.englishCoach !== false;
@@ -66,6 +72,8 @@ export default function englishCoach(pi: ExtensionAPI) {
 	pi.on("session_switch", configure);
 	let lines: string[] = [];
 	let tui: TUI | undefined;
+	// The component focused when the panel opened: the main editor, since a submission or session start opens it.
+	let editorFocus: Component | null = null;
 	let shown = false;
 	const show = (ctx: ExtensionContext, next: string[]) => {
 		lines = next.map(plainText);
@@ -73,10 +81,17 @@ export default function englishCoach(pi: ExtensionAPI) {
 		else {
 			ctx.ui.setWidget(WIDGET_KEY, host => {
 				tui = host;
-				return new EnglishCoachPanel(host, () => lines);
+				editorFocus = host.getFocused();
+				return new EnglishCoachPanel(host, () => lines, () => clear(ctx));
 			}, { placement: "aboveEditor" });
 			shown = true;
 		}
+	};
+	// As /btw's panel: the interrupt key closes it only from an empty main editor, so a Picker or selector keeps its Esc.
+	const closeOnInterrupt = (ctx: ExtensionContext, data: string) => {
+		if (!shown || !isInterruptKey(data) || ctx.ui.getEditorText().trim() || tui?.getFocused() !== editorFocus) return undefined;
+		clear(ctx);
+		return { consume: true };
 	};
 	const reportFailure = (ctx: ExtensionContext, error: unknown) => {
 		const failure = `Check failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -104,6 +119,8 @@ export default function englishCoach(pi: ExtensionAPI) {
 	pi.on("session_shutdown", (event, ctx) => {
 		stopForwarding?.();
 		stopForwarding = undefined;
+		stopKeys?.();
+		stopKeys = undefined;
 		end(event, ctx);
 	});
 
