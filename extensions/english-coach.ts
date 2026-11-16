@@ -1,6 +1,6 @@
 import { completeSimple, type AssistantMessage } from "@oh-my-pi/pi-ai";
 import { Tokenizer } from "@oh-my-pi/pi-agent-core";
-import { AgentRegistry, AgentSession, type ExtensionAPI, type ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import { AgentRegistry, AgentSession, discoverSlashCommands, type ExtensionAPI, type ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { resolveConfiguredModelPatterns } from "@oh-my-pi/pi-coding-agent/config/model-resolver";
 import { getPluginSettings } from "@oh-my-pi/pi-coding-agent/extensibility/plugins/loader";
 import type { TUI } from "@oh-my-pi/pi-tui";
@@ -31,8 +31,10 @@ export default function englishCoach(pi: ExtensionAPI) {
 	let disabled = false;
 	let maxTokens = 300;
 	let pending: AbortController | undefined;
+	let promptCommandNames: ReadonlySet<string> = new Set();
 	const configure = async (_event: unknown, ctx: ExtensionContext) => {
 		clear(ctx);
+		promptCommandNames = new Set();
 		const settings = await getPluginSettings("omp-tools", ctx.cwd);
 		enabled = settings.englishCoach !== false;
 		disabled = false;
@@ -45,6 +47,16 @@ export default function englishCoach(pi: ExtensionAPI) {
 			return;
 		}
 		maxTokens = limit;
+		if (enabled && ctx.mode === "tui" && ctx.hasUI && ctx.agent.kind === "main") {
+			try {
+				// OMP 18.20.3 marks discovered prompt files with _source; bundled templates have none.
+				const commands = await discoverSlashCommands({ cwd: ctx.cwd });
+				promptCommandNames = new Set(commands.filter(command => command._source !== undefined).map(command => command.name));
+			} catch (error) {
+				disabled = true;
+				reportFailure(ctx, error);
+			}
+		}
 	};
 	pi.on("session_start", configure);
 	pi.on("session_switch", configure);
@@ -139,15 +151,20 @@ export default function englishCoach(pi: ExtensionAPI) {
 	pi.on("input", (event, ctx) => {
 		try {
 			if (event.source !== "interactive" || ctx.mode !== "tui" || !ctx.hasUI || ctx.agent.kind !== "main") return undefined;
-			if (!enabled || disabled || !event.text.trim() || event.text.trimStart().startsWith("/")) {
+			if (!enabled || disabled) {
 				if (pending) clear(ctx);
+				return undefined;
+			}
+			const input = prepareCoachPrompt(event.text, promptCommandNames);
+			if (!input) {
+				clear(ctx);
 				return undefined;
 			}
 			pending?.abort();
 			const abort = new AbortController();
 			pending = abort;
 			show(ctx, ["Checking..."]);
-			void check(ctx, prepareCoachPrompt(event.text), abort.signal).catch(error => {
+			void check(ctx, input, abort.signal).catch(error => {
 				if (!abort.signal.aborted) reportFailure(ctx, error);
 			});
 		} catch (error) {

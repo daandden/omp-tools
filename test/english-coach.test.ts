@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { Settings } from "@oh-my-pi/pi-coding-agent";
+import * as host from "@oh-my-pi/pi-coding-agent";
 import { initTheme } from "@oh-my-pi/pi-tui/theme";
 import { englishCoachFixture } from "./helpers/english-coach-session";
 import { writePluginSettings } from "./support";
@@ -730,5 +731,116 @@ describe("protected code and links", () => {
 		expect(coach.lines()).toEqual([
 			"English coach", "Better: It fails [[COACH_1]] with `[[COACH__2]]`", "- it fail → It fails (Agreement)",
 		]);
+	});
+});
+
+describe("English coach command allow list", () => {
+	test.each([
+		"/skill:review it fail",
+		"/skill:team:review\tit fail",
+		"/btw\nit fail",
+	])("only the argument of %j reaches the coach model", async input => {
+		const coach = await fixture({
+			settings: { englishCoachMaxTokens: 2 },
+			reply: () => "Better: It fails.\nit fail → It fails (Agreement)",
+		});
+		expect(await coach.input(input)).toEqual([undefined]);
+		await until(() => coach.lines().some(line => line.startsWith("Better:")));
+		expect(coach.requests).toHaveLength(1);
+		expect(coach.requests[0]!.messages.filter((message: any) => message.role === "user")).toEqual([
+			{ role: "user", content: "it fail" },
+		]);
+		expect(coach.lines()).toEqual([
+			"English coach", "Better: It fails.", "- it fail → It fails (Agreement)",
+		]);
+	});
+
+	test.each(["coach-file", "team:coach-file"])("a discovered prompt-file command /%s sends only its unexpanded argument", async name => {
+		const coach = await fixture({ promptCommands: [name] });
+		expect(await coach.input(`/${name} it fail`)).toEqual([undefined]);
+		await until(() => coach.lines().includes("No mistakes"));
+		expect(coach.requests).toHaveLength(1);
+		expect(coach.requests[0]!.messages.filter((message: any) => message.role === "user")).toEqual([
+			{ role: "user", content: "it fail" },
+		]);
+		expect(JSON.stringify(coach.requests)).not.toContain("Expanded template");
+	});
+
+	test.each([
+		"/",
+		"/ fix this",
+		"/model sonnet",
+		"/resume 3f2a",
+		"/unknown-coach-command fix this",
+		"/coach-file-extra fix this",
+		"/skill: fix this",
+		"/skills:review fix this",
+		"/btw",
+		"/btw \t\n",
+		"/skill:review",
+		"/skill:review \t",
+		"/coach-file",
+		"/coach-file \n",
+	])("unchecked command %j removes the previous outcome without a request", async input => {
+		const coach = await fixture({ promptCommands: ["coach-file"] });
+		await coach.input("This works.");
+		await until(() => coach.lines().includes("No mistakes"));
+		expect(await coach.input(input)).toEqual([undefined]);
+		await Bun.sleep(25);
+		expect(coach.lines()).toEqual([]);
+		expect(coach.requests).toHaveLength(1);
+	});
+
+	test("prompt-file names are discovered once per session and replaced for a new cwd", async () => {
+		const other = await fixture({ promptCommands: ["other-coach-file"] });
+		const coach = await fixture({ promptCommands: ["coach-file"] });
+		const discovery = spyOn(host, "discoverSlashCommands");
+		try {
+			await coach.emit("session_switch");
+			expect(discovery).toHaveBeenCalledTimes(1);
+			expect(discovery.mock.calls[0]).toEqual([{ cwd: coach.ctx.cwd }]);
+			await coach.input("/coach-file it fail");
+			await until(() => coach.lines().includes("No mistakes"));
+			await coach.input("This works.");
+			await until(() => coach.requests.length === 2 && coach.lines().includes("No mistakes"));
+			await Bun.write(`${coach.ctx.cwd}/.omp/commands/late-coach-file.md`, "$ARGUMENTS");
+			await coach.input("/late-coach-file it fail");
+			expect(coach.lines()).toEqual([]);
+			expect(discovery).toHaveBeenCalledTimes(1);
+			expect(coach.requests).toHaveLength(2);
+
+			const context = { ...coach.ctx, cwd: other.ctx.cwd };
+			await coach.emit("session_switch", {}, context);
+			expect(discovery).toHaveBeenCalledTimes(2);
+			expect(discovery.mock.calls[1]).toEqual([{ cwd: other.ctx.cwd }]);
+			await coach.input("/coach-file it fail", {}, context);
+			expect(coach.lines()).toEqual([]);
+			await coach.input("/other-coach-file it fail", {}, context);
+			await until(() => coach.requests.length === 3 && coach.lines().includes("No mistakes"));
+			expect(discovery).toHaveBeenCalledTimes(2);
+			expect(coach.requests.at(-1)!.messages.filter((message: any) => message.role === "user")).toEqual([
+				{ role: "user", content: "it fail" },
+			]);
+		} finally {
+			discovery.mockRestore();
+		}
+	});
+
+	test("allowed command arguments keep code and links out of the request and the English budget", async () => {
+		const coach = await fixture({ settings: { englishCoachMaxTokens: 4 } });
+		await coach.input(`/skill:review it fail \`privateCode()\` src/private.ts https://private.example/${"secret".repeat(1000)}`);
+		await until(() => coach.lines().includes("No mistakes"));
+		expect(coach.requests).toHaveLength(1);
+		const request = JSON.stringify(coach.requests);
+		for (const excluded of ["skill:review", "privateCode", "src/private.ts", "private.example", "secret"]) {
+			expect(request).not.toContain(excluded);
+		}
+	});
+
+	test("an allowed command with only code names the no-English reason", async () => {
+		const coach = await fixture();
+		await coach.input("/btw `privateCode()`");
+		expect(coach.lines()).toEqual(["English coach", "Not checked: no English text"]);
+		expect(coach.requests).toEqual([]);
 	});
 });

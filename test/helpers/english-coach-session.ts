@@ -12,6 +12,7 @@ export async function englishCoachFixture(options: {
 	fail?: string[];
 	finishReason?: (body: Record<string, any>) => string;
 	settings?: Record<string, unknown>;
+	promptCommands?: string[];
 } = {}) {
 	const base = await sideQuestionFixture({ reply: options.reply ?? (() => "No mistakes"), fail: options.fail, finishReason: options.finishReason });
 	const handlers = new Map<string, Handler[]>();
@@ -57,6 +58,9 @@ export async function englishCoachFixture(options: {
 	};
 	try {
 		writePluginSettings(base.ctx.cwd, options.settings ?? {});
+		for (const name of options.promptCommands ?? []) {
+			await Bun.write(`${base.ctx.cwd}/.omp/commands/${name}.md`, "Expanded template must never reach the coach.\n$ARGUMENTS");
+		}
 		const entry = manifest.omp.extensions.find(file => file.endsWith("/english-coach.ts"));
 		if (!entry) throw new Error("English coach entry point is not registered in omp.extensions");
 		const initialize = (await import(new URL(`../../${entry}`, import.meta.url).href)).default;

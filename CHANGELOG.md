@@ -4,6 +4,9 @@
 
 ### Added
 
+- The English coach checks only sentence arguments after `/skill:<name>` and
+  discovered prompt-file commands. Other commands and commands without
+  arguments clear its panel without a model request.
 - The English coach leaves code, file paths, and URLs out of model requests
   and its token limit. Corrections restore inline code, paths, and URLs
   verbatim, and show fenced code as `[code block, N lines]`.

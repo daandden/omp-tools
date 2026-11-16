@@ -4,7 +4,14 @@ export interface PreparedCoachPrompt {
 	placeholders: { token: string; original: string; display: string }[];
 }
 
-export function prepareCoachPrompt(input: string): PreparedCoachPrompt {
+export function prepareCoachPrompt(input: string, promptCommandNames: ReadonlySet<string>): PreparedCoachPrompt | undefined {
+	const command = /^\/(\S*)(?:\s+([\s\S]*))?$/.exec(input.trimStart());
+	if (command) {
+		const name = command[1]!;
+		if (name !== "btw" && !/^skill:.+/.test(name) && !promptCommandNames.has(name)) return undefined;
+		input = command[2] ?? "";
+	}
+	if (!input.trim()) return undefined;
 	const placeholders: PreparedCoachPrompt["placeholders"] = [];
 	let prefix = "[[COACH_";
 	while (input.includes(prefix)) prefix = prefix.replace("COACH", "COACH_");
