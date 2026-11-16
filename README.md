@@ -623,11 +623,14 @@ Picker Notes, Other answers, and the Submit note are not checked. RPC, ACP,
 print mode, and subagents never trigger the coach.
 
 The panel keeps the editor focused and stays until your next submission.
-A new submission cancels an unfinished check. Session switches, branches,
-tree jumps, and shutdown clear the panel and cancel the check. Long
-corrections wrap within a height cap of 40% of the terminal rows. In Tern,
-scroll the body with the wheel. The classic terminal shows the first lines
-and `… N more lines`.
+To close it sooner, press Esc while the editor is empty, or click
+`esc to close` in Tern. As with the `/btw` panel, that Esc closes the panel
+instead of interrupting a running turn; press Esc again to interrupt.
+Closing cancels an unfinished check. A new submission also cancels an
+unfinished check. Session switches, branches, tree jumps, and shutdown clear
+the panel and cancel the check. Long corrections wrap within a height cap of
+40% of the terminal rows. In Tern, scroll the body with the wheel. The
+classic terminal shows the first lines and `… N more lines`.
 
 ### Settings and cost
 

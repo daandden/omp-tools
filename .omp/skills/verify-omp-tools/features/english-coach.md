@@ -10,6 +10,7 @@ The English coach checks submitted English in the background with `@tiny`, witho
 - `coach-fence`: a short sentence above 500 fenced code lines is checked. The coach request contains a placeholder, not the code, and the panel shows one `[code block, 500 lines]` marker.
 - `coach-btw`: one coach request for the question text, with both the correction and the Side question answer visible.
 - `coach-command`: `/model coach-smoke/main` removes the coach panel and makes no tiny request. The host's handling of the command is not the coach's contract.
+- `coach-close`: with the editor empty, `$C key Escape` removes the panel. In Tern, `$C click '.sf-act[title="Close"]'` on the header's `esc to close` hint also removes it. The panel spans the composer's width, as `/btw` does.
 
 ## How to get to it (user POV)
 

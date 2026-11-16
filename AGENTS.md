@@ -457,8 +457,14 @@ A Side question is a full agent run in a mirror session built the way OMP's
   against a changed session. No correction becomes a conversation message.
 - The widget has its own key above the editor. Its wrapped body has a 40%
   terminal-row cap, with a final `… N more lines` in classic and a wheel
-  scroll box in Tern. Tern uses the native overlay role and its own sheet
-  to reserve room above the composer.
+  scroll box in Tern. Tern uses the native overlay role, without a width of
+  its own, so the panel spans the composer like `/btw`. Its sheet sets the
+  body in `--sans` and mutes labels and original wording.
+- `app.interrupt` (Esc) closes the panel, as on the `/btw` panel, only while
+  the main editor is empty and has focus. The focus is the component focused
+  when the widget was created, read with `tui.getFocused()`, so a Picker or
+  selector keeps its Esc. In Tern the `esc to close` hint in the header is
+  also a click target. Closing aborts an unfinished check.
 - Every interactive submission clears the previous outcome and aborts an
   unfinished check. Session switch, branch, tree, and shutdown do the same.
   Failures stay in the panel and never reject input dispatch.

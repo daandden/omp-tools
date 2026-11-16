@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, expect, test } from "bun:test";
 import { Settings } from "@oh-my-pi/pi-coding-agent";
 import { initTheme } from "@oh-my-pi/pi-tui/theme";
-import { englishCoachFixture, until } from "./helpers/english-coach-session";
+import { englishCoachFixture, TITLE, until } from "./helpers/english-coach-session";
 
 const cleanups: (() => Promise<void>)[] = [];
 beforeAll(async () => {
@@ -32,7 +32,7 @@ test.each(orders)("/btw is coached once and answered with %j loaded first", asyn
 		{ role: "user", content: "why this not work" },
 	]);
 	expect(coach.widgets.get("omp-tools.english-coach")!.render(100)).toEqual([
-		"English coach", "Better: Why doesn't this work?", "- why this not work → Why doesn't this work (Missing auxiliary verb)",
+		TITLE, "Better: Why doesn't this work?", "- why this not work → Why doesn't this work (Missing auxiliary verb)",
 	]);
 	expect([...coach.placements.values()]).toEqual([{ placement: "aboveEditor" }, { placement: "aboveEditor" }]);
 	expect(coach.focus()).toBe(true);
@@ -56,7 +56,7 @@ test.each(orders)("identical /btw submissions each get a check with %j loaded fi
 		await until(() => coach.main.sessionManager.getEntries().filter(entry => entry.type === "model_usage" && entry.purpose === "english-coach").length === count);
 		expect(coach.requests.filter(body => body.model === "small")).toHaveLength(count);
 		expect(coach.requests.filter(body => body.model === "main")).toHaveLength(count);
-		expect(coach.widgets.get("omp-tools.english-coach")!.render(100)).toEqual(["English coach", "No mistakes"]);
+		expect(coach.widgets.get("omp-tools.english-coach")!.render(100)).toEqual([TITLE, "No mistakes"]);
 	}
 });
 
