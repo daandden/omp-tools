@@ -133,7 +133,8 @@ test("a missing tiny selector is refreshed once, warned once, and never uses the
 	coach.settings.setModelRole("tiny", `${provider}/absent`);
 	await coach.input("this work");
 	await until(() => coach.lines().some(line => line.includes("has no model")));
-	expect(coach.lines()).toEqual(["English coach", `English coach: @tiny has no model (${provider}/absent). Coaching is off for this session.`]);
+	expect(coach.lines()[0]).toBe("English coach");
+	expect(coach.lines().slice(1).join(" ")).toBe(`English coach: @tiny has no model (${provider}/absent). Coaching is off for this session.`);
 	expect(discoveries).toBe(1);
 	const renders = coach.renders();
 	await coach.input("another sentence");
@@ -168,7 +169,8 @@ test("credentials lost after tiny resolution warn once and never send a request"
 	try {
 		await coach.input("this work");
 		await until(() => coach.lines().some(line => line.includes("no credential")));
-		expect(coach.lines()).toEqual(["English coach", `English coach: @tiny has no credential (${model.provider}/${model.id}). Coaching is off for this session.`]);
+		expect(coach.lines()[0]).toBe("English coach");
+		expect(coach.lines().slice(1).join(" ")).toBe(`English coach: @tiny has no credential (${model.provider}/${model.id}). Coaching is off for this session.`);
 		await coach.input("another sentence");
 		await Bun.sleep(25);
 		expect(credential).toHaveBeenCalledTimes(1);
@@ -302,10 +304,10 @@ test.each([0, -1, "4", null, true])("an invalid token limit %j warns once and di
 	const coach = await fixture({ settings: { englishCoachMaxTokens: limit } });
 	await coach.input("This works.");
 	await until(() => !coach.lines().includes("Checking..."));
-	expect(coach.lines()).toEqual([
-		"English coach",
+	expect(coach.lines()[0]).toBe("English coach");
+	expect(coach.lines().slice(1).join(" ")).toBe(
 		"English coach: englishCoachMaxTokens must be a positive number. Coaching is off for this session.",
-	]);
+	);
 	const renders = coach.renders();
 	const widgets = [...coach.widgets.values()];
 	await coach.input("Another sentence.");
@@ -502,5 +504,66 @@ describe("English coach submission cancellation", () => {
 			refresh.resolve();
 			discovery.mockRestore();
 		}
+	});
+});
+
+describe("bounded English coach panel", () => {
+	test("a long classic correction keeps its first lines within forty percent of the terminal", async () => {
+		const coach = await fixture({
+			reply: () => `Better: A corrected prompt.\n${Array.from({ length: 24 }, (_, index) => `word${index} → correction${index} (Word choice)`).join("\n")}`,
+		});
+		await coach.input("please fix my wording");
+		await until(() => !coach.lines().includes("Checking..."));
+		expect(coach.lines()).toHaveLength(16);
+		expect(coach.lines().slice(0, 3)).toEqual([
+			"English coach", "Better: A corrected prompt.", "- word0 → correction0 (Word choice)",
+		]);
+		expect(coach.lines().at(-1)).toBe("… 11 more lines");
+		expect(coach.focus()).toBe(true);
+	});
+
+	test("classic wraps a long rewrite before counting the hidden lines and reflows on resize", async () => {
+		const rewrite = `Better: ${Array(20).fill("Please fix this sentence.").join(" ")}`;
+		const coach = await fixture({ reply: () => `${rewrite}\nsentence → sentence (Word choice)` });
+		await coach.input("please fix this sentence");
+		await until(() => !coach.lines().includes("Checking..."));
+		const panel = [...coach.widgets.values()][0]!;
+		const narrow = panel.render(30);
+		expect(narrow).toHaveLength(16);
+		expect(narrow.slice(0, 3)).toEqual([
+			"English coach", "Better: Please fix this", "sentence. Please fix this",
+		]);
+		expect(narrow.at(-1)).toBe("… 9 more lines");
+		expect(narrow.every(line => Bun.stringWidth(line) <= 30)).toBe(true);
+		expect(panel.render(1000)).toEqual(["English coach", rewrite, "- sentence → sentence (Word choice)"]);
+	});
+
+	test("Tern keeps the complete wrapped correction in a capped scroll box", async () => {
+		const rewrite = `Better: ${Array(20).fill("Please fix this sentence.").join(" ")}`;
+		const coach = await fixture({
+			reply: () => `${rewrite}\n${Array.from({ length: 24 }, (_, index) => `word${index} → correction${index} (Word choice)`).join("\n")}`,
+		});
+		await coach.input("please fix my wording");
+		await until(() => !coach.lines().includes("Checking..."));
+		expect(coach.native()[0]).toMatchObject({
+			k: "col",
+			p: { role: "omp.overlay.btw", min: { w: 1 }, max: { w: 1 } },
+			c: [
+				{ k: "text" },
+				{
+					k: "list",
+					p: { max: { lines: 10 } },
+					c: [{
+						k: "col",
+						c: expect.arrayContaining([
+							expect.objectContaining({ p: expect.objectContaining({ text: rewrite, wrap: "word" }) }),
+							expect.objectContaining({ p: expect.objectContaining({ text: "- word23 → correction23 (Word choice)", wrap: "word" }) }),
+						]),
+					}],
+				},
+			],
+		});
+		expect(JSON.stringify(coach.native())).not.toContain("more lines");
+		expect(coach.focus()).toBe(true);
 	});
 });
