@@ -7,6 +7,7 @@ import type { TUI } from "@oh-my-pi/pi-tui";
 import instructions from "./english-coach.md" with { type: "text" };
 import { EnglishCoachPanel } from "./english-coach-panel";
 import { prepareCoachPrompt, restoreCoachReply, type PreparedCoachPrompt } from "./english-coach-prompt";
+import { forwardCoachInput, observeCoachInput } from "./english-coach-input";
 
 const WIDGET_KEY = "omp-tools.english-coach";
 
@@ -32,8 +33,11 @@ export default function englishCoach(pi: ExtensionAPI) {
 	let maxTokens = 300;
 	let pending: AbortController | undefined;
 	let promptCommandNames: ReadonlySet<string> = new Set();
+	let stopForwarding: (() => void) | undefined;
 	const configure = async (_event: unknown, ctx: ExtensionContext) => {
 		clear(ctx);
+		stopForwarding?.();
+		stopForwarding = observeCoachInput(ctx, observe);
 		promptCommandNames = new Set();
 		const settings = await getPluginSettings("omp-tools", ctx.cwd);
 		enabled = settings.englishCoach !== false;
@@ -95,7 +99,11 @@ export default function englishCoach(pi: ExtensionAPI) {
 	pi.on("session_before_switch", end);
 	pi.on("session_before_branch", end);
 	pi.on("session_tree", end);
-	pi.on("session_shutdown", end);
+	pi.on("session_shutdown", (event, ctx) => {
+		stopForwarding?.();
+		stopForwarding = undefined;
+		end(event, ctx);
+	});
 
 	const check = async (ctx: ExtensionContext, input: PreparedCoachPrompt, signal: AbortSignal) => {
 		if (!/[\p{L}\p{N}]/u.test(input.englishText)) {
@@ -148,7 +156,7 @@ export default function englishCoach(pi: ExtensionAPI) {
 		show(ctx, restoreCoachReply(replyLines(text), input));
 	};
 
-	pi.on("input", (event, ctx) => {
+	const observe: Parameters<typeof observeCoachInput>[1] = (event, ctx) => {
 		try {
 			if (event.source !== "interactive" || ctx.mode !== "tui" || !ctx.hasUI || ctx.agent.kind !== "main") return undefined;
 			if (!enabled || disabled) {
@@ -171,5 +179,6 @@ export default function englishCoach(pi: ExtensionAPI) {
 			reportFailure(ctx, error);
 		}
 		return undefined;
-	});
+	};
+	pi.on("input", forwardCoachInput);
 }

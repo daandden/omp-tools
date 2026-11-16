@@ -4,6 +4,7 @@ import type { TUI } from "@oh-my-pi/pi-tui";
 import { prompt } from "@oh-my-pi/pi-utils";
 import btwPrompt from "./btw.md" with { type: "text" };
 import { BtwPanel } from "./btw-panel";
+import { forwardCoachInput } from "./english-coach-input";
 import { LazySideQuestionThread, sideQuestionsAvailable } from "./side-question";
 import { answerInto, hasToolCalls, isInterruptKey, newTurn, type SideQuestionTurn } from "./side-question-view";
 
@@ -151,6 +152,7 @@ export default function btw(pi: ExtensionAPI) {
 		if (event.source !== "interactive" || ctx.mode !== "tui" || !ctx.hasUI) return undefined;
 		const question = parseBtwQuestion(event.text);
 		if (question === undefined || !sideQuestionsAvailable(ctx)) return undefined;
+		forwardCoachInput(event, ctx);
 		cycle ??= new BtwCycle(ctx);
 		cycle.ask(question, event.images);
 		return { handled: true };

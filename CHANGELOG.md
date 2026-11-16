@@ -4,6 +4,8 @@
 
 ### Added
 
+- The English coach checks `/btw` questions once in either entry-point load
+  order, without changing Side question answers or replacing their panel.
 - The English coach checks only sentence arguments after `/skill:<name>` and
   discovered prompt-file commands. Other commands and commands without
   arguments clear its panel without a model request.
