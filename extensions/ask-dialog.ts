@@ -436,6 +436,8 @@ ${SCROLL_BOX_CSS}
 [data-role='omp-tools.ask-typed'] { font: var(--sf-fs, 13px)/var(--sf-lh, 17px) var(--sans); }
 [data-role='omp-tools.ask-marker'] { font-size: 0.75em; line-height: var(--sf-lh, 17px); }
 [data-role='omp-tools.ask-answers'] { font-family: var(--sans); font-size: 13px; }
+.sf-kv[data-role='omp-tools.ask-answers'] > .sf-kv-item { grid-template-columns: minmax(0, 1fr) minmax(0, 3fr); }
+.sf-kv[data-role='omp-tools.ask-answers'] .sf-kv-k { white-space: normal; overflow-wrap: anywhere; }
 [data-role='omp-tools.ask-title'] { font: 600 13px/1.4 var(--sans); color: var(--t3); }
 `;
 

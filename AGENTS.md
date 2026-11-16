@@ -648,6 +648,12 @@ smoke only.
 
 Last live proof, newest first:
 
+- 2026-11-16, OMP 18.20.3 and Tern 0.9.23, local SSE provider: a Submit
+  review with two answers and a Note on a long option label keeps every value
+  inside the Picker at 1200px and 900px pane widths. A fresh native window
+  with the user's dark theme and Iosevka fonts also passes at 1741px.
+  Before the fix, the label column grew beyond the pane and answers had zero
+  width. The headless drive submits both picks and the Note unchanged.
 - 2026-11-12, final acceptance of the HTML `ask` migration: OMP source at
   `8ed79a8` (`feat/extension-ask-replay`), headless Tern 0.9.16, local SSE
   provider, fresh agent dir. In both renderers: a mixed form with context

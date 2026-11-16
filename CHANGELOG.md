@@ -55,6 +55,8 @@
 
 ### Fixed
 
+- The Picker's Submit review in Tern keeps answers visible when an option
+  Note has a long label, instead of expanding the label column beyond the pane.
 - HTML form defaults show as `Recommended` in both Picker renderers, and
   keep that label when you change your picks.
 - A Side question model that OMP's model list lost while running (after a

@@ -108,7 +108,8 @@ and the Picker opens it with native's reason.
 - Picking never loses typed text. Every option keeps its own note through
   select and deselect. Un-picking `Other` keeps its text, and `n` then save
   picks it again.
-- The Submit tab has a Submit note for the whole ask.
+- The Submit tab has a Submit note for the whole ask. In Tern, long review
+  labels wrap within their column so answers and Notes stay inside the Picker.
 - On timeout, the Picker submits the form as it stands, as native does: picks,
   defaults, and typed text, with no recommendation filled in and no checks,
   even when a required field is empty or a number is out of bounds. The
