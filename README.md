@@ -1,6 +1,6 @@
 # omp-tools
 
-An Oh My Pi (OMP) plugin that changes three tools:
+An Oh My Pi (OMP) plugin with four parts:
 
 - `ask` takes native `ask`'s HTML form and answers it in its own Picker, with
   a note on every option, pasted images, and answers kept when you press Esc.
@@ -9,6 +9,8 @@ An Oh My Pi (OMP) plugin that changes three tools:
   Images endpoint with a ChatGPT login).
 - `/btw <question>` asks a Side question that can look things up with
   read-only tools. `?` in the Picker asks one about the open question.
+- The English coach checks your English with `@tiny` in the background and
+  shows private corrections above the editor.
 
 ## Install
 
@@ -591,6 +593,80 @@ Side questions need the interactive TUI and a saved session. In a focused
 subagent view and in RPC, ACP, and print mode, `/btw` stays native. File
 commands with `side: true` also use native `/btw`.
 
+## English coach
+
+The English coach checks prompts you submit to the main agent in the
+interactive terminal. Your prompt reaches the main agent immediately,
+unchanged. Corrections appear only in a panel above the editor, never in the
+main conversation. Attached images are not checked.
+
+The panel first shows `Checking...`, then one of these outcomes:
+
+- `Better: ...`, followed by one `- original → corrected (Pattern)` line per
+  mistake.
+- `No mistakes` when the English is already natural.
+- `Not checked: over 300 tokens` when the English text exceeds the limit.
+- `Not checked: no English text` when only protected text remains or the
+  model reports non-English text.
+- `Check failed: <reason>` when the check fails.
+
+Code fences, inline code, file paths, and URLs are left out of the check and
+the token count. The rewrite restores inline code, paths, and URLs verbatim.
+Each fenced block appears as one `[code block, N lines]` line instead of its
+contents. A short sentence above a large fenced paste can still be checked;
+long pasted prose counts in full.
+
+Among slash commands, only the text after `/btw`, `/skill:<name>`, and
+discovered prompt-file commands is checked. Other commands, such as `/model`,
+and allowed commands with no argument remove the panel without a check.
+Picker Notes, Other answers, and the Submit note are not checked. RPC, ACP,
+print mode, and subagents never trigger the coach.
+
+The panel keeps the editor focused and stays until your next submission.
+A new submission cancels an unfinished check. Session switches, branches,
+tree jumps, and shutdown clear the panel and cancel the check. Long
+corrections wrap within a height cap of 40% of the terminal rows. In Tern,
+scroll the body with the wheel. The classic terminal shows the first lines
+and `… N more lines`.
+
+### Settings and cost
+
+In **Settings > Plugins > omp-tools**, `englishCoach` defaults to `true` and
+`englishCoachMaxTokens` defaults to `300`. To disable the coach globally or
+change the limit, run:
+
+```sh
+omp plugin config set omp-tools englishCoach false
+omp plugin config set omp-tools englishCoachMaxTokens 500
+```
+
+A project's `.omp/plugin-overrides.json` overrides those global values:
+
+```json
+{
+	"settings": {
+		"omp-tools": {
+			"englishCoach": true,
+			"englishCoachMaxTokens": 300
+		}
+	}
+}
+```
+
+Both settings apply at session start and on session switch. A limit that is
+not a positive number shows one warning and disables coaching for the session.
+
+Choose the coach's model through OMP's `@tiny` role. The coach adds no model
+setting and never falls back to the main model. If `@tiny` has no model or
+credential, one warning names the problem and disables coaching for the
+session.
+
+Each check caps the reply at twice `englishCoachMaxTokens` plus 200 tokens,
+800 at the default limit. The instructions add input tokens beyond your
+checked text. Model-call attempts count toward the main session's usage and
+cost without adding conversation messages. The price depends on your
+`@tiny` model.
+
 ## Development
 
 ```bash
@@ -608,9 +684,12 @@ modules. Development types track the `latest` SDK release. Run
 (including streamed responses), the `/btw` question parser, the Picker's paste
 handling, the Picker draft, host questions through the Picker, and the Side
 question session: its model, thinking level, context limit, images, fallback,
-cost cap, cache-miss tracking, usage ledger, and recovery display. Typechecking
-and tests do not load the plugin into OMP. Check a change to registration, the
-Picker, or Side questions in a fresh OMP session.
+cost cap, cache-miss tracking, usage ledger, and recovery display. English
+coach tests load its input handler with a local SSE provider and cover panel
+states, protected text, command routing, cancellation, settings, and usage.
+Typechecking and tests do not load the plugin into OMP. Check a change to
+registration, the Picker, Side questions, or the English coach in a fresh OMP
+session.
 
 The opt-in `test/generate-image-openai.live.test.ts` sends three paid OpenAI
 requests: a still image with complexity, an SVG, and a GIF. It runs only with

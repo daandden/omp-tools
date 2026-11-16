@@ -52,6 +52,10 @@ _Avoid_: stock /btw, OMP btw
 A **Side question** asked from inside the **Picker** while an `ask` waits; shown and kept only in the **Picker**.
 _Avoid_: btw (unqualified), our /btw, custom /btw
 
+**English coach**:
+The background check of English in prompts submitted to the main agent in the interactive terminal. It uses OMP's `@tiny` model role and shows private corrections above the editor without changing the prompt or adding corrections to the main conversation.
+_Avoid_: grammar checker, English tutor, coach agent
+
 **generate_image**:
 This plugin's image tool. It replaces native `generate_image`, which the user disables.
 _Avoid_: custom image tool, image wrapper

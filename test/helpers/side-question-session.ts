@@ -22,6 +22,7 @@ export async function sideQuestionFixture(options: {
 	window?: number;
 	maxCost?: number;
 	reply?: (body: Record<string, any>) => string | Promise<string>;
+	finishReason?: (body: Record<string, any>) => string;
 	/** Tool calls the provider answers a request with, instead of text. */
 	toolCalls?: (body: Record<string, any>) => [id: string, name: string, args: Record<string, unknown>][] | undefined;
 	/** Main-session tools by name: the text each returns, or null to run until `release`. */
@@ -30,6 +31,7 @@ export async function sideQuestionFixture(options: {
 	const dir = await fs.mkdtemp(path.join(os.tmpdir(), "side-question-test-"));
 	const id = `SideMain-${crypto.randomUUID()}`;
 	const requests: Record<string, any>[] = [];
+	const abortedRequests: Record<string, any>[] = [];
 	const warnings: string[] = [];
 	const trace: unknown[] = [];
 	const threads: SideQuestionThread[] = [];
@@ -68,6 +70,7 @@ export async function sideQuestionFixture(options: {
 				}
 				trace.push({ type: "request", model: body.model, at: Date.now() });
 				requests.push(body);
+				request.signal.addEventListener("abort", () => abortedRequests.push(body), { once: true });
 				if (options.fail?.includes(body.model)) {
 					return Response.json({ error: { message: "fixture provider unavailable", type: "server_error" } }, {
 						status: 503,
@@ -82,7 +85,7 @@ export async function sideQuestionFixture(options: {
 							role: "assistant",
 							tool_calls: calls.map(([callId, name, args], index) => ({ index, id: callId, type: "function", function: { name, arguments: JSON.stringify(args) } })),
 						}) + chunk({}, "tool_calls")
-					: chunk({ role: "assistant", content: await options.reply?.(body) ?? `answered by ${body.model}` }) + chunk({}, "stop");
+					: chunk({ role: "assistant", content: await options.reply?.(body) ?? `answered by ${body.model}` }) + chunk({}, options.finishReason?.(body) ?? "stop");
 				return new Response(
 					message +
 					`data: ${JSON.stringify({ id: "fixture", choices: [], usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } })}\n\ndata: [DONE]\n\n`,
@@ -177,7 +180,7 @@ export async function sideQuestionFixture(options: {
 			threads.push(thread);
 			return thread;
 		};
-		return { main: session, ctx, requests, warnings, trace, settings, route, setSpec, open, release, dispose };
+		return { main: session, ctx, requests, abortedRequests, warnings, trace, settings, route, setSpec, open, release, dispose };
 	} catch (error) {
 		await dispose();
 		throw error;

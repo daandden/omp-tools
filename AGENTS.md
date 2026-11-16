@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`omp-tools` is an Oh My Pi (OMP) plugin with three parts:
+`omp-tools` is an Oh My Pi (OMP) plugin with four parts:
 
 - `ask`: a shadow of native `ask` that takes the same HTML form. In the TUI
   it answers the form in the Picker; elsewhere it delegates to native `ask`.
@@ -10,17 +10,19 @@
   modes, OpenAI mode (the default) and Codex mode.
 - `/btw <question>` and the Picker btw: Side questions answered by a read-only
   mirror session.
+- The English coach checks interactive prompts with `@tiny` and shows
+  private corrections above the editor without changing the main prompt.
 
 Use the terms in `GLOSSARY.md` (Picker, Note, Other answer, Submit note,
 Picker draft, Side question, Native /btw, Picker btw, Image generation mode,
-SVG author, Reference image) in code, tests, and issues, and avoid the
-synonyms it rejects, such as a bare "btw" or "image provider". Read the ADRs
+SVG author, Reference image, English coach) in code, tests, and issues. Avoid
+the synonyms it rejects, such as a bare "btw" or "image provider". Read the ADRs
 in `docs/adr/` before changing how `/btw` is caught or how the image mode is
 chosen. `README.md` holds user-facing behavior.
 
 ## Architecture & Data Flow
 
-`package.json` (`omp.extensions`) registers three entry points. Each is a
+`package.json` (`omp.extensions`) registers four entry points. Each is a
 default-exported initializer that registers tools and event handlers on the
 `ExtensionAPI` and keeps its registration state local. OMP also loads
 `skills/*/SKILL.md` from the plugin root (the `omp-plugins` discovery
@@ -41,14 +43,18 @@ provider, priority 90).
   `codex-images.ts`; OpenAI rules in `openai-mode.ts` and client in
   `sunburst-images.ts`) and passes its output to `image-artifacts.ts`, which
   encodes and saves it.
+- **English coach.** `english-coach.ts` observes interactive `input` without
+  handling or transforming it. `english-coach-prompt.ts` prepares text and
+  restores protected content, `english-coach.md` holds the instructions, and
+  `english-coach-panel.ts` draws the private widget in both renderers.
 
 ### SDK imports
 
 Runtime value imports of `@oh-my-pi/*` resolve to the host's in-process
 modules through OMP's extension specifier shim. A compiled binary serves only
 the keys in its module registry; any other subpath can load a second SDK copy
-and fail. The compiled OMP 18.18.8 registry serves (keys read from the binary
-for #45):
+and fail. The compiled OMP 18.20.3 registry serves these roots and subpaths
+(the coach roots were checked for #63):
 
 - `@oh-my-pi/pi-tui`, `/chrome`, `/render`, `/theme`, `/thinking`, and every
   nested module, including `/html-form/*`, `/chat/svg-figure`,
@@ -57,6 +63,8 @@ for #45):
   `/utils/*`, `/session/*`, `/config/model-resolver`,
   `/extensibility/plugins/loader`, and `/session/settings`
 - `@oh-my-pi/pi-utils` and its flat subpaths, such as `/dom`
+- `@oh-my-pi/pi-ai` (`completeSimple`) and `@oh-my-pi/pi-agent-core`
+  (`Tokenizer`)
 
 Check a new subpath against the deployed binary before you import it. The
 `pi-tui` root exports the describe builders (`node`, `col`, `md`, `span`,
@@ -419,6 +427,42 @@ A Side question is a full agent run in a mirror session built the way OMP's
 - Pasted images go to `SideQuestionThread.ask` as prompt images, with their
   labels renumbered in text order and sent in that order.
 
+### English coach
+
+- `englishCoach` defaults to `true`; `englishCoachMaxTokens` defaults to
+  `300`. Read both through `getPluginSettings("omp-tools", ctx.cwd)` at
+  session start and on session switch. A non-positive or non-number limit
+  warns once and disables coaching for that session.
+- Only interactive input to the main agent in a TUI with a UI qualifies.
+  The observer returns no handled result and never changes the prompt.
+  Slash commands qualify only for sentence arguments after `/btw`,
+  `/skill:<name>`, and prompt-file names discovered once per session.
+- `english-coach-input.ts` shares the observation channel under
+  `Symbol.for("omp-tools.english-coach-input")`. `/btw` forwards a consumed
+  line through it, and the observer deduplicates the two delivery paths.
+  Manifest order alone is insufficient because OMP 18.20.3 can defer
+  unchanged entry points.
+- The pure preparation module replaces fenced code, inline code, paths, and
+  URLs with numbered placeholders. Only the remaining text counts toward
+  the token budget. Display restores protected text verbatim except that
+  each fenced block becomes one `[code block, N lines]` line.
+- Resolve `@tiny` through `ctx.models.resolve`, refresh its named providers
+  once if unresolved, and obtain the credential from the model registry.
+  Missing model or credential warns once and disables coaching. There is
+  no main-model fallback.
+- One background `completeSimple` invocation per checked prompt requests
+  reasoning disabled and caps output at twice the limit plus 200 tokens.
+  The helper can retry stalled attempts. Each attempt records `model_usage`
+  with purpose `english-coach` on the initiating live session, guarded
+  against a changed session. No correction becomes a conversation message.
+- The widget has its own key above the editor. Its wrapped body has a 40%
+  terminal-row cap, with a final `… N more lines` in classic and a wheel
+  scroll box in Tern. Tern uses the native overlay role and its own sheet
+  to reserve room above the composer.
+- Every interactive submission clears the previous outcome and aborts an
+  unfinished check. Session switch, branch, tree, and shutdown do the same.
+  Failures stay in the panel and never reject input dispatch.
+
 ### `generate_image`
 
 A new mode is an `ImageMode` entry (description, schema, card facts, `run`),
@@ -591,14 +635,18 @@ omp plugin link "$PWD"
 
 ## Important Files
 
-- `package.json`: entry points (`omp.extensions`) and the three plugin
-  settings in `omp.settings`: `imageGenerationMode`, `svgAuthorModel`,
-  `sideQuestionModel`. Code reads them with
-  `getPluginSettings("omp-tools", cwd)`; a project's
+- `package.json`: entry points (`omp.extensions`) and plugin settings
+  (`omp.settings`): `imageGenerationMode`, `svgAuthorModel`,
+  `sideQuestionModel`, `englishCoach`, and `englishCoachMaxTokens`. Code reads
+  them with `getPluginSettings("omp-tools", cwd)`; a project's
   `.omp/plugin-overrides.json` overrides the global value.
 - `extensions/ask-dialog.ts`: the Picker component, the largest file.
+- `extensions/english-coach.ts`, `english-coach-input.ts`,
+  `english-coach-prompt.ts`, and `english-coach-panel.ts`: the English coach's
+  observer, shared dispatch, protected text, and display.
 - Model-facing prompts in `extensions/`: `flexible-ask.md`, `btw.md`,
-  `picker-btw.md`, `generate-image.md`, `generate-image-openai.md`.
+  `picker-btw.md`, `generate-image.md`, `generate-image-openai.md`, and
+  `english-coach.md`.
 - `GLOSSARY.md`: canonical terms. `CHANGELOG.md`, `README.md`: user-facing.
 
 ## Runtime/Tooling Preferences
@@ -634,20 +682,42 @@ Run `bun run check` and `bun test` after code changes. The suite is
   events, so retries, fallbacks, and `/btw` follow-ups need no paid model.
   Its `toolCalls` and `tools` options run a real main turn whose tools return
   text or wait for `release()`, for calls still running in the main session.
+- `test/helpers/english-coach-session.ts` captures the entry points'
+  `input` handlers on a fake TUI context, backed by the local SSE provider
+  and real model registry. Assert visible widget lines, provider requests,
+  and ledger entries, not prompt wording or private helpers. Tests cover
+  both `/btw` entry-point orders. They do not prove terminal layout,
+  deferred-startup ordering, or real tiny-model correction quality.
 - `test/generate-image-openai.live.test.ts` sends three paid requests (a
   still image with complexity, an SVG, and a GIF) and runs only with
   `OMP_TOOLS_LIVE_IMAGES=1` and `OPENAI_API_KEY`:
   `OMP_TOOLS_LIVE_IMAGES=1 bun test live`.
 
 There is no CI workflow. Changes to registration, `ask`, the Picker, Side
-questions, tool cards, or event handling need a fresh-session OMP smoke
-through the `verify-omp-tools` skill (headless Tern, `PI_TUI_NATIVE=0` for
-the text renderer, RPC for checks without a screen). The five-tool limit, the
-panel and its keys in a real host, and a kept Picker btw thread have live
-smoke only.
+questions, the English coach, tool cards, or event handling need a fresh-session
+OMP smoke through the `verify-omp-tools` skill (headless Tern,
+`PI_TUI_NATIVE=0` for the text renderer, RPC for checks without a screen).
+The five-tool limit, the panel and its keys in a real host, and a kept Picker
+btw thread have live smoke only.
 
 Last live proof, newest first:
 
+- 2026-11-16, English coach acceptance: compiled OMP 18.20.3, headless Tern
+  0.9.23 (`35c63ab`), fresh isolated agent directories, and a local SSE
+  provider for the main, `@tiny`, and Side question roles. Both Tern and
+  `PI_TUI_NATIVE=0` showed a correction, `No mistakes`, the over-300-token
+  skip, a checked sentence above 500 fenced code lines shown as one
+  `[code block, 500 lines]` marker, a coached `/btw` beside its Side question
+  answer, and no coach panel or tiny request for `/model`. At 900 × 650 the
+  long Tern correction stayed above the composer in a capped scroll box;
+  wheel scrolling reached its last mistake. Classic ended with
+  `… 4 more lines`. No paid model was called. The first drive's multiline
+  input was invalid; its captures are excluded from acceptance proof.
+  The repaired drive used bracketed paste. Two proof gaps remain: the smoke
+  covers one real startup order, and real tiny-model correction quality is
+  not assessed. Recipe: `features/english-coach.md` in the Verify skill.
+  Evidence: the `63/native-retry/` and `63/classic/` runs under
+  `/Users/vanguyen/.vstack/tmp/omp-tools-4663ab/implement-spec/coach-20261116-1343/`.
 - 2026-11-16, OMP 18.20.3 and Tern 0.9.23, local SSE provider: a Submit
   review with two answers and a Note on a long option label keeps every value
   inside the Picker at 1200px and 900px pane widths. A fresh native window
