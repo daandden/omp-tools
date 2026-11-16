@@ -28,10 +28,20 @@ function replyLines(reply: string): string[] {
 export default function englishCoach(pi: ExtensionAPI) {
 	let enabled = true;
 	let disabled = false;
+	let maxTokens = 300;
 	const configure = async (_event: unknown, ctx: ExtensionContext) => {
 		const settings = await getPluginSettings("omp-tools", ctx.cwd);
 		enabled = settings.englishCoach !== false;
 		disabled = false;
+		const limit = settings.englishCoachMaxTokens === undefined ? 300 : settings.englishCoachMaxTokens;
+		if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0) {
+			disabled = true;
+			if (enabled && ctx.mode === "tui" && ctx.hasUI && ctx.agent.kind === "main") {
+				show(ctx, ["English coach: englishCoachMaxTokens must be a positive number. Coaching is off for this session."]);
+			}
+			return;
+		}
+		maxTokens = limit;
 	};
 	pi.on("session_start", configure);
 	pi.on("session_switch", configure);
@@ -67,8 +77,8 @@ export default function englishCoach(pi: ExtensionAPI) {
 				return;
 			}
 		}
-		if (!new Tokenizer(model).checkTokenBudget(input, 300).fits) {
-			show(ctx, ["Not checked: over 300 tokens"]);
+		if (!new Tokenizer(model).checkTokenBudget(input, maxTokens).fits) {
+			show(ctx, [`Not checked: over ${maxTokens} tokens`]);
 			return;
 		}
 		const abort = new AbortController();
@@ -87,7 +97,7 @@ export default function englishCoach(pi: ExtensionAPI) {
 		const result = await completeSimple(model, {
 			systemPrompt: [instructions],
 			messages: [{ role: "user", content: input, timestamp: Date.now() }],
-		}, { apiKey, maxTokens: 800, disableReasoning: true, signal: abort.signal, onAttempt });
+		}, { apiKey, maxTokens: 2 * maxTokens + 200, disableReasoning: true, signal: abort.signal, onAttempt });
 		if (result.stopReason === "error" || result.stopReason === "aborted") {
 			throw new Error(result.errorMessage || "model call failed");
 		}

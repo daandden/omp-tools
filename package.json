@@ -29,6 +29,11 @@
 				"default": true,
 				"description": "Check English in interactive prompts with @tiny and show private corrections above the editor. Applies at session start and on session switch."
 			},
+			"englishCoachMaxTokens": {
+				"type": "number",
+				"default": 300,
+				"description": "Maximum prompt tokens checked by the English coach. Must be positive. Replies are capped at twice this limit plus 200 tokens. Applies at session start and on session switch."
+			},
 			"imageGenerationMode": {
 				"type": "enum",
 				"values": ["openai", "codex"],

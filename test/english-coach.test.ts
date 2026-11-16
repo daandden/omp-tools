@@ -264,3 +264,53 @@ test("a one-character rewrite is a valid correction", async () => {
 	await until(() => !coach.lines().includes("Checking..."));
 	expect(coach.lines()).toEqual(["English coach", "Better: I", "- i → I (Capitalization)"]);
 });
+
+test("a project's token limit skips longer prompts and caps replies for prompts at or below the limit", async () => {
+	const coach = await fixture({ settings: { englishCoachMaxTokens: 4 } });
+	await coach.input("a a a a a");
+	await until(() => !coach.lines().includes("Checking..."));
+	expect(coach.lines()).toEqual(["English coach", "Not checked: over 4 tokens"]);
+	expect(coach.requests).toEqual([]);
+	await coach.input("a a a a");
+	await until(() => coach.lines().includes("No mistakes"));
+	expect(coach.requests).toHaveLength(1);
+	expect(coach.requests[0]!.max_completion_tokens ?? coach.requests[0]!.max_tokens).toBe(208);
+	await coach.input("a a a");
+	await until(() => coach.lines().includes("No mistakes"));
+	expect(coach.requests).toHaveLength(2);
+});
+
+test("a session switch reloads the token limit from the new project's plugin overrides", async () => {
+	const coach = await fixture({ settings: { englishCoachMaxTokens: 4 } });
+	await coach.input("a a a a");
+	await until(() => coach.lines().includes("No mistakes"));
+	expect(coach.requests[0]!.max_completion_tokens ?? coach.requests[0]!.max_tokens).toBe(208);
+	const other = await fixture({ settings: { englishCoachMaxTokens: 6 } });
+	const context = { ...coach.ctx, cwd: other.ctx.cwd };
+	await coach.emit("session_switch", {}, context);
+	await coach.input("a a a a a a a", {}, context);
+	await until(() => !coach.lines().includes("Checking..."));
+	expect(coach.lines()).toEqual(["English coach", "Not checked: over 6 tokens"]);
+	expect(coach.requests).toHaveLength(1);
+	await coach.input("a a a a a a", {}, context);
+	await until(() => coach.lines().includes("No mistakes"));
+	expect(coach.requests).toHaveLength(2);
+	expect(coach.requests[1]!.max_completion_tokens ?? coach.requests[1]!.max_tokens).toBe(212);
+});
+
+test.each([0, -1, "4", null, true])("an invalid token limit %j warns once and disables coaching for the session", async limit => {
+	const coach = await fixture({ settings: { englishCoachMaxTokens: limit } });
+	await coach.input("This works.");
+	await until(() => !coach.lines().includes("Checking..."));
+	expect(coach.lines()).toEqual([
+		"English coach",
+		"English coach: englishCoachMaxTokens must be a positive number. Coaching is off for this session.",
+	]);
+	const renders = coach.renders();
+	const widgets = [...coach.widgets.values()];
+	await coach.input("Another sentence.");
+	await Bun.sleep(25);
+	expect(coach.requests).toEqual([]);
+	expect(coach.renders()).toBe(renders);
+	expect([...coach.widgets.values()]).toEqual(widgets);
+});
