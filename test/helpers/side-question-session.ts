@@ -31,6 +31,7 @@ export async function sideQuestionFixture(options: {
 	const dir = await fs.mkdtemp(path.join(os.tmpdir(), "side-question-test-"));
 	const id = `SideMain-${crypto.randomUUID()}`;
 	const requests: Record<string, any>[] = [];
+	const abortedRequests: Record<string, any>[] = [];
 	const warnings: string[] = [];
 	const trace: unknown[] = [];
 	const threads: SideQuestionThread[] = [];
@@ -69,6 +70,7 @@ export async function sideQuestionFixture(options: {
 				}
 				trace.push({ type: "request", model: body.model, at: Date.now() });
 				requests.push(body);
+				request.signal.addEventListener("abort", () => abortedRequests.push(body), { once: true });
 				if (options.fail?.includes(body.model)) {
 					return Response.json({ error: { message: "fixture provider unavailable", type: "server_error" } }, {
 						status: 503,
@@ -178,7 +180,7 @@ export async function sideQuestionFixture(options: {
 			threads.push(thread);
 			return thread;
 		};
-		return { main: session, ctx, requests, warnings, trace, settings, route, setSpec, open, release, dispose };
+		return { main: session, ctx, requests, abortedRequests, warnings, trace, settings, route, setSpec, open, release, dispose };
 	} catch (error) {
 		await dispose();
 		throw error;

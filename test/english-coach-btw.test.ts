@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, expect, test } from "bun:test";
 import { Settings } from "@oh-my-pi/pi-coding-agent";
 import { initTheme } from "@oh-my-pi/pi-tui/theme";
-import { englishCoachFixture } from "./helpers/english-coach-session";
+import { englishCoachFixture, until } from "./helpers/english-coach-session";
 
 const cleanups: (() => Promise<void>)[] = [];
 beforeAll(async () => {
@@ -11,13 +11,6 @@ beforeAll(async () => {
 afterEach(async () => {
 	await Promise.all(cleanups.splice(0).map(cleanup => cleanup()));
 });
-async function until(predicate: () => boolean): Promise<void> {
-	const end = Date.now() + 2000;
-	while (!predicate()) {
-		if (Date.now() > end) throw new Error("Timed out waiting for the coach and Side question");
-		await Bun.sleep(5);
-	}
-}
 
 const orders = [["btw", "english-coach"], ["english-coach", "btw"]] as const;
 test.each(orders)("/btw is coached once and answered with %j loaded first", async (first, second) => {

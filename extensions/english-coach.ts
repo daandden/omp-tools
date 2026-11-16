@@ -79,10 +79,12 @@ export default function englishCoach(pi: ExtensionAPI) {
 		}
 	};
 	const reportFailure = (ctx: ExtensionContext, error: unknown) => {
+		const failure = `Check failed: ${error instanceof Error ? error.message : String(error)}`;
 		try {
-			show(ctx, [`Check failed: ${error instanceof Error ? error.message : String(error)}`]);
-		} catch {
-			// A broken host widget must not reject input dispatch or detached checks.
+			show(ctx, [failure]);
+		} catch (widgetError) {
+			const reason = widgetError instanceof Error ? widgetError.message : String(widgetError);
+			ctx.ui.notify(plainText(`English coach: ${failure}. Could not show failure: ${reason}`), "warning");
 		}
 	};
 	const clear = (ctx: ExtensionContext) => {
@@ -139,7 +141,6 @@ export default function englishCoach(pi: ExtensionAPI) {
 			return;
 		}
 		const onAttempt = (message: AssistantMessage) => {
-			// OMP 18.20.3 exposes the writable ledger only through the live AgentRegistry session.
 			if (AgentRegistry.global().get(ctx.agent.id)?.session !== session) return;
 			const { api, provider, model, usage, stopReason, errorMessage } = message;
 			ledger.appendModelUsage({ purpose: "english-coach", api, provider, model, usage, stopReason, errorMessage }, owner);
@@ -160,7 +161,7 @@ export default function englishCoach(pi: ExtensionAPI) {
 		try {
 			if (event.source !== "interactive" || ctx.mode !== "tui" || !ctx.hasUI || ctx.agent.kind !== "main") return undefined;
 			if (!enabled || disabled) {
-				if (pending) clear(ctx);
+				clear(ctx);
 				return undefined;
 			}
 			const input = prepareCoachPrompt(event.text, promptCommandNames);

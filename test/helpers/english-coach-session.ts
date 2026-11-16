@@ -7,6 +7,14 @@ import { sideQuestionFixture } from "./side-question-session";
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
 
+export async function until(predicate: () => boolean): Promise<void> {
+	const end = Date.now() + 2000;
+	while (!predicate()) {
+		if (Date.now() > end) throw new Error("Timed out waiting for English coach");
+		await Bun.sleep(5);
+	}
+}
+
 export async function englishCoachFixture(options: {
 	reply?: (body: Record<string, any>) => string | Promise<string>;
 	fail?: string[];

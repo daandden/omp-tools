@@ -25,7 +25,6 @@ export class EnglishCoachPanel implements Component {
 	}
 
 	describe(cx: DescribeContext): NativeNode {
-		// OMP 18.20.3's native overlay role reserves the composer dock's height.
 		if (cx.feature("styles")) this.tui.terminal.write(SHEET_MESSAGE);
 		return node("col", {
 			role: "omp.overlay.btw", gap: "sm", min: { w: 1 }, max: { w: 1 },
