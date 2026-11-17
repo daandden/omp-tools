@@ -2,6 +2,12 @@
 
 Dated results of live OMP smokes through the `verify-omp-tools` skill, newest first. Add an entry after each smoke: the OMP and Tern versions, what was driven, what was observed, and the evidence path.
 
+- 2026-11-17, English coach padding: installed OMP 18.22.0, headless Tern
+  0.9.26, local SSE provider. Measured in CSS pixels from the shots, the space
+  between the panel edge and the text was 20.5px above and 24px below a long
+  correction before the fix; after it, 20.5px and 19px, and 17.5px and 17px
+  around `No mistakes`. Evidence:
+  `/Users/vanguyen/.vstack/tmp/omp-tools-4663ab/verify/coach-padding-20261117-153548/`.
 - 2026-11-17, English coach without a title line: installed OMP 18.22.0,
   headless Tern 0.9.26, local SSE provider. In Tern the panel showed
   `Checking…` after a spinner, then the marked prompt across the full width

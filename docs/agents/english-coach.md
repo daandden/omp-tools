@@ -45,7 +45,10 @@
   (`omp-tools.english-coach.close`) absolutely at the bottom right of the
   frame on the panel's `--raise` colour, over any text there; classic writes
   `esc` over the right end of the last line, cutting the text it covers.
-  Without the styles feature, the keycap follows the body. Classic draws `del` struck
+  Without the styles feature, the keycap follows the body. The overlay role
+  pads 16px above and 18px below, and the last line's descent adds about 3px
+  under the glyphs, so the sheet sets the panel's `padding-bottom` to 13px
+  to show equal space above and below the text. Classic draws `del` struck
   through in `toolDiffRemoved`, `ins` and `punct` (punctuation that replaced
   punctuation, shown alone) in `toolDiffAdded`, protected text `dim`. Tern
   gets `del`, `ins`, `success`, and `dim` spans; its sheet puts `del`/`ins`

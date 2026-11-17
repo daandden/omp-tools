@@ -27,7 +27,10 @@ type TspPropNode = NonNullable<NonNullable<Parameters<typeof node<"text">>[1]>["
 // Removed and added words sit on soft tinted chips so their edges show; a
 // change that explains itself on hover shows a help cursor and brightens.
 // The close key floats over the frame's bottom-right corner on the panel's
-// own colour, covering whatever text lies under it.
+// own colour, covering whatever text lies under it. The overlay role pads
+// 16px above and 18px below (Tern 0.9.26), and the last line's descent adds
+// about 3px more under the glyphs, so the panel trims its bottom padding to
+// show the same space below the text as above it.
 const SHEET_CSS = `${SCROLL_BOX_CSS}
 [data-role='omp-tools.english-coach.body'] { min-inline-size: 0; max-inline-size: 100%; font-family: var(--sans); white-space: pre-wrap; overflow-wrap: anywhere; }
 [data-role='omp-tools.english-coach.diff'] { line-height: 1.75; }
@@ -40,7 +43,8 @@ const SHEET_CSS = `${SCROLL_BOX_CSS}
 [data-role='omp-tools.english-coach.change']:hover .sf-t-ins { background: color-mix(in oklch, var(--sf-c-ins) 26%, transparent); }
 [data-role='omp-tools.english-coach.unplaced'] { margin-top: 6px; gap: 3px; }
 [data-role='omp-tools.english-coach.frame'] { position: relative; }
-[data-role='omp-tools.english-coach.close'] { position: absolute; right: 0; bottom: 0; padding-left: 6px; background: var(--raise); }`;
+[data-role='omp-tools.english-coach.close'] { position: absolute; right: 0; bottom: 0; padding-left: 6px; background: var(--raise); }
+.sf-col.sf-col[data-role='omp.overlay.btw']:has([data-role='omp-tools.english-coach.frame']) { padding-bottom: 13px; }`;
 
 /** What the panel shows: a running check, a clean prompt, a one-line note, or a marked-up correction. */
 export type CoachView =
