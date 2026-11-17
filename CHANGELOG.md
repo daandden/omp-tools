@@ -84,6 +84,8 @@
 
 ### Fixed
 
+- `ask` loads again on OMP 18.22.0, which moved the form picture loader that
+  the Picker imported. Updated the SDK types to OMP 18.22.0.
 - The Picker's Submit review in Tern keeps answers visible when an option
   Note has a long label, instead of expanding the label column beyond the pane.
 - HTML form defaults show as `Recommended` in both Picker renderers, and

@@ -53,12 +53,13 @@ provider, priority 90).
 Runtime value imports of `@oh-my-pi/*` resolve to the host's in-process
 modules through OMP's extension specifier shim. A compiled binary serves only
 the keys in its module registry; any other subpath can load a second SDK copy
-and fail. The compiled OMP 18.20.3 registry serves these roots and subpaths
+and fail. The compiled OMP 18.22.0 registry serves these roots and subpaths
 (the coach roots were checked for #63):
 
-- `@oh-my-pi/pi-tui`, `/chrome`, `/render`, `/theme`, `/thinking`, and every
-  nested module, including `/html-form/*`, `/chat/svg-figure`,
-  `/native/blobs`, `/overlays/*`, and `/tools/*`
+- `@oh-my-pi/pi-tui`, `/chrome`, `/render`, `/theme`, `/thinking`, `/media`,
+  and every nested module, including `/html-form/*`, `/chat/svg-figure`,
+  `/native/blobs`, `/overlays/*`, and `/tools/*`. OMP 18.22.0 moved
+  `/html-form/media` to `/media` (`loadFormImage` became `loadMedia`).
 - `@oh-my-pi/pi-coding-agent`, `/judgment`, `/modes/*`, `/tools/*`,
   `/utils/*`, `/session/*`, `/config/model-resolver`,
   `/extensibility/plugins/loader`, and `/session/settings`
@@ -755,17 +756,27 @@ btw thread have live smoke only.
 
 Last live proof, newest first:
 
-- 2026-11-17, English coach diff view and omp theme colors: installed OMP
-  18.22.0, headless Tern 0.9.26, local SSE provider, `dark-catppuccin`. In
-  Tern the coach showed `checking…`, `12 fixes` with struck and added words,
-  numbers `¹`–`¹²` and the pattern line, and `no mistakes`. Shot pixels of
-  the coach and `/btw` panels matched the theme exactly (`#313244` surface,
-  `#fab387` accent, `#7f849c` muted, `#f38ba8` removed, `#a6e3a1` added),
-  while the composer kept Tern's colors. Classic showed the same diff in
-  ANSI. The Picker was not driven: with OMP 18.22.0, `flexible-ask.ts` fails
-  to load from the worktree (`Cannot find package '@oh-my-pi/pi-utils'`
-  imported from the local `pi-tui/src/html-form/media.ts`), before and after
-  this change. Evidence: `/Users/vanguyen/.vstack/tmp/omp-tools-4663ab/verify/coach-theme-104127/serve/`.
+- 2026-11-17, English coach diff view, hover reasons, and omp theme colors:
+  installed OMP 18.22.0, headless Tern 0.9.26, local SSE provider,
+  `dark-catppuccin`. In Tern the coach showed `checking…`, `N fixes` with
+  struck and added words on tinted chips, and `no mistakes`; hovering a change
+  showed only that change and its Vietnamese reason, two reasons for a change
+  that fixes two reported mistakes. Shot pixels of the coach and `/btw`
+  panels matched the theme exactly (`#313244` surface, `#fab387` accent,
+  `#7f849c` muted, `#f38ba8` removed, `#a6e3a1` added), while the composer
+  kept Tern's colors. Classic showed the same diff in ANSI with the mistakes
+  listed below. The reasons came from a local provider; the real `@tiny`
+  (`gpt-6.1-terra`) was checked only through `omp -p` with the coach prompt,
+  where it kept capitalization and technical terms. Evidence:
+  `/Users/vanguyen/.vstack/tmp/omp-tools-4663ab/verify/coach-theme-104127/serve/`
+  and `coach-fine-131906/serve/` beside it.
+- 2026-11-17, `ask` pictures after the `/media` move: compiled OMP 18.22.0,
+  headless Tern 0.9.26, fresh HOME and agent directory, and a local SSE
+  provider. In the Tern view and with `PI_TUI_NATIVE=0`, the Picker drew a
+  form's PNG `<img>` and inline `<svg>` above the options, and Enter
+  submitted the pick (`{"pick":"svg"}` and `{"pick":"raster"}` in the session
+  JSONL) to the provider. Evidence:
+  `/Users/vanguyen/.vstack/tmp/omp-tools-4663ab/verify/omp-tools-ask-media-20261117-103728/`.
 - 2026-11-16, English coach acceptance: compiled OMP 18.20.3, headless Tern
   0.9.23 (`35c63ab`), fresh isolated agent directories, and a local SSE
   provider for the main, `@tiny`, and Side question roles. Both Tern and

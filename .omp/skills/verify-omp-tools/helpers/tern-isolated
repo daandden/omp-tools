@@ -91,6 +91,9 @@ start)
 	# (Tern 0.9.4 with omp on PATH). This is the state that Tern writes when you answer Not Now.
 	mkdir "$cfg/omp"
 	printf '{"managed":false,"checked":0,"no_build":false,"offered":true}\n' >"$cfg/omp/state.json"
+	# Tern 0.9.26 opens its "macOS permissions" dialog in a config dir without this marker, and the
+	# dialog takes the keys that a run sends. Tern writes the empty file once it showed the dialog.
+	: >"$cfg/permissions-offered"
 	cd "$run"
 	if [ "$mode" = serve ]; then
 		iso tern serve --control "$sockets/ctl.sock" --out "$run" >"$state/serve.log" 2>&1 </dev/null &

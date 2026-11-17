@@ -1,6 +1,6 @@
 import { Image, measureRender, type NativeNode, node, span, type TUI, truncateToWidth } from "@oh-my-pi/pi-tui";
 import { SvgFigure } from "@oh-my-pi/pi-tui/chat/svg-figure";
-import { type FormMedia, isSvgMedia, loadFormImage, svgMedia } from "@oh-my-pi/pi-tui/html-form/media";
+import { isSvgMedia, loadMedia, type Media, svgMedia } from "@oh-my-pi/pi-tui/media";
 import { nativeImageNode } from "@oh-my-pi/pi-tui/native/blobs";
 import { sanitizeCarriageReturns } from "@oh-my-pi/pi-tui/render";
 import { theme } from "@oh-my-pi/pi-tui/theme";
@@ -75,7 +75,7 @@ export class AskPictures {
 		slot = { state: "loading" };
 		this.#slots.set(picture, slot);
 		const signal = this.#abort.signal;
-		loadFormImage(picture.src, { cwd: this.#cwd, signal }).then(
+		loadMedia(picture.src, { cwd: this.#cwd, signal }).then(
 			media => {
 				if (!signal.aborted) this.#settle(picture, this.#ready(media, picture.alt || "image"));
 			},
@@ -96,7 +96,7 @@ export class AskPictures {
 		this.#tui.requestRender();
 	}
 
-	#ready(media: FormMedia, alt: string): Slot {
+	#ready(media: Media, alt: string): Slot {
 		const maxRows = this.#maxRows();
 		const budget = this.#tui.imageBudget;
 		const native = nativeImageNode(media.bytes, media.mime, { alt, max: { h: `${maxRows}lines` } });
