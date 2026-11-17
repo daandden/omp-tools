@@ -252,12 +252,15 @@ sits in the composer's place, like native `ask`, but spans the full width of
 the pane. Each option is a row: the marker, then the label with its Markdown
 description, preview, and note or `Other` text below it.
 
-The rows follow Tern's theme and its light and dark appearance, as native
-`ask`'s rows do: its UI font, primary and muted text colors, a gray fill on the
-highlighted row and on hover, a Recommended badge, and a filled marker on a
-picked row. The countdown is a ring. A row of buttons below the options shows
-each key with its keycap. The editors are Tern's own text fields, without the
-main prompt's model chip and send button.
+The Picker uses Tern's UI font and the active omp theme's colors, not Tern's
+own palette: the theme's selection background for the Picker, its text and
+muted colors, its accent, and a tint of its text color on the highlighted row
+and on hover. The `/btw` panel and the English coach panel use the same
+colors. They follow the omp theme you pick, including its light and dark
+pair. The Picker shows a Recommended badge and a filled marker on a picked
+row. The countdown is a ring. A row of buttons below the options shows each
+key with its keycap. The editors are Tern's own text fields, without the main
+prompt's model chip and send button.
 
 The question and its options sit in one box that is as tall as the current
 question needs, up to 70% of the pane's height (70% of the terminal in the
@@ -598,23 +601,36 @@ commands with `side: true` also use native `/btw`.
 The English coach checks prompts you submit to the main agent in the
 interactive terminal. Your prompt reaches the main agent immediately,
 unchanged. Corrections appear only in a panel above the editor, never in the
-main conversation. Attached images are not checked.
+main conversation. Attached images are not checked. The coach never corrects
+capitalization (a fix that only changes case is dropped, and a word that
+differs only in case shows as you typed it) and leaves technical terms such
+as `git diff`, `diff`, `repo`, or `PR` as written.
 
-The panel first shows `Checking...`, then one of these outcomes:
+The panel's title line says what the check found, and the close key sits at
+its right edge:
 
-- `Better: ...`, followed by one `- original → corrected (Pattern)` line per
-  mistake.
-- `No mistakes` when the English is already natural.
-- `Not checked: over 300 tokens` when the English text exceeds the limit.
-- `Not checked: no English text` when only protected text remains or the
-  model reports non-English text.
-- `Check failed: <reason>` when the check fails.
+- `English coach · checking…` while the check runs.
+- `English coach · N fixes` above your prompt with the changes marked in
+  place. Removed words are struck through on a faint red chip in the omp
+  theme's diff-removed color, and the replacement follows on a faint green
+  chip in its diff-added color. Punctuation that replaced other punctuation
+  shows as the new mark alone, in green. In Tern, rest the pointer on a
+  change to see that change alone and why, with the reason in your
+  `englishCoachLanguage` (Vietnamese by default). The classic terminal has
+  no pointer, so it lists each mistake as `original → corrected (reason)`
+  under the prompt.
+- `English coach · no mistakes` when the English is already natural.
+- `English coach` above a note in the other cases:
+  - `Not checked: over 300 tokens` when the English text exceeds the limit.
+  - `Not checked: no English text` when only protected text remains or the
+    model reports non-English text.
+  - `Check failed: <reason>` when the check fails.
 
 Code fences, inline code, file paths, and URLs are left out of the check and
-the token count. The rewrite restores inline code, paths, and URLs verbatim.
-Each fenced block appears as one `[code block, N lines]` line instead of its
-contents. A short sentence above a large fenced paste can still be checked;
-long pasted prose counts in full.
+the token count. The corrected prompt shows inline code, paths, and URLs
+verbatim and dimmed. Each fenced block appears as one dimmed
+`[code block, N lines]` line instead of its contents. A short sentence above a
+large fenced paste can still be checked. Long pasted prose counts in full.
 
 Among slash commands, only the text after `/btw`, `/skill:<name>`, and
 discovered prompt-file commands is checked. Other commands, such as `/model`,
@@ -623,9 +639,9 @@ Picker Notes, Other answers, and the Submit note are not checked. RPC, ACP,
 print mode, and subagents never trigger the coach.
 
 The panel keeps the editor focused and stays until your next submission.
-To close it sooner, press Esc while the editor is empty, or click
-`esc to close` in Tern. As with the `/btw` panel, that Esc closes the panel
-instead of interrupting a running turn; press Esc again to interrupt.
+To close it sooner, press Esc while the editor is empty, or click `esc` in
+Tern. As with the `/btw` panel, that Esc closes the panel instead of
+interrupting a running turn. Press Esc again to interrupt.
 Closing cancels an unfinished check. A new submission also cancels an
 unfinished check. Session switches, branches, tree jumps, and shutdown clear
 the panel and cancel the check. Long corrections wrap within a height cap of
@@ -634,13 +650,16 @@ classic terminal shows the first lines and `… N more lines`.
 
 ### Settings and cost
 
-In **Settings > Plugins > omp-tools**, `englishCoach` defaults to `true` and
-`englishCoachMaxTokens` defaults to `300`. To disable the coach globally or
-change the limit, run:
+In **Settings > Plugins > omp-tools**, `englishCoach` defaults to `true`,
+`englishCoachMaxTokens` defaults to `300`, and `englishCoachLanguage`
+defaults to `Vietnamese`. The coach names each mistake's pattern in
+`englishCoachLanguage`; the corrected English stays in English. To disable the
+coach globally, change the limit, or change the language, run:
 
 ```sh
 omp plugin config set omp-tools englishCoach false
 omp plugin config set omp-tools englishCoachMaxTokens 500
+omp plugin config set omp-tools englishCoachLanguage Japanese
 ```
 
 A project's `.omp/plugin-overrides.json` overrides those global values:
@@ -650,14 +669,16 @@ A project's `.omp/plugin-overrides.json` overrides those global values:
 	"settings": {
 		"omp-tools": {
 			"englishCoach": true,
-			"englishCoachMaxTokens": 300
+			"englishCoachMaxTokens": 300,
+			"englishCoachLanguage": "Vietnamese"
 		}
 	}
 }
 ```
 
-Both settings apply at session start and on session switch. A limit that is
-not a positive number shows one warning and disables coaching for the session.
+The settings apply at session start and on session switch. A limit that is
+not a positive number, or an empty language, shows one warning and disables
+coaching for the session.
 
 Choose the coach's model through OMP's `@tiny` role. The coach adds no model
 setting and never falls back to the main model. If `@tiny` has no model or

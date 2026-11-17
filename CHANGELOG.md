@@ -5,24 +5,34 @@
 ### Added
 
 - The English coach checks interactive prompts with OMP's `@tiny` role in
-  the background. A private panel above the editor shows a natural rewrite,
-  named mistake patterns, or a reason the prompt was not checked. The main
-  prompt stays unchanged, and coaching usage counts toward the session cost.
-- New plugin settings `englishCoach` and `englishCoachMaxTokens` default to
-  `true` and `300`. Global values and project overrides apply at session
-  start and on session switch. Over-limit English makes no model request;
-  replies are capped at twice the limit plus 200 tokens.
+  the background, leaving capitalization and technical terms such as
+  `git diff` as typed. A private panel above the editor shows your prompt with
+  each correction marked in place (removed words struck through on a faint
+  red chip, the replacement after them on a faint green chip). In Tern,
+  hovering a change shows that change alone and why; the classic terminal
+  lists each `original → corrected (pattern)` under the prompt. The title line reads
+  `checking…`, `N fixes`, or `no mistakes`, with an `esc` keycap, and a note
+  says why a prompt was not checked. The main prompt stays unchanged, and
+  coaching usage counts toward the session cost.
+- New plugin settings `englishCoach`, `englishCoachMaxTokens`, and
+  `englishCoachLanguage` default to `true`, `300`, and `Vietnamese`. The coach
+  names mistake patterns in `englishCoachLanguage`. Global values and project
+  overrides apply at session start and on session switch. Over-limit English
+  makes no model request; replies are capped at twice the limit plus 200
+  tokens.
 - The coach excludes code, file paths, and URLs from requests and its token
   limit. Corrections restore inline code, paths, and URLs verbatim, and show
   fenced code as `[code block, N lines]`. Only sentence arguments after
   `/btw`, `/skill:<name>`, and discovered prompt-file commands are checked
   among commands, with each `/btw` question checked once.
 - New submissions cancel stale checks. Session changes clear the panel.
-  Esc from an empty editor, or a click on `esc to close` in Tern, closes the
-  panel early. In Tern the panel matches the `/btw` panel's width, with a
-  sans-serif body and muted labels and original wording. Long corrections
+  Esc from an empty editor, or a click on `esc` in Tern, closes the panel
+  early. In Tern the panel matches the `/btw` panel's width. Long corrections
   wrap within a 40% height cap, with wheel scrolling in Tern and a
   remaining-line count in the classic terminal.
+- In Tern, the Picker, the `/btw` panel, and the English coach panel use the
+  active omp theme's background, text, accent, and diff colors instead of
+  Tern's own palette, and follow omp theme changes.
 - `generate_image` has two Image generation modes, set by the new plugin
   setting `imageGenerationMode`. `openai`, the default, uses GPT Image 2.6
   Sunburst through the public OpenAI Images API with the `openai` API key,

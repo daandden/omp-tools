@@ -5,8 +5,9 @@ import { resolveConfiguredModelPatterns } from "@oh-my-pi/pi-coding-agent/config
 import { getPluginSettings } from "@oh-my-pi/pi-coding-agent/extensibility/plugins/loader";
 import type { Component, TUI } from "@oh-my-pi/pi-tui";
 import instructions from "./english-coach.md" with { type: "text" };
-import { EnglishCoachPanel } from "./english-coach-panel";
-import { prepareCoachPrompt, restoreCoachReply, type PreparedCoachPrompt } from "./english-coach-prompt";
+import { type CoachMistake, coachCorrection } from "./english-coach-diff";
+import { type CoachView, EnglishCoachPanel } from "./english-coach-panel";
+import { checkCoachPlaceholders, prepareCoachPrompt, type PreparedCoachPrompt } from "./english-coach-prompt";
 import { forwardCoachInput, observeCoachInput } from "./english-coach-input";
 import { isInterruptKey } from "./side-question-view";
 
@@ -16,22 +17,38 @@ function plainText(text: string): string {
 	return text.replace(/[\p{Extended_Pictographic}\p{Regional_Indicator}\uFE0F\u200D\u20E3]/gu, "");
 }
 
-function replyLines(reply: string): string[] {
-	if (reply === "No mistakes") return ["No mistakes"];
-	if (reply === "Not English") return ["Not checked: no English text"];
-	const [rewrite, ...mistakes] = reply.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-	if (plainText(reply) !== reply || !/^Better: \S/.test(rewrite ?? "") || mistakes.length === 0) {
+function replyView(reply: string, prompt: PreparedCoachPrompt): CoachView {
+	if (reply === "No mistakes") return { kind: "clean" };
+	if (reply === "Not English") return { kind: "note", text: "Not checked: no English text" };
+	const [rewrite, ...lines] = reply.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+	if (plainText(reply) !== reply || !/^Better: \S/.test(rewrite ?? "") || lines.length === 0) {
 		throw new Error("unreadable reply");
 	}
-	const items = mistakes.map(line => line.replace(/^-\s+/, ""));
-	if (items.some(line => !/^.+ → .+ \([^)]+\)$/.test(line))) throw new Error("unreadable reply");
-	return [rewrite!, ...items.map(line => `- ${line}`)];
+	const parsed: CoachMistake[] = lines.map(line => {
+		const mistake = /^(?:-\s+)?(.+) → (.+) \(([^)]+)\)$/.exec(line);
+		if (!mistake) throw new Error("unreadable reply");
+		return { original: mistake[1]!, corrected: mistake[2]!, pattern: mistake[3]! };
+	});
+	const better = rewrite!.slice("Better: ".length);
+	checkCoachPlaceholders(better, lines, prompt);
+	// Capitalization is never corrected: a case-only mistake is no mistake.
+	const mistakes = parsed.filter(mistake => mistake.original.trim().toLowerCase() !== mistake.corrected.trim().toLowerCase());
+	if (mistakes.length === 0) return { kind: "clean" };
+	const correction = coachCorrection(prompt, better, mistakes);
+	for (const part of correction.lines.flat()) part.text = plainText(part.text);
+	for (const mistake of correction.mistakes) {
+		mistake.original = plainText(mistake.original);
+		mistake.corrected = plainText(mistake.corrected);
+		mistake.pattern = plainText(mistake.pattern);
+	}
+	return { kind: "correction", correction };
 }
 
 export default function englishCoach(pi: ExtensionAPI) {
 	let enabled = true;
 	let disabled = false;
 	let maxTokens = 300;
+	let language = "Vietnamese";
 	let pending: AbortController | undefined;
 	let promptCommandNames: ReadonlySet<string> = new Set();
 	let stopForwarding: (() => void) | undefined;
@@ -49,14 +66,21 @@ export default function englishCoach(pi: ExtensionAPI) {
 		enabled = settings.englishCoach !== false;
 		disabled = false;
 		const limit = settings.englishCoachMaxTokens === undefined ? 300 : settings.englishCoachMaxTokens;
-		if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0) {
+		const named = settings.englishCoachLanguage === undefined ? "Vietnamese" : settings.englishCoachLanguage;
+		const problem = typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0
+			? "englishCoachMaxTokens must be a positive number"
+			: typeof named !== "string" || !named.trim()
+				? "englishCoachLanguage must name a language"
+				: undefined;
+		if (problem) {
 			disabled = true;
 			if (enabled && ctx.mode === "tui" && ctx.hasUI && ctx.agent.kind === "main") {
-				show(ctx, ["English coach: englishCoachMaxTokens must be a positive number. Coaching is off for this session."]);
+				show(ctx, note(`${problem}. Coaching is off for this session.`));
 			}
 			return;
 		}
-		maxTokens = limit;
+		maxTokens = limit as number;
+		language = (named as string).trim();
 		if (enabled && ctx.mode === "tui" && ctx.hasUI && ctx.agent.kind === "main") {
 			try {
 				// OMP 18.20.3 marks discovered prompt files with _source; bundled templates have none.
@@ -70,19 +94,20 @@ export default function englishCoach(pi: ExtensionAPI) {
 	};
 	pi.on("session_start", configure);
 	pi.on("session_switch", configure);
-	let lines: string[] = [];
+	let view: CoachView = { kind: "checking" };
 	let tui: TUI | undefined;
 	// The component focused when the panel opened: the main editor, since a submission or session start opens it.
 	let editorFocus: Component | null = null;
 	let shown = false;
-	const show = (ctx: ExtensionContext, next: string[]) => {
-		lines = next.map(plainText);
+	const note = (text: string): CoachView => ({ kind: "note", text: plainText(text) });
+	const show = (ctx: ExtensionContext, next: CoachView) => {
+		view = next;
 		if (shown) tui?.requestRender();
 		else {
 			ctx.ui.setWidget(WIDGET_KEY, host => {
 				tui = host;
 				editorFocus = host.getFocused();
-				return new EnglishCoachPanel(host, () => lines, () => clear(ctx));
+				return new EnglishCoachPanel(host, () => view, () => clear(ctx));
 			}, { placement: "aboveEditor" });
 			shown = true;
 		}
@@ -96,7 +121,7 @@ export default function englishCoach(pi: ExtensionAPI) {
 	const reportFailure = (ctx: ExtensionContext, error: unknown) => {
 		const failure = `Check failed: ${error instanceof Error ? error.message : String(error)}`;
 		try {
-			show(ctx, [failure]);
+			show(ctx, note(failure));
 		} catch (widgetError) {
 			const reason = widgetError instanceof Error ? widgetError.message : String(widgetError);
 			ctx.ui.notify(plainText(`English coach: ${failure}. Could not show failure: ${reason}`), "warning");
@@ -105,7 +130,7 @@ export default function englishCoach(pi: ExtensionAPI) {
 	const clear = (ctx: ExtensionContext) => {
 		pending?.abort();
 		pending = undefined;
-		lines = [];
+		view = { kind: "checking" };
 		tui = undefined;
 		if (shown) {
 			shown = false;
@@ -126,7 +151,7 @@ export default function englishCoach(pi: ExtensionAPI) {
 
 	const check = async (ctx: ExtensionContext, input: PreparedCoachPrompt, signal: AbortSignal) => {
 		if (!/[\p{L}\p{N}]/u.test(input.englishText)) {
-			show(ctx, ["Not checked: no English text"]);
+			show(ctx, note("Not checked: no English text"));
 			return;
 		}
 		const session = AgentRegistry.global().get(ctx.agent.id)?.session;
@@ -142,19 +167,19 @@ export default function englishCoach(pi: ExtensionAPI) {
 			model = ctx.models.resolve("@tiny");
 			if (!model) {
 				disabled = true;
-				show(ctx, [`English coach: @tiny has no model (${patterns.join(", ")}). Coaching is off for this session.`]);
+				show(ctx, note(`@tiny has no model (${patterns.join(", ")}). Coaching is off for this session.`));
 				return;
 			}
 		}
 		if (!new Tokenizer(model).checkTokenBudget(input.englishText, maxTokens).fits) {
-			show(ctx, [`Not checked: over ${maxTokens} tokens`]);
+			show(ctx, note(`Not checked: over ${maxTokens} tokens`));
 			return;
 		}
 		const apiKey = await ctx.modelRegistry.getApiKey(model, owner.sessionId, { signal });
 		if (signal.aborted) return;
 		if (!apiKey) {
 			disabled = true;
-			show(ctx, [`English coach: @tiny has no credential (${model.provider}/${model.id}). Coaching is off for this session.`]);
+			show(ctx, note(`@tiny has no credential (${model.provider}/${model.id}). Coaching is off for this session.`));
 			return;
 		}
 		const onAttempt = (message: AssistantMessage) => {
@@ -163,7 +188,7 @@ export default function englishCoach(pi: ExtensionAPI) {
 			ledger.appendModelUsage({ purpose: "english-coach", api, provider, model, usage, stopReason, errorMessage }, owner);
 		};
 		const result = await completeSimple(model, {
-			systemPrompt: [instructions],
+			systemPrompt: [instructions.replaceAll("{{language}}", language)],
 			messages: [{ role: "user", content: input.text, timestamp: Date.now() }],
 		}, { apiKey, maxTokens: 2 * maxTokens + 200, disableReasoning: true, signal, onAttempt });
 		if (signal.aborted) return;
@@ -171,7 +196,7 @@ export default function englishCoach(pi: ExtensionAPI) {
 			throw new Error(result.errorMessage || "model call failed");
 		}
 		const text = result.content.filter(part => part.type === "text").map(part => part.text).join("").trim();
-		show(ctx, restoreCoachReply(replyLines(text), input));
+		show(ctx, replyView(text, input));
 	};
 
 	const observe: Parameters<typeof observeCoachInput>[1] = (event, ctx) => {
@@ -189,7 +214,7 @@ export default function englishCoach(pi: ExtensionAPI) {
 			pending?.abort();
 			const abort = new AbortController();
 			pending = abort;
-			show(ctx, ["Checking..."]);
+			show(ctx, { kind: "checking" });
 			void check(ctx, input, abort.signal).catch(error => {
 				if (!abort.signal.aborted) reportFailure(ctx, error);
 			});
