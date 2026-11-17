@@ -191,9 +191,19 @@ instead of `render()`.
   (the `s` verb) with every `describe` when `cx.feature("styles")`. A sheet
   belongs to one surface, and pi-tui opens a new inline surface on `gone` with
   the same describe context, so a once-only send is lost.
-  - The sheet uses theme variables only (`--sans`, `--t1`, `--t3`, `--l1`,
+  - The sheet reads Tern's variables (`--sans`, `--t1`, `--t3`, `--l1`,
     `--l2`), and row text reads `--sf-fs` and `--sf-lh` so each line is one
     terminal row.
+  - Every omp-tools sheet goes out through `sheetMessage` (`tern-theme.ts`),
+    which leads it with the omp theme rules: on each omp-tools root (an
+    `omp.editor` or `omp.overlay.*` column holding an `omp-tools.*` role, so
+    the composer and native `/btw` keep Tern's look) it sets Tern's palette
+    variables (`--t*`, `--l*`, `--accent`, `--sf-*`, `--sf-c-*`) and the
+    background from the active omp `theme`: `selectedBg` for the surface,
+    `toolDiffAdded` and `toolDiffRemoved` for `ins` and `del`. An empty
+    `text` token leaves Tern's `--t1`. The rules are rebuilt when the theme
+    instance changes. A doubled `.sf-col` outranks Tern 0.9.26's chat-reader
+    rule that washes overlays with white.
   - Tern scopes a program sheet to strict descendants of its region, so a rule
     on `.sf-region` never applies (Tern 0.9.5).
   - `NATIVE_STYLED_ROW_LINES`, the height estimate, includes the sheet's row
@@ -429,10 +439,13 @@ A Side question is a full agent run in a mirror session built the way OMP's
 
 ### English coach
 
-- `englishCoach` defaults to `true`; `englishCoachMaxTokens` defaults to
-  `300`. Read both through `getPluginSettings("omp-tools", ctx.cwd)` at
-  session start and on session switch. A non-positive or non-number limit
-  warns once and disables coaching for that session.
+- `englishCoach` defaults to `true`, `englishCoachMaxTokens` to `300`, and
+  `englishCoachLanguage` to `Vietnamese`. Read them through
+  `getPluginSettings("omp-tools", ctx.cwd)` at session start and on session
+  switch. A non-positive or non-number limit, or an empty or non-string
+  language, warns once and disables coaching for that session. The language
+  fills `{{language}}` in `english-coach.md`: pattern names come in it, the
+  rewrite stays English.
 - Only interactive input to the main agent in a TUI with a UI qualifies.
   The observer returns no handled result and never changes the prompt.
   Slash commands qualify only for sentence arguments after `/btw`,
@@ -444,8 +457,40 @@ A Side question is a full agent run in a mirror session built the way OMP's
   unchanged entry points.
 - The pure preparation module replaces fenced code, inline code, paths, and
   URLs with numbered placeholders. Only the remaining text counts toward
-  the token budget. Display restores protected text verbatim except that
-  each fenced block becomes one `[code block, N lines]` line.
+  the token budget. `checkCoachPlaceholders` refuses a rewrite that drops,
+  repeats, reorders, or invents a placeholder.
+- `english-coach-diff.ts` splits the prepared prompt and the rewrite at
+  their placeholders, which must match in order, and diffs only the prose
+  between them by token (words, punctuation, whitespace of any kind
+  matching), so each protected text shows once. It returns `CoachSegment`
+  lines: kept, `del`, `ins`, `punct`, and protected (each placeholder's
+  protected text, a fenced block as one `[code block, N lines]`), plus the
+  reported mistakes with placeholders shown. Line breaks come from the
+  prompt. Word changes join across the whitespace between them; a
+  punctuation change stands alone. Tokens that differ only in case match, so
+  the prompt's casing stays, and `replyView` drops case-only mistakes (none
+  left is `no mistakes`): the coach never corrects capitalization, and
+  `english-coach.md` also tells it to leave technical terms as written.
+  Each change's parts share a `change` id
+  and carry `mistakes`: every reported mistake whose original, found in the
+  prompt in reply order, overlaps the change's place; else the best one only
+  whitespace away or with matching words. Punctuation alone has none.
+  `english-coach.md` asks for one fix per mistake line (the changed words plus
+  at most one neighbour), so each change gets its own reason.
+- The panel takes a `CoachView` (`checking`, `clean`, `note`, `correction`).
+  The title line carries the state (`checking…`, `N fixes`, `no mistakes`)
+  and the close key (a `kbd` keycap in Tern). Classic draws `del` struck
+  through in `toolDiffRemoved`, `ins` and `punct` (punctuation that replaced
+  punctuation, shown alone) in `toolDiffAdded`, protected text `dim`. Tern
+  gets `del`, `ins`, `success`, and `dim` spans; its sheet puts `del`/`ins`
+  on tinted chips. Each line is a wrapping `row` of pieces (a kept word, or
+  one explained change) because only a node, not a span, takes a
+  `hovercard`; edge spaces are no-break so a piece's trailing space does not
+  hang. A change's piece has role `omp-tools.english-coach.change`, a `title`,
+  and a `hovercard`: that change alone (`removed → added`, `+ added`, or the
+  struck removal), then one pattern line per mistake it carries. Mistakes no
+  change carries list under the prompt. Classic has no pointer and lists
+  every mistake, one per line.
 - Resolve `@tiny` through `ctx.models.resolve`, refresh its named providers
   once if unresolved, and obtain the credential from the model registry.
   Missing model or credential warns once and disables coaching. There is
@@ -458,13 +503,14 @@ A Side question is a full agent run in a mirror session built the way OMP's
 - The widget has its own key above the editor. Its wrapped body has a 40%
   terminal-row cap, with a final `… N more lines` in classic and a wheel
   scroll box in Tern. Tern uses the native overlay role, without a width of
-  its own, so the panel spans the composer like `/btw`. Its sheet sets the
-  body in `--sans` and mutes labels and original wording.
+  its own, so the panel spans the composer like `/btw`. The title text has
+  the role `omp-tools.english-coach.title` so the theme sheet finds the panel
+  in every state.
 - `app.interrupt` (Esc) closes the panel, as on the `/btw` panel, only while
   the main editor is empty and has focus. The focus is the component focused
   when the widget was created, read with `tui.getFocused()`, so a Picker or
-  selector keeps its Esc. In Tern the `esc to close` hint in the header is
-  also a click target. Closing aborts an unfinished check.
+  selector keeps its Esc. In Tern the `esc` hint in the header is also a
+  click target. Closing aborts an unfinished check.
 - Every interactive submission clears the previous outcome and aborts an
   unfinished check. Session switch, branch, tree, and shutdown do the same.
   Failures stay in the panel and never reject input dispatch.
@@ -643,7 +689,8 @@ omp plugin link "$PWD"
 
 - `package.json`: entry points (`omp.extensions`) and plugin settings
   (`omp.settings`): `imageGenerationMode`, `svgAuthorModel`,
-  `sideQuestionModel`, `englishCoach`, and `englishCoachMaxTokens`. Code reads
+  `sideQuestionModel`, `englishCoach`, `englishCoachMaxTokens`, and
+  `englishCoachLanguage`. Code reads
   them with `getPluginSettings("omp-tools", cwd)`; a project's
   `.omp/plugin-overrides.json` overrides the global value.
 - `extensions/ask-dialog.ts`: the Picker component, the largest file.
@@ -708,6 +755,17 @@ btw thread have live smoke only.
 
 Last live proof, newest first:
 
+- 2026-11-17, English coach diff view and omp theme colors: installed OMP
+  18.22.0, headless Tern 0.9.26, local SSE provider, `dark-catppuccin`. In
+  Tern the coach showed `checking…`, `12 fixes` with struck and added words,
+  numbers `¹`–`¹²` and the pattern line, and `no mistakes`. Shot pixels of
+  the coach and `/btw` panels matched the theme exactly (`#313244` surface,
+  `#fab387` accent, `#7f849c` muted, `#f38ba8` removed, `#a6e3a1` added),
+  while the composer kept Tern's colors. Classic showed the same diff in
+  ANSI. The Picker was not driven: with OMP 18.22.0, `flexible-ask.ts` fails
+  to load from the worktree (`Cannot find package '@oh-my-pi/pi-utils'`
+  imported from the local `pi-tui/src/html-form/media.ts`), before and after
+  this change. Evidence: `/Users/vanguyen/.vstack/tmp/omp-tools-4663ab/verify/coach-theme-104127/serve/`.
 - 2026-11-16, English coach acceptance: compiled OMP 18.20.3, headless Tern
   0.9.23 (`35c63ab`), fresh isolated agent directories, and a local SSE
   provider for the main, `@tiny`, and Side question roles. Both Tern and

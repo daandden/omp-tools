@@ -7,14 +7,53 @@ import { sideQuestionFixture } from "./side-question-session";
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
 
-/** The classic panel's first line. */
-export const TITLE = "English coach · esc to close";
+/** The classic panel's first line at `width`: the title, what the check found, and the close key at the right edge. */
+export function title(status?: string, width = 100): string {
+	const left = `English coach${status ? ` · ${status}` : ""}`;
+	return `${left}${" ".repeat(width - Bun.stringWidth(left) - 3)}esc`;
+}
+
+/** The classic first line above a note. */
+export const TITLE = title();
+/** The classic panel while a check runs. */
+export const CHECKING = title("checking…");
+/** The classic panel for a prompt with no mistakes. */
+export const CLEAN = title("no mistakes");
+
+/** A widget's classic lines at `width`, without colour. */
+export function plainLines(widget: Component, width = 100): string[] {
+	return widget.render(width).map(line => Bun.stripANSI(line));
+}
+
+/** Each text node's spans (a plain text as one unstyled span), in tree order; a wrapping row is one line, like spans are. */
+function nodeSpans(node: NativeNode): { t: string; s?: string }[][] {
+	const props = node.p as { text?: string; spans?: { t: string; s?: string }[]; wrap?: unknown } | undefined;
+	if (node.k === "text") return [props?.spans ?? [{ t: props?.text ?? "" }]];
+	const children = (node.c ?? []).flatMap(child => (typeof child === "object" && child !== null && "k" in child ? nodeSpans(child as NativeNode) : []));
+	if (node.k !== "row" || props?.wrap !== true) return children;
+	// Pieces keep their edge spaces as no-break spaces; they read as spaces.
+	const line: { t: string; s?: string }[] = [];
+	for (const span of children.flat()) {
+		const t = span.t.replaceAll("\u00a0", " ");
+		const last = line.at(-1);
+		if (last && last.s === span.s) last.t += t;
+		else line.push({ ...span, t });
+	}
+	return [line];
+}
+
+/** Each hoverable change in a native tree: its text and its tooltip. */
+export function nodeHovers(node: NativeNode): { text: string; title: string }[] {
+	const props = node.p as { spans?: { t: string }[]; title?: string; hovercard?: unknown } | undefined;
+	const own = node.k === "text" && props?.hovercard !== undefined
+		? [{ text: (props.spans ?? []).map(span => span.t).join("").replaceAll("\u00a0", " ").trim(), title: props.title ?? "" }]
+		: [];
+	return [...own, ...(node.c ?? []).flatMap(child => (typeof child === "object" && child !== null && "k" in child ? nodeHovers(child as NativeNode) : []))];
+}
 
 /** Each text node's visible text, spans joined, in tree order. */
 function nodeTexts(node: NativeNode): string[] {
-	const props = node.p as { text?: string; spans?: { t: string }[] } | undefined;
-	const own = node.k === "text" ? [props?.text ?? props?.spans?.map(span => span.t).join("") ?? ""] : [];
-	return [...own, ...(node.c ?? []).flatMap(child => (typeof child === "object" && child !== null && "k" in child ? nodeTexts(child as NativeNode) : []))];
+	return nodeSpans(node).map(spans => spans.map(span => span.t).join(""));
 }
 
 export async function until(predicate: () => boolean): Promise<void> {
@@ -109,11 +148,19 @@ export async function englishCoachFixture(options: {
 		...base,
 		ctx, emit, widgets, placements, writes,
 		input: (text: string, event: Partial<InputEvent> = {}, context = ctx) => emit("input", { source: "interactive", text, ...event }, context),
-		lines: () => [...widgets.values()].flatMap(widget => widget.render(100)),
+		lines: () => [...widgets.values()].flatMap(widget => plainLines(widget)),
 		native: () => [...widgets.values()].map(widget => widget.describe?.({ feature: () => true } as unknown as DescribeContext)),
+		nativeSpans: () => [...widgets.values()].flatMap(widget => {
+			const native = widget.describe?.({ feature: () => true } as unknown as DescribeContext);
+			return native ? nodeSpans(native) : [];
+		}),
 		nativeText: () => [...widgets.values()].flatMap(widget => {
 			const native = widget.describe?.({ feature: () => true } as unknown as DescribeContext);
 			return native ? nodeTexts(native) : [];
+		}),
+		nativeHovers: () => [...widgets.values()].flatMap(widget => {
+			const native = widget.describe?.({ feature: () => true } as unknown as DescribeContext);
+			return native ? nodeHovers(native) : [];
 		}),
 		/** Sends terminal input through the registered handlers in order; true when one consumed it. */
 		key: (data: string) => keyHandlers.some(handler => handler(data)?.consume === true),

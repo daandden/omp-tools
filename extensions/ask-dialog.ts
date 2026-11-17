@@ -46,6 +46,7 @@ import {
 import { sanitizeCarriageReturns } from "@oh-my-pi/pi-tui/render";
 import { getMarkdownTheme, highlightCode, theme } from "@oh-my-pi/pi-tui/theme";
 import { AnswerEditor, externalEditorKey, SCROLL_BOX_CSS, scrollBox, withoutSideBorders } from "./ask-editor";
+import { sheetMessage } from "./tern-theme";
 import {
 	type AnswerState,
 	type AnswerText,
@@ -441,14 +442,6 @@ ${SCROLL_BOX_CSS}
 [data-role='omp-tools.ask-title'] { font: 600 13px/1.4 var(--sans); color: var(--t3); }
 `;
 
-/**
- * The stylesheet message (`ESC _ tsp;s;{name,css} ESC \`) for the live surface;
- * pi-tui sends no `s` of its own. A sheet belongs to one surface, and pi-tui
- * opens a new inline surface (same describe context) when the terminal drops
- * the old one, so the picker sends this with every describe.
- */
-const NATIVE_SHEET_MESSAGE = `\x1b_tsp;s;${JSON.stringify({ name: NATIVE_SHEET_NAME, css: NATIVE_SHEET })}\x1b\\`;
-
 /** A button that runs one key's path, drawn as pi-tui's `actionButton` (label and keycap). */
 function actionButton(label: string, act: string, key: string, options: { accent?: boolean; title?: string } = {}): NativeNode {
 	return node(
@@ -734,7 +727,7 @@ class Picker implements Component, Focusable {
 		this.#nativeMode = true;
 		this.#nativeSheet = cx.feature("styles");
 		// Before the frame that uses it, on whatever surface is live; the same sheet replaces itself in place.
-		if (this.#nativeSheet) this.#tui.terminal.write(NATIVE_SHEET_MESSAGE);
+		if (this.#nativeSheet) this.#tui.terminal.write(sheetMessage(NATIVE_SHEET_NAME, NATIVE_SHEET));
 		const shownBody = this.#nativeShownBody;
 		this.#nativeShownBody = undefined;
 		const { lines, width } = this.#nativeHeights(cx);

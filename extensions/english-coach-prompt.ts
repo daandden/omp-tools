@@ -43,18 +43,14 @@ export function prepareCoachPrompt(input: string, promptCommandNames: ReadonlySe
 	return { text, englishText, placeholders };
 }
 
-export function restoreCoachReply(lines: string[], prompt: PreparedCoachPrompt): string[] {
-	if (lines[0]?.startsWith("Better:")) {
-		const tokens = lines[0].match(/\[\[COACH_+\d+\]\]/g) ?? [];
-		if (tokens.length !== prompt.placeholders.length || tokens.some((token, index) => token !== prompt.placeholders[index]!.token)) {
-			throw new Error("unreadable reply");
-		}
+/** Throws unless the rewrite keeps every placeholder once and in order, and each reply line names only placeholders the prompt has. */
+export function checkCoachPlaceholders(rewrite: string, lines: readonly string[], prompt: PreparedCoachPrompt): void {
+	const tokens = rewrite.match(/\[\[COACH_+\d+\]\]/g) ?? [];
+	if (tokens.length !== prompt.placeholders.length || tokens.some((token, index) => token !== prompt.placeholders[index]!.token)) {
+		throw new Error("unreadable reply");
 	}
-	const originals = new Map(prompt.placeholders.map(item => [item.token, item.display]));
-	return lines.flatMap(line => line.replace(/\[\[COACH_+\d+\]\]/g, token => {
-		const display = originals.get(token);
-		if (display === undefined) throw new Error("unreadable reply");
-		return display;
-	}).split(/\r?\n/))
-		.map(line => line.trimEnd()).filter(Boolean);
+	const known = new Set(prompt.placeholders.map(item => item.token));
+	if (lines.some(line => (line.match(/\[\[COACH_+\d+\]\]/g) ?? []).some(token => !known.has(token)))) {
+		throw new Error("unreadable reply");
+	}
 }

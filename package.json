@@ -34,6 +34,11 @@
 				"default": 300,
 				"description": "Maximum prompt tokens checked by the English coach. Must be positive. Replies are capped at twice this limit plus 200 tokens. Applies at session start and on session switch."
 			},
+			"englishCoachLanguage": {
+				"type": "string",
+				"default": "Vietnamese",
+				"description": "Your native language, such as Vietnamese or Japanese. The English coach names each mistake's pattern in it; corrections stay in English. Empty turns coaching off with a warning. Applies at session start and on session switch."
+			},
 			"imageGenerationMode": {
 				"type": "enum",
 				"values": ["openai", "codex"],

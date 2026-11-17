@@ -64,7 +64,7 @@ export interface KeyHint {
 }
 
 /** A key id as the classic hint line spells it. */
-function keyLabel(key: string): string {
+export function keyLabel(key: string): string {
 	if (key === "escape") return "esc";
 	if (key === "pageUp") return "pgup";
 	if (key === "pageDown") return "pgdn";
