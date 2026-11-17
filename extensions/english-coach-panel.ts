@@ -26,6 +26,8 @@ type TspPropNode = NonNullable<NonNullable<Parameters<typeof node<"text">>[1]>["
 
 // Removed and added words sit on soft tinted chips so their edges show; a
 // change that explains itself on hover shows a help cursor and brightens.
+// The close key floats over the frame's bottom-right corner on the panel's
+// own colour, covering whatever text lies under it.
 const SHEET_CSS = `${SCROLL_BOX_CSS}
 [data-role='omp-tools.english-coach.body'] { min-inline-size: 0; max-inline-size: 100%; font-family: var(--sans); white-space: pre-wrap; overflow-wrap: anywhere; }
 [data-role='omp-tools.english-coach.diff'] { line-height: 1.75; }
@@ -36,7 +38,9 @@ const SHEET_CSS = `${SCROLL_BOX_CSS}
 [data-role='omp-tools.english-coach.change'] { cursor: help; }
 [data-role='omp-tools.english-coach.change']:hover .sf-t-del { background: color-mix(in oklch, var(--sf-c-del) 24%, transparent); }
 [data-role='omp-tools.english-coach.change']:hover .sf-t-ins { background: color-mix(in oklch, var(--sf-c-ins) 26%, transparent); }
-[data-role='omp-tools.english-coach.unplaced'] { margin-top: 6px; gap: 3px; }`;
+[data-role='omp-tools.english-coach.unplaced'] { margin-top: 6px; gap: 3px; }
+[data-role='omp-tools.english-coach.frame'] { position: relative; }
+[data-role='omp-tools.english-coach.close'] { position: absolute; right: 0; bottom: 0; padding-left: 6px; background: var(--raise); }`;
 
 /** What the panel shows: a running check, a clean prompt, a one-line note, or a marked-up correction. */
 export type CoachView =
@@ -45,20 +49,22 @@ export type CoachView =
 	| { kind: "note"; text: string }
 	| { kind: "correction"; correction: CoachCorrection };
 
-/** The words after the title: what the check found. */
-function status(view: CoachView): string | undefined {
+/** The one line a view without a correction shows. */
+function notice(view: Exclude<CoachView, { kind: "correction" }>): string {
 	switch (view.kind) {
 		case "checking":
-			return "checking…";
+			return "Checking…";
 		case "clean":
-			return "no mistakes";
-		case "correction": {
-			const count = view.correction.mistakes.length;
-			return `${count} ${count === 1 ? "fix" : "fixes"}`;
-		}
+			return "No mistakes";
 		case "note":
-			return undefined;
+			return view.text;
 	}
+}
+
+/** Tern: that line, after a spinner while the check runs. */
+function ternNotice(view: Exclude<CoachView, { kind: "correction" }>): NativeNode {
+	const line = text([span(notice(view), "muted")], { wrap: "word" });
+	return view.kind === "checking" ? node("row", { gap: "sm", align: "center" }, [node("spinner", {}), line]) : line;
 }
 
 /** The key that closes the panel: the first `app.interrupt` binding, else Escape. */
@@ -206,54 +212,45 @@ export class EnglishCoachPanel implements Component {
 	render(width: number): string[] {
 		const inner = Math.max(1, width);
 		const view = this.view();
-		const state = status(view);
-		const title = `${theme.fg("accent", "English coach")}${state ? theme.fg("muted", ` · ${state}`) : ""}`;
-		const close = theme.fg("dim", keyLabel(closeKey()));
-		const gap = inner - visibleWidth(title) - visibleWidth(close);
-		const head = gap >= 2 ? `${title}${" ".repeat(gap)}${close}` : truncateToWidth(title, inner);
-		const body = view.kind === "note"
-			? wrapTextWithAnsi(theme.fg("muted", view.text), inner)
-			: view.kind === "correction"
-				? [
-					...view.correction.lines.flatMap(line => wrapTextWithAnsi(line.map(classicSegment).join(""), inner)),
-					...view.correction.mistakes.flatMap(mistake => wrapTextWithAnsi(classicMistake(mistake), inner)),
-				]
-				: [];
-		const maxBody = this.#maxBody();
-		return [head, ...(body.length <= maxBody ? body : [
-			...body.slice(0, maxBody - 1),
-			theme.fg("dim", truncateToWidth(`… ${body.length - maxBody + 1} more lines`, inner)),
-		])];
+		const body = view.kind === "correction"
+			? [
+				...view.correction.lines.flatMap(line => wrapTextWithAnsi(line.map(classicSegment).join(""), inner)),
+				...view.correction.mistakes.flatMap(mistake => wrapTextWithAnsi(classicMistake(mistake), inner)),
+			]
+			: wrapTextWithAnsi(theme.fg("muted", notice(view)), inner);
+		const maxLines = this.#maxLines();
+		const lines = body.length <= maxLines ? body : [
+			...body.slice(0, maxLines - 1),
+			theme.fg("dim", truncateToWidth(`… ${body.length - maxLines + 1} more lines`, inner)),
+		];
+		// The close key overlays the right end of the last line, cutting off any text there.
+		const close = keyLabel(closeKey());
+		const room = inner - visibleWidth(close) - 1;
+		const last = room >= 0
+			? `${truncateToWidth(lines.at(-1) ?? "", room, "", true)} ${theme.fg("dim", close)}`
+			: theme.fg("dim", truncateToWidth(close, inner));
+		return [...lines.slice(0, -1), last];
 	}
 
 	describe(cx: DescribeContext): NativeNode {
 		if (cx.feature("styles")) this.tui.terminal.write(sheetMessage("omp-tools-english-coach", SHEET_CSS));
 		const view = this.view();
-		const state = status(view);
-		const body: NativeNode[] = view.kind === "note"
-			? [text([span(view.text, "muted")], { wrap: "word" })]
-			: view.kind === "correction"
-				? ternCorrection(view.correction)
-				: [];
+		const body = view.kind === "correction" ? ternCorrection(view.correction) : [ternNotice(view)];
 		// Native /btw's role and no width of its own, so the panel spans the composer's measure as /btw does.
-		return node("col", { role: "omp.overlay.btw", gap: "xs" }, [
-			node("row", { role: "omp.sheet.head", gap: "sm", align: "center" }, [
-				...(view.kind === "checking" ? [node("spinner", {})] : []),
-				node("text", {
-					spans: [span("English coach", "accent"), ...(state ? [span(` · ${state}`, "muted")] : [])],
-					truncate: "end",
-					lines: 1,
-					role: "omp-tools.english-coach.title",
-				}),
-				node("spacer", { grow: 1 }),
-				node("row", { align: "center", actions: { click: "close" }, title: "Close" }, [kbd(closeKey())], "close"),
-			]),
-			...(body.length > 0
-				? [scrollBox(
+		// The sheet floats the close key over the frame's bottom-right corner; unstyled, it follows the body.
+		return node("col", { role: "omp.overlay.btw" }, [
+			node("col", { role: "omp-tools.english-coach.frame" }, [
+				scrollBox(
 					node("col", { role: "omp-tools.english-coach.body" }, body),
-					{ lines: this.#maxBody(), fixed: false, key: "english-coach-body", scroll: undefined },
-				)]
-				: []),
+					{ lines: this.#maxLines(), fixed: false, key: "english-coach-body", scroll: undefined },
+				),
+				node(
+					"row",
+					{ role: "omp-tools.english-coach.close", align: "center", actions: { click: "close" }, title: "Close" },
+					[kbd(closeKey())],
+					"close",
+				),
+			]),
 		]);
 	}
 
@@ -261,8 +258,9 @@ export class EnglishCoachPanel implements Component {
 		if (event.type === "action" && event.act === "close") this.close();
 	}
 
-	#maxBody(): number {
+	/** The panel's share of the terminal rows. */
+	#maxLines(): number {
 		const rows = this.tui.terminal?.rows ?? process.stdout.rows ?? 40;
-		return Math.max(1, Math.floor(rows * PANEL_HEIGHT_RATIO) - 1);
+		return Math.max(1, Math.floor(rows * PANEL_HEIGHT_RATIO));
 	}
 }

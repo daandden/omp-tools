@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, expect, test } from "bun:test";
 import { Settings } from "@oh-my-pi/pi-coding-agent";
 import { initTheme } from "@oh-my-pi/pi-tui/theme";
-import { CLEAN, englishCoachFixture, plainLines, title, until } from "./helpers/english-coach-session";
+import { CLEAN, closed, englishCoachFixture, plainLines, until } from "./helpers/english-coach-session";
 
 const cleanups: (() => Promise<void>)[] = [];
 beforeAll(async () => {
@@ -24,16 +24,14 @@ test.each(orders)("/btw is coached once and answered with %j loaded first", asyn
 	cleanups.push(coach.dispose);
 	const result = await coach.input("/btw why this not work");
 	expect(result.at(-1)).toEqual({ handled: true });
-	await until(() => coach.lines()[0] === title("1 fix"));
+	await until(() => coach.lines()[0] === "why doesn't this not work?");
 	await until(() => coach.widgets.get("omp-tools.btw")?.render(100).join(" ").includes("The login handler needs a null check.") === true);
 	expect(coach.requests.filter(body => body.model === "small")).toHaveLength(1);
 	expect(coach.requests.filter(body => body.model === "main")).toHaveLength(1);
 	expect(coach.requests.find(body => body.model === "small")!.messages.filter((message: any) => message.role === "user")).toEqual([
 		{ role: "user", content: "why this not work" },
 	]);
-	expect(plainLines(coach.widgets.get("omp-tools.english-coach")!)).toEqual([
-		title("1 fix"), "why doesn't this not work?", "- why this not work → Why doesn't this work (Missing auxiliary verb)",
-	]);
+	expect(plainLines(coach.widgets.get("omp-tools.english-coach")!)).toEqual(closed(["why doesn't this not work?", "- why this not work → Why doesn't this work (Missing auxiliary verb)"]));
 	expect([...coach.placements.values()]).toEqual([{ placement: "aboveEditor" }, { placement: "aboveEditor" }]);
 	expect(coach.focus()).toBe(true);
 	expect(coach.main.messages).toEqual([]);

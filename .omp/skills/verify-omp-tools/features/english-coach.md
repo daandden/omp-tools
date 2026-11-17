@@ -4,14 +4,14 @@ The English coach checks submitted English in the background with `@tiny`, witho
 
 ## Sub-features
 
-- `coach-correction`: `English coach · checking…`, then `English coach · N fixes` above the prompt with removed words struck through and replacements after them. In Tern, `$C dump "[data-role='omp-tools.english-coach.change']"` gives each change's `rect` (`[x, y, w, h]`); `$C move` to its center shows a card with only that change (`removed → added`) and its reason. Classic lists `- original → corrected (pattern)` under the prompt. A long correction keeps the composer visible.
-- `coach-correct`: `English coach · no mistakes`.
+- `coach-correction`: `Checking…`, then the prompt with removed words struck through and replacements after them, and no title line. In Tern, `$C dump "[data-role='omp-tools.english-coach.change']"` gives each change's `rect` (`[x, y, w, h]`); `$C move` to its center shows a card with only that change (`removed → added`) and its reason. Classic lists `- original → corrected (pattern)` under the prompt. A long correction keeps the composer visible.
+- `coach-correct`: `No mistakes`.
 - `coach-theme`: in Tern, the panel's background, accent, muted text, and `del`/`ins` colors are the active omp theme's `selectedBg`, `accent`, `muted`, `toolDiffRemoved`, and `toolDiffAdded` (sample shot pixels; with `dark-catppuccin` they are `#313244`, `#fab387`, `#7f849c`, `#f38ba8`, `#a6e3a1`). The `/btw` panel shares the background; the composer keeps Tern's.
 - `coach-limit`: prose over 300 tokens shows `Not checked: over 300 tokens`, with no tiny request.
 - `coach-fence`: a short sentence above 500 fenced code lines is checked. The coach request contains a placeholder, not the code, and the panel shows one `[code block, 500 lines]` marker.
 - `coach-btw`: one coach request for the question text, with both the correction and the Side question answer visible.
 - `coach-command`: `/model coach-smoke/main` removes the coach panel and makes no tiny request. The host's handling of the command is not the coach's contract.
-- `coach-close`: with the editor empty, `$C key Escape` removes the panel. In Tern, `$C click '.sf-act[title="Close"]'` on the header's `esc` hint also removes it. The panel spans the composer's width, as `/btw` does.
+- `coach-close`: the `esc` keycap floats over the panel's bottom-right corner, with no line or column of its own; the body text spans the full width under it. With the editor empty, `$C key Escape` removes the panel. In Tern, `$C click '.sf-act[title="Close"]'` on that keycap also removes it. The panel spans the composer's width, as `/btw` does.
 
 ## How to get to it (user POV)
 
@@ -52,8 +52,8 @@ Use a fresh `$VERIFY_RUN_DIR` for each renderer. Read `../SKILL.md` first. This 
 
    | Scenario | Expected panel and request evidence |
    |---|---|
-   | `mistakes` | `English coach · checking…`, then `English coach · 12 fixes` and the prompt with marked changes; hovering the last change shows `hear → hearing.` and its reason. One tiny request. The 1.2-second provider delay permits a checking screenshot. |
-   | `correct` | `English coach · no mistakes`; one tiny request. This also creates a saved main session before `/btw`. |
+   | `mistakes` | `Checking…`, then the prompt with marked changes across the full width and `esc` over the bottom-right corner; hovering the last change shows `hear → hearing.` and its reason. One tiny request. The 1.2-second provider delay permits a checking screenshot. |
+   | `correct` | `No mistakes`; one tiny request. This also creates a saved main session before `/btw`. |
    | `over` | `Not checked: over 300 tokens`; no tiny request. |
    | `fence` | `it not` struck through before `It doesn't work.`, one `[code block, 500 lines]` line, and the pattern line; one tiny request with `[[COACH_1]]` and no `const value` code. |
    | `btw` | The coach correction and `Local Side question answer.` coexist; exactly one tiny request for `why it not work?`. |

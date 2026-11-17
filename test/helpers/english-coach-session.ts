@@ -7,18 +7,18 @@ import { sideQuestionFixture } from "./side-question-session";
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
 
-/** The classic panel's first line at `width`: the title, what the check found, and the close key at the right edge. */
-export function title(status?: string, width = 100): string {
-	const left = `English coach${status ? ` · ${status}` : ""}`;
-	return `${left}${" ".repeat(width - Bun.stringWidth(left) - 3)}esc`;
+/** Classic panel lines at `width`: the close key overlays the right end of the last line. */
+export function closed(lines: string[], width = 100): string[] {
+	const last = lines.at(-1) ?? "";
+	const room = width - 4;
+	const kept = Bun.stringWidth(last) <= room ? last : last.slice(0, room);
+	return [...lines.slice(0, -1), `${kept}${" ".repeat(room - Bun.stringWidth(kept))} esc`];
 }
 
-/** The classic first line above a note. */
-export const TITLE = title();
 /** The classic panel while a check runs. */
-export const CHECKING = title("checking…");
+export const CHECKING = closed(["Checking…"])[0]!;
 /** The classic panel for a prompt with no mistakes. */
-export const CLEAN = title("no mistakes");
+export const CLEAN = closed(["No mistakes"])[0]!;
 
 /** A widget's classic lines at `width`, without colour. */
 export function plainLines(widget: Component, width = 100): string[] {

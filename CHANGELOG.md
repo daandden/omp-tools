@@ -10,10 +10,10 @@
   each correction marked in place (removed words struck through on a faint
   red chip, the replacement after them on a faint green chip). In Tern,
   hovering a change shows that change alone and why; the classic terminal
-  lists each `original → corrected (pattern)` under the prompt. The title line reads
-  `checking…`, `N fixes`, or `no mistakes`, with an `esc` keycap, and a note
-  says why a prompt was not checked. The main prompt stays unchanged, and
-  coaching usage counts toward the session cost.
+  lists each `original → corrected (pattern)` under the prompt. The panel has
+  no title line: it reads `Checking…` or `No mistakes`, or a note says why a
+  prompt was not checked, with an `esc` keycap floating over its bottom-right corner. The main
+  prompt stays unchanged, and coaching usage counts toward the session cost.
 - New plugin settings `englishCoach`, `englishCoachMaxTokens`, and
   `englishCoachLanguage` default to `true`, `300`, and `Vietnamese`. The coach
   names mistake patterns in `englishCoachLanguage`. Global values and project

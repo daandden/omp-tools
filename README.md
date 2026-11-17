@@ -606,21 +606,20 @@ capitalization (a fix that only changes case is dropped, and a word that
 differs only in case shows as you typed it) and leaves technical terms such
 as `git diff`, `diff`, `repo`, or `PR` as written.
 
-The panel's title line says what the check found, and the close key sits at
-its right edge:
+The panel has no title line. It shows what the check found, and the close
+key floats over its bottom-right corner, covering any text under it:
 
-- `English coach · checking…` while the check runs.
-- `English coach · N fixes` above your prompt with the changes marked in
-  place. Removed words are struck through on a faint red chip in the omp
-  theme's diff-removed color, and the replacement follows on a faint green
-  chip in its diff-added color. Punctuation that replaced other punctuation
-  shows as the new mark alone, in green. In Tern, rest the pointer on a
-  change to see that change alone and why, with the reason in your
-  `englishCoachLanguage` (Vietnamese by default). The classic terminal has
-  no pointer, so it lists each mistake as `original → corrected (reason)`
-  under the prompt.
-- `English coach · no mistakes` when the English is already natural.
-- `English coach` above a note in the other cases:
+- `Checking…` while the check runs.
+- Your prompt with the changes marked in place. Removed words are struck
+  through on a faint red chip in the omp theme's diff-removed color, and the
+  replacement follows on a faint green chip in its diff-added color.
+  Punctuation that replaced other punctuation shows as the new mark alone,
+  in green. In Tern, rest the pointer on a change to see that change alone
+  and why, with the reason in your `englishCoachLanguage` (Vietnamese by
+  default). The classic terminal has no pointer, so it lists each mistake as
+  `original → corrected (reason)` under the prompt.
+- `No mistakes` when the English is already natural.
+- A note in the other cases:
   - `Not checked: over 300 tokens` when the English text exceeds the limit.
   - `Not checked: no English text` when only protected text remains or the
     model reports non-English text.
