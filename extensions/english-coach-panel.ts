@@ -27,10 +27,12 @@ type TspPropNode = NonNullable<NonNullable<Parameters<typeof node<"text">>[1]>["
 // Removed and added words sit on soft tinted chips so their edges show; a
 // change that explains itself on hover shows a help cursor and brightens.
 // The close key floats over the frame's bottom-right corner on the panel's
-// own colour, covering whatever text lies under it. The overlay role pads
-// 16px above and 18px below (Tern 0.9.26), and the last line's descent adds
-// about 3px more under the glyphs, so the panel trims its bottom padding to
-// show the same space below the text as above it.
+// own colour, covering whatever text lies under it, centred on the last line:
+// a plain line is about as tall as the key, and a diff line's 1.75 line height
+// puts its middle 0.875em above the frame's bottom. The overlay role pads 16px
+// above and 18px below (Tern 0.9.26), and the last line's descent adds about
+// 3px more under the glyphs, so the panel trims its bottom padding to show the
+// same space below the text as above it.
 const SHEET_CSS = `${SCROLL_BOX_CSS}
 [data-role='omp-tools.english-coach.body'] { min-inline-size: 0; max-inline-size: 100%; font-family: var(--sans); white-space: pre-wrap; overflow-wrap: anywhere; }
 [data-role='omp-tools.english-coach.diff'] { line-height: 1.75; }
@@ -43,7 +45,8 @@ const SHEET_CSS = `${SCROLL_BOX_CSS}
 [data-role='omp-tools.english-coach.change']:hover .sf-t-ins { background: color-mix(in oklch, var(--sf-c-ins) 26%, transparent); }
 [data-role='omp-tools.english-coach.unplaced'] { margin-top: 6px; gap: 3px; }
 [data-role='omp-tools.english-coach.frame'] { position: relative; }
-[data-role='omp-tools.english-coach.close'] { position: absolute; right: 0; bottom: 0; padding-left: 6px; background: var(--raise); }
+[data-role^='omp-tools.english-coach.close'] { position: absolute; right: 0; bottom: 0; padding-left: 6px; background: var(--raise); }
+[data-role='omp-tools.english-coach.close.diff'] { bottom: 0.875em; transform: translateY(50%); }
 .sf-col.sf-col[data-role='omp.overlay.btw']:has([data-role='omp-tools.english-coach.frame']) { padding-bottom: 13px; }`;
 
 /** What the panel shows: a running check, a clean prompt, a one-line note, or a marked-up correction. */
@@ -168,10 +171,15 @@ function ternLine(line: readonly CoachSegment[], mistakes: readonly CoachMistake
 		}, undefined, String(index))), key);
 }
 
+/** Mistakes no change carries; Tern lists them under the prompt. */
+function unplacedMistakes(correction: CoachCorrection): CoachMistake[] {
+	const placed = new Set(correction.lines.flat().flatMap(segment => segment.mistakes ?? []));
+	return correction.mistakes.filter((_, index) => !placed.has(index));
+}
+
 /** Tern: the prompt with hover explanations, then any mistake no change carries. */
 function ternCorrection(correction: CoachCorrection): NativeNode[] {
-	const placed = new Set(correction.lines.flat().flatMap(segment => segment.mistakes ?? []));
-	const unplaced = correction.mistakes.filter((_, index) => !placed.has(index));
+	const unplaced = unplacedMistakes(correction);
 	return [
 		node("col", { role: "omp-tools.english-coach.diff" }, correction.lines.map((line, index) =>
 			ternLine(line, correction.mistakes, `line:${index}`))),
@@ -240,6 +248,7 @@ export class EnglishCoachPanel implements Component {
 		if (cx.feature("styles")) this.tui.terminal.write(sheetMessage("omp-tools-english-coach", SHEET_CSS));
 		const view = this.view();
 		const body = view.kind === "correction" ? ternCorrection(view.correction) : [ternNotice(view)];
+		const endsInDiff = view.kind === "correction" && unplacedMistakes(view.correction).length === 0;
 		// Native /btw's role and no width of its own, so the panel spans the composer's measure as /btw does.
 		// The sheet floats the close key over the frame's bottom-right corner; unstyled, it follows the body.
 		return node("col", { role: "omp.overlay.btw" }, [
@@ -250,7 +259,12 @@ export class EnglishCoachPanel implements Component {
 				),
 				node(
 					"row",
-					{ role: "omp-tools.english-coach.close", align: "center", actions: { click: "close" }, title: "Close" },
+					{
+						role: endsInDiff ? "omp-tools.english-coach.close.diff" : "omp-tools.english-coach.close",
+						align: "center",
+						actions: { click: "close" },
+						title: "Close",
+					},
 					[kbd(closeKey())],
 					"close",
 				),

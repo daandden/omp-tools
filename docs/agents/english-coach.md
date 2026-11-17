@@ -42,8 +42,12 @@
   It has no title line: `checking` and `clean` show one muted line
   (`Checking…` after a spinner in Tern, `No mistakes`). The close key is an
   overlay that takes no space: in Tern the sheet positions the `kbd` keycap
-  (`omp-tools.english-coach.close`) absolutely at the bottom right of the
-  frame on the panel's `--raise` colour, over any text there; classic writes
+  absolutely at the bottom right of the frame on the panel's `--raise`
+  colour, over any text there, centred on the last line. A plain last line
+  is about as tall as the key (`omp-tools.english-coach.close`, `bottom: 0`);
+  when the correction ends in a diff line (no unplaced mistakes), the key is
+  `omp-tools.english-coach.close.diff`, raised to `bottom: 0.875em` (half of
+  the 1.75 line height) and moved down by half its height. Classic writes
   `esc` over the right end of the last line, cutting the text it covers.
   Without the styles feature, the keycap follows the body. The overlay role
   pads 16px above and 18px below, and the last line's descent adds about 3px
