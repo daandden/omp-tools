@@ -1,7 +1,6 @@
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { requestCodexImages } from "./codex-images";
-import description from "./generate-image.md" with { type: "text" };
 import type { ArtifactPolicy, FinalImage } from "./image-artifacts";
 import { referencesFromConversation, referencesFromPaths } from "./reference-images";
 
@@ -42,7 +41,8 @@ export interface ModeResult<Details> {
 
 export interface ImageMode<Details = Record<string, unknown>> {
 	id: ImageModeId;
-	description: string;
+	/** The mode's name on cards and in errors, such as "Codex mode". */
+	label: string;
 	parameters: Schema;
 	/** The card head's facts about a call's arguments, such as its reference count. */
 	callFacts(args: Record<string, unknown>): string[];
@@ -75,14 +75,14 @@ export function codexMode(type: ExtensionAPI["arktype"]): ImageMode<CodexDetails
 	const parameters = type({
 		prompt: type("string").describe("Image or edit description."),
 		"transparent_background?": type("boolean").describe("Transparent output."),
-		"referenced_image_paths?": type("string[]").describe("Absolute image paths, max 5."),
+		"referenced_image_paths?": type("string[] <= 5").describe("Absolute image paths, max 5."),
 		"num_last_images_to_include?": type("1 <= number.integer <= 5").describe(
 			"Last N conversation images, 1–5; not with paths.",
 		),
 	});
 	return {
 		id: "codex",
-		description: description.trimEnd(),
+		label: "Codex mode",
 		parameters,
 		callFacts: args => [...referenceFact(referenceCount(args)), ...(args.transparent_background ? ["transparent"] : [])],
 		cardWarnings: details => (details.quotaWarning ? [details.quotaWarning] : []),
@@ -104,7 +104,9 @@ export function codexMode(type: ExtensionAPI["arktype"]): ImageMode<CodexDetails
 			);
 			if (!accessToken) {
 				throw new Error(
-					"generate_image needs a ChatGPT/Codex login. Log in to openai-codex with /login, then retry.",
+					"Codex mode needs a ChatGPT/Codex login. Log in to openai-codex with /login, then retry. The user can " +
+						"instead ask for OpenAI mode, which uses an OpenAI API key, or change the omp-tools setting " +
+						"defaultImageGenerationMode. Do not switch to OpenAI mode unless the user asks.",
 				);
 			}
 

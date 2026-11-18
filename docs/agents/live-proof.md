@@ -2,6 +2,21 @@
 
 Dated results of live OMP smokes through the `verify-omp-tools` skill, newest first. Add an entry after each smoke: the OMP and Tern versions, what was driven, what was observed, and the evidence path.
 
+- 2026-11-18, per-call `mode`: OMP 18.22.2, headless Tern 0.9.27, isolated
+  `HOME` and agent dir without OpenAI or Codex credentials, the project
+  default `codex`, only this checkout's `generate-image.ts` loaded with `-e`,
+  and `helpers/image-mode-provider.ts` making the `generate_image` calls. The
+  model request listed `mode` among the tool's parameters. A call with
+  `mode: "openai"` and `output_format: "svg"` showed a card head with
+  `OpenAI mode` and `svg` and the OpenAI API key error offering Codex mode or
+  a new `defaultImageGenerationMode`. The first run showed `Codex mode` on
+  that error card because OMP stores a thrown error with empty details; the
+  fix landed red-first. Under `always-ask`, the approval prompt showed
+  `Mode: Codex mode, the Default image generation mode` and the arguments for
+  a call without `mode`, and `Mode: OpenAI mode` for `mode: "openai"`. Both
+  denials returned `Tool call denied by user`, so no image request ran.
+  Evidence:
+  `/Users/vanguyen/.vstack/tmp/omp-tools-4663ab/implement-spec/20261118-agent-mode/70/smoke/`.
 - 2026-11-18, `defaultImageGenerationMode` rename: OMP 18.22.2, headless Tern
   0.9.27, isolated `HOME` and agent dir, local SSE provider, and only this
   checkout's `generate-image.ts` loaded with `-e`. With only

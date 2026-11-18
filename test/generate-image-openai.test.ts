@@ -122,6 +122,33 @@ afterEach(() => {
 	for (const file of savedFiles) fs.rmSync(file, { force: true });
 });
 
+/** Both modes' arguments plus `mode`, registered whatever the default. */
+const SHARED_ARGUMENTS = [
+	"background",
+	"complexity",
+	"frame_count",
+	"frame_duration_ms",
+	"images",
+	"markup",
+	"mask",
+	"mode",
+	"moderation",
+	"n",
+	"num_last_images_to_include",
+	"output_compression",
+	"output_format",
+	"partial_images",
+	"prompt",
+	"quality",
+	"referenced_image_paths",
+	"safety_identifier",
+	"size",
+	"stream",
+	"svg",
+	"transparent_background",
+	"user",
+];
+
 describe("mode selection", () => {
 	test.each([
 		["absent", {}],
@@ -130,8 +157,7 @@ describe("mode selection", () => {
 	])("a defaultImageGenerationMode of %s uses the OpenAI endpoint and API key", async (_case, settings) => {
 		const tool = await loadTool(settings);
 
-		expect(argumentNames(tool)).toContain("quality");
-		expect(argumentNames(tool)).not.toContain("transparent_background");
+		expect(argumentNames(tool)).toEqual(SHARED_ARGUMENTS);
 		const result = await tool.execute("c", { prompt: "a fox" }, undefined, undefined, openaiContext());
 		savedFiles.push(...outputPathsOf(result));
 
@@ -139,14 +165,9 @@ describe("mode selection", () => {
 		expect(requests[0]?.headers.get("authorization")).toBe(`Bearer ${API_KEY}`);
 	});
 
-	test("defaultImageGenerationMode codex keeps the four Codex arguments, endpoint, and OAuth credential", async () => {
+	test("defaultImageGenerationMode codex keeps the shared arguments and uses the Codex endpoint and OAuth credential", async () => {
 		const tool = await loadTool({ defaultImageGenerationMode: "codex" });
-		expect(argumentNames(tool)).toEqual([
-			"num_last_images_to_include",
-			"prompt",
-			"referenced_image_paths",
-			"transparent_background",
-		]);
+		expect(argumentNames(tool)).toEqual(SHARED_ARGUMENTS);
 		respond = () =>
 			Response.json({ data: [{ b64_json: Buffer.from(TRANSLUCENT_PNG).toString("base64") }], size: "1x1" });
 		const result = await tool.execute("c", { prompt: "a fox" }, undefined, undefined, openaiContext());
@@ -243,8 +264,6 @@ describe("mode selection", () => {
 			await session.emit("session_switch", { cwd: dir });
 			release();
 			savedFiles.push(...outputPathsOf(await running));
-
-			expect(argumentNames(session.tool())).toContain("transparent_background");
 			respond = () =>
 				Response.json({ data: [{ b64_json: Buffer.from(TRANSLUCENT_PNG).toString("base64") }], size: "1x1" });
 			savedFiles.push(...outputPathsOf(await session.tool().execute("c", { prompt: "next" }, undefined, undefined, openaiContext())));
@@ -305,14 +324,14 @@ describe("generation", () => {
 });
 
 describe("arguments", () => {
-	test("rejects unknown arguments, including Codex's transparent_background, before any request", async () => {
+	test("rejects Codex mode's transparent_background in OpenAI mode, before any request", async () => {
 		const tool = await openaiTool();
 
 		const error = await failure(
 			tool.execute("c", { prompt: "x", transparent_background: true }, undefined, undefined, openaiContext()),
 		);
 
-		expect(error.message).toContain("Unknown argument(s): transparent_background.");
+		expect(error.message).toContain("OpenAI mode does not take transparent_background.");
 		expect(requests).toHaveLength(0);
 	});
 

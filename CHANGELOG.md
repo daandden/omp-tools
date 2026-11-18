@@ -56,6 +56,16 @@
   path to read, with author usage in `details.svgUsage`.
 - Added opt-in paid OpenAI live tests for a still image with complexity, SVG,
   and GIF. Run `OMP_TOOLS_LIVE_IMAGES=1 bun test live` with `OPENAI_API_KEY`.
+- `generate_image` takes an optional per-call `mode`, `openai` or `codex`,
+  and lists both modes' arguments, so a Codex-default session can make an
+  SVG, a GIF, or an exact-size image and an OpenAI-default session can use the
+  Codex allowance. A call without `mode` uses `defaultImageGenerationMode`.
+  The tool description tells the agent to pass `mode` on every call and to
+  use the other mode only when you ask or the task needs a feature only that
+  mode has. Arguments the chosen mode does not take fail before any request.
+  The tool card names each call's mode, and the approval prompt shows a
+  native call's arguments and the mode it will use. No call falls back to the
+  other mode.
 
 - Added `sideQuestionModel` to the plugin settings, default `@smol`, for both
   `/btw` and Picker btw. It honors the role's thinking level and fallback chain.
@@ -81,11 +91,15 @@
 
 ### Changed
 
-- Renamed `imageGenerationMode` to `defaultImageGenerationMode`. If you set
-  only the old key, image calls fail with the command that preserves your
-  mode. For example, run
-  `omp plugin config set omp-tools defaultImageGenerationMode codex` for
-  Codex mode, then start a new session.
+- Renamed `imageGenerationMode` to `defaultImageGenerationMode`, the mode for
+  calls without `mode`. If you set only the old key, image calls fail with the
+  command that preserves your mode, even calls that name a `mode`. For
+  example, run `omp plugin config set omp-tools defaultImageGenerationMode codex`
+  for Codex mode, then start a new session.
+- Codex mode rejects more than 5 `referenced_image_paths` before any request.
+- The missing OpenAI key, missing Codex login, and custom openai base URL
+  errors say you can ask for the other mode or change
+  `defaultImageGenerationMode`, instead of only the setting.
 
 ### Fixed
 

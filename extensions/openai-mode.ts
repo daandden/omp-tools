@@ -1,6 +1,5 @@
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
-import description from "./generate-image-openai.md" with { type: "text" };
 import { hasAlphaChannel, hasTransparentPixels, orientedSize } from "./image-checks";
 import { imageFormatOf, mimeTypeOf } from "./image-codecs";
 import { type ImageMode, referenceCount } from "./image-modes";
@@ -35,6 +34,10 @@ function normalizedUrl(url: string): string {
 	return url.trim().replace(/\/+$/, "");
 }
 
+const CODEX_OPTION =
+	"The user can instead ask for Codex mode, which uses the ChatGPT/Codex login, or change the omp-tools setting " +
+	"defaultImageGenerationMode. Do not switch to Codex mode unless the user asks.";
+
 async function openaiAccess(ctx: ExtensionContext, signal: AbortSignal | undefined): Promise<SunburstAccess> {
 	const registry = ctx.modelRegistry;
 	const baseUrl = registry.getProviderBaseUrl("openai") ?? process.env.OPENAI_BASE_URL?.trim();
@@ -42,15 +45,14 @@ async function openaiAccess(ctx: ExtensionContext, signal: AbortSignal | undefin
 		throw new Error(
 			`The openai provider is configured for ${baseUrl}. OpenAI mode sends images only to the first-party API ` +
 				`at ${FIRST_PARTY_BASE_URL}, so it does not send that provider's credential. Remove the custom base URL ` +
-				"for openai, or set defaultImageGenerationMode to codex and start a new session.",
+				`for openai. ${CODEX_OPTION}`,
 		);
 	}
 	const apiKey = await registry.getApiKeyForProvider("openai", ctx.sessionManager.getSessionId(), { signal });
 	if (!apiKey) {
 		throw new Error(
 			"OpenAI mode needs an OpenAI API key for the openai provider: set OPENAI_API_KEY or store an openai key in " +
-				"OMP. A ChatGPT/Codex login (openai-codex) does not cover the public Images API. To use the Codex login " +
-				"instead, set the omp-tools setting defaultImageGenerationMode to codex and start a new session.",
+				`OMP. A ChatGPT/Codex login (openai-codex) does not cover the public Images API. ${CODEX_OPTION}`,
 		);
 	}
 	const configured = (await registry.getProviderHeaders("openai")) ?? {};
@@ -363,7 +365,7 @@ export function openaiMode(type: ExtensionAPI["arktype"], svgAuthorModel: unknow
 	});
 	return {
 		id: "openai",
-		description: description.trimEnd(),
+		label: "OpenAI mode",
 		parameters,
 		callFacts: args => {
 			const facts: string[] = [];
