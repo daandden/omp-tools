@@ -291,7 +291,7 @@ follow the card. `PI_TUI_NATIVE=0` keeps the text Picker.
 The plugin replaces native `generate_image`. The prompt goes to the image
 service unchanged, with no chat model in between. The model sees raster
 results and gets a path to read for SVG results. The plugin setting
-`imageGenerationMode` picks one of two Image generation modes:
+`defaultImageGenerationMode` picks one of two Image generation modes:
 
 - `openai` (the default): GPT Image 2.6 Sunburst through the public OpenAI
   Images API (`api.openai.com/v1/images/generations` and `/edits`), with an
@@ -301,17 +301,21 @@ results and gets a path to read for SVG results. The plugin setting
   ChatGPT login, called the way the official Codex CLI calls it, drawing on
   the account's Codex image allowance.
 
-Installations without the setting use OpenAI mode. To keep the Codex behavior,
-run:
+To use Codex mode, run:
 
 ```sh
-omp plugin config set omp-tools imageGenerationMode codex
+omp plugin config set omp-tools defaultImageGenerationMode codex
 ```
 
-The mode is read when a session starts, including `/new`, `/resume`, and
-`/fork`, so a change applies to the next session. A running call keeps its
-mode. An invalid value, including an empty one, makes every call fail with the
-fix instead of picking a service.
+If you previously set the old key, image calls fail until you set the new
+key. Run the command in the error to keep your previous mode. Set the new key
+in `.omp/plugin-overrides.json` instead if you want a project override.
+
+OMP reads the setting at session start, including `/new`, `/resume`, and
+`/fork`. Project overrides win over global settings. If neither key is set,
+or the new key is `null`, the tool uses OpenAI mode. A running call keeps its
+mode. An invalid value, including an empty string, makes every call fail with
+the fix.
 
 Neither mode falls back to the other, to native `generate_image`, or to
 another provider when it fails, because a fallback would change the credential

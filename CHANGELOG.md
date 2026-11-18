@@ -33,15 +33,12 @@
 - In Tern, the Picker, the `/btw` panel, and the English coach panel use the
   active omp theme's background, text, accent, and diff colors instead of
   Tern's own palette, and follow omp theme changes.
-- `generate_image` has two Image generation modes, set by the new plugin
-  setting `imageGenerationMode`. `openai`, the default, uses GPT Image 2.6
-  Sunburst through the public OpenAI Images API with the `openai` API key,
-  billed to that API organization: OpenAI spends Promotional API credits
+- `generate_image` has two Image generation modes. `openai`, the default,
+  uses GPT Image 2.6 Sunburst through the public OpenAI Images API with the
+  `openai` API key. OpenAI spends that organization's Promotional API credits
   first and then purchased credits, with no free-only guarantee. `codex` keeps
-  the earlier Codex Images behavior and arguments. Installations without the
-  setting move to OpenAI mode; run
-  `omp plugin config set omp-tools imageGenerationMode codex` to keep Codex.
-  The mode applies to new sessions, and a failure never switches modes.
+  the earlier Codex Images behavior and arguments. A failure never switches
+  modes.
 - OpenAI mode supports `n` up to 10 (every raster image is saved and shown),
   `quality` up to `max`, standard and custom sizes, `background`,
   `output_format` and `output_compression`
@@ -81,6 +78,14 @@
   btw, and the Picker draft. The feature gets OMP's native answer, so Ratchet
   still records an approval only when you pick Approve, and Esc answers
   nothing.
+
+### Changed
+
+- Renamed `imageGenerationMode` to `defaultImageGenerationMode`. If you set
+  only the old key, image calls fail with the command that preserves your
+  mode. For example, run
+  `omp plugin config set omp-tools defaultImageGenerationMode codex` for
+  Codex mode, then start a new session.
 
 ### Fixed
 

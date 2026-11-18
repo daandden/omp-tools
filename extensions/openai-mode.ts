@@ -42,7 +42,7 @@ async function openaiAccess(ctx: ExtensionContext, signal: AbortSignal | undefin
 		throw new Error(
 			`The openai provider is configured for ${baseUrl}. OpenAI mode sends images only to the first-party API ` +
 				`at ${FIRST_PARTY_BASE_URL}, so it does not send that provider's credential. Remove the custom base URL ` +
-				"for openai, or set imageGenerationMode to codex and start a new session.",
+				"for openai, or set defaultImageGenerationMode to codex and start a new session.",
 		);
 	}
 	const apiKey = await registry.getApiKeyForProvider("openai", ctx.sessionManager.getSessionId(), { signal });
@@ -50,7 +50,7 @@ async function openaiAccess(ctx: ExtensionContext, signal: AbortSignal | undefin
 		throw new Error(
 			"OpenAI mode needs an OpenAI API key for the openai provider: set OPENAI_API_KEY or store an openai key in " +
 				"OMP. A ChatGPT/Codex login (openai-codex) does not cover the public Images API. To use the Codex login " +
-				"instead, set the omp-tools setting imageGenerationMode to codex and start a new session.",
+				"instead, set the omp-tools setting defaultImageGenerationMode to codex and start a new session.",
 		);
 	}
 	const configured = (await registry.getProviderHeaders("openai")) ?? {};

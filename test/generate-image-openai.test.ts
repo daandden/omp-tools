@@ -19,6 +19,7 @@ import {
 	rgbaPixels,
 	savedImageFiles,
 	textOf,
+	writeGlobalPluginSettings,
 	writePluginSettings,
 } from "./support";
 
@@ -83,7 +84,7 @@ function openaiContext(options: FakeContextOptions = {}) {
 }
 
 async function openaiTool() {
-	return loadTool({ imageGenerationMode: "openai" });
+	return loadTool({ defaultImageGenerationMode: "openai" });
 }
 
 async function run(params: Record<string, unknown>, options: FakeContextOptions = {}) {
@@ -122,8 +123,12 @@ afterEach(() => {
 });
 
 describe("mode selection", () => {
-	test("an unset imageGenerationMode registers OpenAI mode", async () => {
-		const tool = await loadTool({ imageGenerationMode: null });
+	test.each([
+		["absent", {}],
+		["null", { defaultImageGenerationMode: null }],
+		["openai", { defaultImageGenerationMode: "openai" }],
+	])("a defaultImageGenerationMode of %s uses the OpenAI endpoint and API key", async (_case, settings) => {
+		const tool = await loadTool(settings);
 
 		expect(argumentNames(tool)).toContain("quality");
 		expect(argumentNames(tool)).not.toContain("transparent_background");
@@ -131,11 +136,11 @@ describe("mode selection", () => {
 		savedFiles.push(...outputPathsOf(result));
 
 		expect(requests.map(request => request.url)).toEqual([GENERATIONS_URL]);
+		expect(requests[0]?.headers.get("authorization")).toBe(`Bearer ${API_KEY}`);
 	});
 
-	test("imageGenerationMode codex keeps the four Codex arguments and the Codex endpoint", async () => {
-		const tool = await loadTool({ imageGenerationMode: "codex" });
-
+	test("defaultImageGenerationMode codex keeps the four Codex arguments, endpoint, and OAuth credential", async () => {
+		const tool = await loadTool({ defaultImageGenerationMode: "codex" });
 		expect(argumentNames(tool)).toEqual([
 			"num_last_images_to_include",
 			"prompt",
@@ -148,33 +153,91 @@ describe("mode selection", () => {
 		savedFiles.push(...outputPathsOf(result));
 
 		expect(requests[0]?.url).toBe("https://chatgpt.com/backend-api/codex/images/generations");
+		expect(requests[0]?.headers.get("authorization")).toBe(`Bearer ${codexToken()}`);
 	});
 
-	test("an invalid imageGenerationMode fails every call with a configuration error and sends nothing", async () => {
+	test("an invalid defaultImageGenerationMode fails every call with a configuration error and sends nothing", async () => {
 		for (const value of ["dall-e", ""]) {
-			const tool = await loadTool({ imageGenerationMode: value });
+			const tool = await loadTool({ defaultImageGenerationMode: value });
 
-			const error = await failure(tool.execute("c", { prompt: "a fox" }, undefined, undefined, openaiContext()));
+			for (const params of [{ prompt: "a fox" }, { prompt: "a fox", mode: "codex" }]) {
+				const error = await failure(tool.execute("c", params, undefined, undefined, openaiContext()));
 
-			expect(error.message).toContain("imageGenerationMode");
-			expect(error.message).toContain(JSON.stringify(value));
-			expect(error.message).toContain("openai");
-			expect(error.message).toContain("codex");
+				expect(error.message).toContain("omp plugin config set omp-tools defaultImageGenerationMode openai");
+				expect(error.message).toContain(JSON.stringify(value));
+				expect(error.message).toContain("codex");
+			}
 		}
 		expect(requests).toHaveLength(0);
+	});
+
+	test.each(["openai", "codex"])("old-key-only %s fails with the command that preserves the mode", async mode => {
+		respond = () => new Response(null, { status: 500 });
+		const tool = await loadTool({ imageGenerationMode: mode });
+		for (const params of [{ prompt: "a fox" }, { prompt: "a fox", mode }]) {
+			const error = await failure(tool.execute("c", params, undefined, undefined, openaiContext()));
+
+			expect(error.message).toContain(`omp plugin config set omp-tools defaultImageGenerationMode ${mode}\``);
+		}
+		expect(requests).toHaveLength(0);
+	});
+
+	test.each(["dall-e", "", null])("old-key-only %j explains the choices without picking a mode", async value => {
+		respond = () => new Response(null, { status: 500 });
+		const tool = await loadTool({ imageGenerationMode: value });
+		const error = await failure(tool.execute("c", { prompt: "a fox" }, undefined, undefined, openaiContext()));
+
+		expect(error.message).toContain(JSON.stringify(value));
+		expect(error.message).toContain('"openai" or "codex"');
+		expect(error.message).toContain("omp plugin config set omp-tools defaultImageGenerationMode <value>");
+		expect(requests).toHaveLength(0);
+	});
+
+	test.each([
+		["codex", undefined, "codex"],
+		["openai", "codex", "codex"],
+		["codex", "openai", "openai"],
+	])("global %s and project %s use %s mode", async (globalMode, projectMode, expectedMode) => {
+		const reset = writeGlobalPluginSettings({ defaultImageGenerationMode: globalMode });
+		try {
+			const tool = await loadTool(projectMode === undefined ? {} : { defaultImageGenerationMode: projectMode });
+			const result = await tool.execute("c", { prompt: "a fox" }, undefined, undefined, openaiContext());
+			savedFiles.push(...outputPathsOf(result));
+
+			expect(requests.map(request => request.url)).toEqual([
+				expectedMode === "codex" ? "https://chatgpt.com/backend-api/codex/images/generations" : GENERATIONS_URL,
+			]);
+			expect(requests[0]?.headers.get("authorization")).toBe(`Bearer ${expectedMode === "codex" ? codexToken() : API_KEY}`);
+		} finally {
+			reset();
+		}
+	});
+
+	test.each(["openai", null])("a new key set to %j ignores the old Codex value", async mode => {
+		const reset = writeGlobalPluginSettings({ imageGenerationMode: "codex" });
+		try {
+			const tool = await loadTool({ defaultImageGenerationMode: mode });
+			const result = await tool.execute("c", { prompt: "a fox" }, undefined, undefined, openaiContext());
+			savedFiles.push(...outputPathsOf(result));
+
+			expect(requests.map(request => request.url)).toEqual([GENERATIONS_URL]);
+			expect(requests[0]?.headers.get("authorization")).toBe(`Bearer ${API_KEY}`);
+		} finally {
+			reset();
+		}
 	});
 
 	test("a new session binds a changed mode while a running call keeps its own", async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "generate-image-project-"));
 		try {
-			const session = await loadSession({ imageGenerationMode: "openai" }, dir);
+			const session = await loadSession({ defaultImageGenerationMode: "openai" }, dir);
 			const before = session.tool();
 			let release: () => void = () => {};
 			respond = () => new Promise(resolve => (release = () => resolve(imagesResponse())));
 			const running = before.execute("c", { prompt: "first" }, undefined, undefined, openaiContext());
 			await Bun.sleep(0);
 
-			writePluginSettings(dir, { imageGenerationMode: "codex" });
+			writePluginSettings(dir, { defaultImageGenerationMode: "codex" });
 			respond = () => imagesResponse();
 			savedFiles.push(...outputPathsOf(await before.execute("c", { prompt: "same session" }, undefined, undefined, openaiContext())));
 			await session.emit("session_switch", { cwd: dir });
@@ -286,7 +349,7 @@ describe("credentials and routing", () => {
 		expect(error.message).toContain("openai");
 		expect(error.message).toContain("OPENAI_API_KEY");
 		expect(error.message).toContain("Codex");
-		expect(error.message).toContain("imageGenerationMode");
+		expect(error.message).toContain("defaultImageGenerationMode");
 		expect(requests).toHaveLength(0);
 	});
 
@@ -511,7 +574,7 @@ describe("results saved before Image generation modes", () => {
 
 	test("still show their saved path and quota warning in either mode", async () => {
 		for (const mode of ["openai", "codex"]) {
-			const tool = await loadTool({ imageGenerationMode: mode });
+			const tool = await loadTool({ defaultImageGenerationMode: mode });
 			const result = { content: [{ type: "text" as const, text: "Generated image saved." }], details: structuredClone(legacy) };
 
 			const view = tool.describeResult?.(result as never, { expanded: false, isPartial: false }, { prompt: "a fox" });
@@ -724,7 +787,7 @@ describe("SVG output", () => {
 	});
 
 	test("the svgAuthorModel setting picks the author, and a call's svg.model and reasoning effort win", async () => {
-		const tool = await loadTool({ imageGenerationMode: "openai", svgAuthorModel: "gpt-6-luna" });
+		const tool = await loadTool({ defaultImageGenerationMode: "openai", svgAuthorModel: "gpt-6-luna" });
 		for (const params of [{}, { svg: { model: "gpt-6.1-terra", reasoning: { effort: "low" } } }]) {
 			const result = await tool.execute("c", { prompt: "x", output_format: "svg", ...params }, undefined, undefined, openaiContext());
 			savedFiles.push(...outputPathsOf(result));

@@ -2,6 +2,15 @@
 
 Dated results of live OMP smokes through the `verify-omp-tools` skill, newest first. Add an entry after each smoke: the OMP and Tern versions, what was driven, what was observed, and the evidence path.
 
+- 2026-11-18, `defaultImageGenerationMode` rename: OMP 18.22.2, headless Tern
+  0.9.27, isolated `HOME` and agent dir, local SSE provider, and only this
+  checkout's `generate-image.ts` loaded with `-e`. With only
+  `imageGenerationMode: "codex"` in the isolated lockfile, the card showed
+  the command to set `defaultImageGenerationMode codex`. With the project
+  override `defaultImageGenerationMode: "openai"` and no OpenAI credential,
+  the card showed the OpenAI API key error naming the new key. Neither call
+  sent a paid image request. Evidence:
+  `/Users/vanguyen/.vstack/tmp/omp-tools-4663ab/implement-spec/20261118-agent-mode/69/smoke/`.
 - 2026-11-17, English coach padding: installed OMP 18.22.0, headless Tern
   0.9.26, local SSE provider. Measured in CSS pixels from the shots, the space
   between the panel edge and the text was 20.5px above and 24px below a long

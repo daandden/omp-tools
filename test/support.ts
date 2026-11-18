@@ -1,10 +1,18 @@
 import { type } from "@oh-my-pi/omptype";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
+import { getPluginsLockfile } from "@oh-my-pi/pi-utils";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { deflateSync, inflateSync } from "node:zlib";
 import generateImage from "../extensions/generate-image";
+import { pluginLockfile } from "./isolate-omp-home";
+
+export function writeGlobalPluginSettings(settings: Record<string, unknown>): () => void {
+	fs.mkdirSync(path.dirname(pluginLockfile), { recursive: true });
+	fs.writeFileSync(pluginLockfile, JSON.stringify({ settings: { "omp-tools": settings } }));
+	return () => fs.rmSync(pluginLockfile, { force: true });
+}
 
 export function writePluginSettings(dir: string, settings: Record<string, unknown>): void {
 	fs.mkdirSync(path.join(dir, ".omp"), { recursive: true });
@@ -23,6 +31,10 @@ export interface LoadedSession {
 
 /** Loads the extension as OMP does at startup, from a project whose plugin settings are `settings`. */
 export async function loadSession(settings: Record<string, unknown>, dir: string): Promise<LoadedSession> {
+	const lockfile = getPluginsLockfile();
+	if (lockfile !== pluginLockfile) {
+		throw new Error(`Expected OMP to read isolated plugin settings at ${pluginLockfile}, got ${lockfile}`);
+	}
 	writePluginSettings(dir, settings);
 	let registered: ToolDefinition | undefined;
 	const handlers = new Map<string, ((event: unknown, ctx: unknown) => unknown)[]>();
@@ -55,7 +67,7 @@ export async function loadSession(settings: Record<string, unknown>, dir: string
 
 /** Loads generate_image as a new OMP process would, from a project whose plugin settings are `settings`. */
 export async function loadTool(
-	settings: Record<string, unknown> = { imageGenerationMode: "codex" },
+	settings: Record<string, unknown> = { defaultImageGenerationMode: "codex" },
 	dir?: string,
 ): Promise<ToolDefinition> {
 	const project = dir ?? fs.mkdtempSync(path.join(os.tmpdir(), "generate-image-project-"));

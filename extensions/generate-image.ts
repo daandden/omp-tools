@@ -199,12 +199,25 @@ function registerConfigurationError(pi: ExtensionAPI, message: string) {
 
 async function registerConfiguredTool(pi: ExtensionAPI, cwd: string): Promise<void> {
 	const settings = await getPluginSettings("omp-tools", cwd);
-	const mode = selectedMode(settings.imageGenerationMode);
+	if ("imageGenerationMode" in settings && !("defaultImageGenerationMode" in settings)) {
+		const oldValue = settings.imageGenerationMode;
+		const command = "omp plugin config set omp-tools defaultImageGenerationMode";
+		const oldMode = MODE_VALUES.find(mode => mode === oldValue);
+		registerConfigurationError(
+			pi,
+			oldMode
+				? `The omp-tools setting imageGenerationMode was renamed. Run \`${command} ${oldMode}\`, then start a new session.`
+				: `The old omp-tools setting imageGenerationMode is ${JSON.stringify(oldValue)}. ` +
+					`Choose "openai" or "codex", then run \`${command} <value>\` and start a new session.`,
+		);
+		return;
+	}
+	const mode = selectedMode(settings.defaultImageGenerationMode);
 	if (typeof mode === "object") {
 		registerConfigurationError(
 			pi,
-			`The omp-tools setting imageGenerationMode is ${mode.invalid}, but it must be "openai" or "codex". Set it ` +
-				"with `omp plugin config set omp-tools imageGenerationMode openai` (or codex), then start a new session.",
+			`The omp-tools setting defaultImageGenerationMode is ${mode.invalid}, but it must be "openai" or "codex". ` +
+				"Set it with `omp plugin config set omp-tools defaultImageGenerationMode openai` (or codex), then start a new session.",
 		);
 		return;
 	}

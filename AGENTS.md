@@ -39,7 +39,7 @@ provider, priority 90).
   (view in `picker-btw-view.ts`) each own a `LazySideQuestionThread`, and
   `side-question-view.ts` turns the streamed events into ordered parts.
 - **`generate_image`.** `generate-image.ts` registers the `ImageMode` that
-  `imageGenerationMode` selects (`image-modes.ts`; Codex client in
+  `defaultImageGenerationMode` selects (`image-modes.ts`; Codex client in
   `codex-images.ts`; OpenAI rules in `openai-mode.ts` and client in
   `sunburst-images.ts`) and passes its output to `image-artifacts.ts`, which
   encodes and saves it.
@@ -162,7 +162,7 @@ omp plugin link "$PWD"
 ## Important Files
 
 - `package.json`: entry points (`omp.extensions`) and plugin settings
-  (`omp.settings`): `imageGenerationMode`, `svgAuthorModel`,
+  (`omp.settings`): `defaultImageGenerationMode`, `svgAuthorModel`,
   `sideQuestionModel`, `englishCoach`, `englishCoachMaxTokens`, and
   `englishCoachLanguage`. Code reads
   them with `getPluginSettings("omp-tools", cwd)`; a project's
@@ -196,9 +196,10 @@ Run `bun run check` and `bun test` after code changes. The suite is
 - `test/support.ts` captures `registerTool` and `on` on a fake
   `ExtensionAPI` (`loadSession`, `loadTool`, `fakeContext`), so tests drive
   `generate_image` through `execute` with `spyOn(globalThis, "fetch")` and
-  settings from a real project `.omp/plugin-overrides.json`. `loadTool`
-  defaults to Codex mode, unlike the plugin. Avoid `mock.module`: it leaks
-  into other test files.
+  settings from a real project `.omp/plugin-overrides.json`. `bunfig.toml`
+  preloads a temporary OMP home, so tests read global plugin settings only
+  from `writeGlobalPluginSettings`. `loadTool` defaults to Codex mode, unlike
+  the plugin. Avoid `mock.module`: it leaks into other test files.
 - UI tests call `Settings.init({ inMemory: true })` and `initTheme()` in
   `beforeAll` before building fake TUI contexts.
 - `test/helpers/side-question-session.ts` runs a real SDK mirror session

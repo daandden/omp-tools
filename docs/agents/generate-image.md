@@ -4,14 +4,16 @@ A new mode is an `ImageMode` entry (description, schema, card facts, `run`),
 not a branch in `generate-image.ts`. `generate-image.md` and
 `generate-image-openai.md` are the model-facing descriptions.
 
-- **Mode setting.** The async initializer reads `imageGenerationMode` with
-  `getPluginSettings("omp-tools", process.cwd())`; absent or null is
-  `openai`. OMP runs the initializer once per process, so `session_switch`
-  (`/new`, `/resume`, `/fork`) reads it again from `ctx.cwd` and registers the
-  tool anew. The host refreshes a re-registered name, and a running call keeps
-  the definition it started with. An invalid value, `""` included, registers a
-  tool whose every call fails with the fix. No mode falls back to another
-  (`docs/adr/0002-explicit-image-generation-modes.md`).
+- **Mode setting.** The async initializer reads `defaultImageGenerationMode`
+  with `getPluginSettings("omp-tools", process.cwd())`. Project overrides
+  beat global values. The old `imageGenerationMode` key blocks every call
+  with the migration fix unless the new key is present. With neither key or
+  with the new key set to `null`, the mode is `openai`. An invalid new value,
+  `""` included, blocks every call with the fix. OMP runs the initializer
+  once per process, so `session_switch` (`/new`, `/resume`, `/fork`) reads the
+  setting again from `ctx.cwd` and registers the tool anew. The host refreshes a
+  re-registered name, and a running call keeps the definition it started with.
+  No mode falls back to another (`docs/adr/0002-explicit-image-generation-modes.md`).
 - **Precedence.** Native `generate_image` is settings-gated. Eager extension
   registration makes native skip the taken name, and deferred registration
   replaces native through the host's late registration path. The plugin wins
