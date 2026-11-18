@@ -100,6 +100,8 @@
 - The missing OpenAI key, missing Codex login, and custom openai base URL
   errors say you can ask for the other mode or change
   `defaultImageGenerationMode`, instead of only the setting.
+- The `generate-image` skill explains when to switch modes and tells the
+  agent to pass `mode` on every call.
 
 ### Fixed
 
