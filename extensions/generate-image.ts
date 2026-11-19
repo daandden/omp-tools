@@ -4,7 +4,6 @@
 // OMP's argument validator deletes unknown keys from closed schemas before
 // `execute` runs, so the schema stays open and `execute` rejects them itself.
 import { pathToFileURL } from "node:url";
-import type { TypeProperty } from "@oh-my-pi/omptype";
 import type { AgentToolResult, ExtensionAPI, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
 import { getPluginSettings } from "@oh-my-pi/pi-coding-agent/extensibility/plugins/loader";
 import { formatApprovalArguments } from "@oh-my-pi/pi-coding-agent/tools/approval";
@@ -51,7 +50,6 @@ function cardContent<D>(
 	};
 }
 
-/** The head names the mode the call used; a call naming an invalid mode used none. */
 function imageHead<D>(
 	mode: ImageMode<D> | undefined,
 	args: Record<string, unknown>,
@@ -133,20 +131,11 @@ function argumentNames(schema: Schema): string[] {
 	return Object.keys(json.properties ?? {});
 }
 
-function properties(schema: Schema): readonly TypeProperty[] {
-	return (schema as unknown as { props: readonly TypeProperty[] }).props;
-}
-
-/**
- * Every mode's arguments plus `mode`, in one open schema. An argument several
- * modes take accepts what any of them accepts; `execute` applies the chosen
- * mode's own schema.
- */
 function sharedParameters(type: ExtensionAPI["arktype"], modes: Modes): Schema {
 	const merged = new Map<string, { required: boolean; schema: Schema; notes: { label: string; text: string }[] }>();
 	for (const id of MODE_VALUES) {
 		const mode = modes[id];
-		for (const property of properties(mode.parameters)) {
+		for (const property of mode.parameters.props) {
 			const key = String(property.key);
 			const note = { label: mode.label, text: property.value.description ?? "" };
 			const seen = merged.get(key);
@@ -177,23 +166,26 @@ function sharedParameters(type: ExtensionAPI["arktype"], modes: Modes): Schema {
 	return type(definition);
 }
 
-function registerImageTool(pi: ExtensionAPI, modes: Modes, defaultMode: ImageModeId) {
-	const parameters = sharedParameters(pi.arktype, modes);
-	const names = argumentNames(parameters);
-	const modeNames = { openai: argumentNames(modes.openai.parameters), codex: argumentNames(modes.codex.parameters) };
-	const otherMode = MODE_VALUES.find(id => id !== defaultMode);
+function callModeId(args: Record<string, unknown> | undefined, defaultMode?: ImageModeId): ImageModeId | undefined {
+	return args?.mode === undefined ? defaultMode : modeIdOf(args.mode);
+}
+
+function imageCards(
+	modes: Modes,
+	defaultMode?: ImageModeId,
+): Pick<ToolDefinition<Schema, GenerateImageDetails<object>>, "describeCall" | "describeResult"> & {
+	mergeCallAndResult: boolean;
+} {
 	const resultViews = new WeakMap<object, NativeToolView>();
-	/** A call's mode: its `mode`, else the default; undefined for an invalid `mode`. */
-	const callModeId = (args: Record<string, unknown> | undefined) =>
-		args?.mode === undefined ? defaultMode : modeIdOf(args.mode);
 	const modeOf = (id: ImageModeId | undefined) => (id ? modes[id] : undefined);
-	const definition: ToolDefinition<Schema, GenerateImageDetails<object>> = {
-		name: "generate_image",
-		label: "GenerateImage",
-		description: prompt.render(description, { defaultMode, otherMode }).trimEnd(),
-		parameters,
-		approval: "write",
-		describeCall: args => ({ tool: imageHead(modeOf(callModeId(args)), args ?? {}), body: promptSection(args ?? {}) }),
+	return {
+		// The result view replaces the call view. The host forwards
+		// `mergeCallAndResult` from the definition like `concurrency` in flexible-ask.ts.
+		mergeCallAndResult: true,
+		describeCall: args => ({
+			tool: imageHead(modeOf(callModeId(args, defaultMode)), args ?? {}),
+			body: promptSection(args ?? {}),
+		}),
 		describeResult: (result, _options, args) => {
 			const details = result.details;
 			const cached = details && resultViews.get(details);
@@ -202,18 +194,33 @@ function registerImageTool(pi: ExtensionAPI, modes: Modes, defaultMode: ImageMod
 			// takes the call's mode. Results saved before Image generation modes are
 			// Codex results without `mode`.
 			const id =
-				result.isError || !details ? callModeId(args) : "mode" in details ? modeIdOf(details.mode) : "codex";
+				result.isError || !details ? callModeId(args, defaultMode) : "mode" in details ? modeIdOf(details.mode) : "codex";
 			const view = describeImageResult(modeOf(id), result, args ?? {});
 			if (details) resultViews.set(details, view);
 			return view;
 		},
+	};
+}
+
+function registerImageTool(pi: ExtensionAPI, modes: Modes, defaultMode: ImageModeId) {
+	const parameters = sharedParameters(pi.arktype, modes);
+	const names = argumentNames(parameters);
+	const modeNames = { openai: argumentNames(modes.openai.parameters), codex: argumentNames(modes.codex.parameters) };
+	const otherMode = MODE_VALUES.find(id => id !== defaultMode);
+	const definition: ToolDefinition<Schema, GenerateImageDetails<object>> = {
+		name: "generate_image",
+		label: "GenerateImage",
+		description: prompt.render(description, { defaultMode, otherMode }).trimEnd(),
+		parameters,
+		approval: "write",
+		...imageCards(modes, defaultMode),
 		async execute(toolCallId, params: Record<string, unknown>, signal, onUpdate, ctx) {
 			const unknown = Object.keys(params).filter(key => !names.includes(key));
 			if (unknown.length > 0) {
 				throw new Error(`Unknown argument(s): ${unknown.join(", ")}. generate_image accepts only ${names.join(", ")}.`);
 			}
 			const { mode: _mode, ...modeParams } = params;
-			const modeId = callModeId(params);
+			const modeId = callModeId(params, defaultMode);
 			if (!modeId) throw new Error(`mode must be "openai" or "codex" (was ${JSON.stringify(params.mode)}).`);
 			const mode = modes[modeId];
 			const accepted = modeNames[modeId];
@@ -258,12 +265,13 @@ function registerImageTool(pi: ExtensionAPI, modes: Modes, defaultMode: ImageMod
 			};
 		},
 	};
-	// The approval prompt shows a native extension tool's arguments only
-	// through its own `formatApprovalDetails` (OMP 18.22.0 `approvalDetails`).
-	// The host forwards it from the definition, but the extension type omits it.
+	// For direct calls, OMP 18.22.0 `approvalDetails` reads arguments only
+	// from the tool's `formatApprovalDetails`. The host forwards the callback,
+	// but `ToolDefinition` omits it.
 	const formatApprovalDetails = (args: unknown): string[] => {
 		const call = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
-		const mode = modeOf(callModeId(call));
+		const id = callModeId(call, defaultMode);
+		const mode = id ? modes[id] : undefined;
 		const modeLine = !mode
 			? []
 			: call.mode === undefined
@@ -271,9 +279,7 @@ function registerImageTool(pi: ExtensionAPI, modes: Modes, defaultMode: ImageMod
 				: [`Mode: ${mode.label}`];
 		return [...modeLine, ...formatApprovalArguments(args, { showEmpty: true })];
 	};
-	// The result view replaces the call view (the host's `mergeCallAndResult`,
-	// forwarded from the definition like `concurrency` in flexible-ask.ts).
-	pi.registerTool(Object.assign(definition, { mergeCallAndResult: true, formatApprovalDetails }));
+	pi.registerTool(Object.assign(definition, { concurrency: "shared" as const, formatApprovalDetails }));
 }
 
 function selectedMode(value: unknown): ImageModeId | { invalid: string } {
@@ -281,33 +287,38 @@ function selectedMode(value: unknown): ImageModeId | { invalid: string } {
 	return modeIdOf(value) ?? { invalid: JSON.stringify(value) };
 }
 
-function registerConfigurationError(pi: ExtensionAPI, message: string) {
+function registerConfigurationError(pi: ExtensionAPI, modes: Modes, globalFix: string) {
+	const message = `${globalFix} If the value comes from a project override, set defaultImageGenerationMode in the project's ` +
+		".omp/plugin-overrides.json instead. Project overrides take precedence over global settings. Then start a new session.";
 	const parameters = pi.arktype({ prompt: pi.arktype("string").describe("Image or edit description.") });
-	const definition: ToolDefinition<typeof parameters> = {
+	const definition: ToolDefinition<Schema, GenerateImageDetails<object>> = {
 		name: "generate_image",
 		label: "GenerateImage",
 		description: `Not available: ${message}`,
 		parameters,
 		approval: "write",
+		...imageCards(modes),
 		async execute() {
 			throw new Error(message);
 		},
 	};
-	pi.registerTool(definition);
+	pi.registerTool(Object.assign(definition, { concurrency: "shared" as const }));
 }
 
 async function registerConfiguredTool(pi: ExtensionAPI, cwd: string): Promise<void> {
 	const settings = await getPluginSettings("omp-tools", cwd);
+	const modes = { openai: openaiMode(pi.arktype, settings.svgAuthorModel), codex: codexMode(pi.arktype) };
 	if ("imageGenerationMode" in settings && !("defaultImageGenerationMode" in settings)) {
 		const oldValue = settings.imageGenerationMode;
 		const command = "omp plugin config set omp-tools defaultImageGenerationMode";
 		const oldMode = MODE_VALUES.find(mode => mode === oldValue);
 		registerConfigurationError(
 			pi,
+			modes,
 			oldMode
-				? `The omp-tools setting imageGenerationMode was renamed. Run \`${command} ${oldMode}\`, then start a new session.`
+				? `The omp-tools setting imageGenerationMode was renamed. Run \`${command} ${oldMode}\`.`
 				: `The old omp-tools setting imageGenerationMode is ${JSON.stringify(oldValue)}. ` +
-					`Choose "openai" or "codex", then run \`${command} <value>\` and start a new session.`,
+					`Choose "openai" or "codex", then run \`${command} <value>\`.`,
 		);
 		return;
 	}
@@ -315,12 +326,13 @@ async function registerConfiguredTool(pi: ExtensionAPI, cwd: string): Promise<vo
 	if (typeof mode === "object") {
 		registerConfigurationError(
 			pi,
+			modes,
 			`The omp-tools setting defaultImageGenerationMode is ${mode.invalid}, but it must be "openai" or "codex". ` +
-				"Set it with `omp plugin config set omp-tools defaultImageGenerationMode openai` (or codex), then start a new session.",
+				"Set it with `omp plugin config set omp-tools defaultImageGenerationMode openai` (or codex).",
 		);
 		return;
 	}
-	registerImageTool(pi, { openai: openaiMode(pi.arktype, settings.svgAuthorModel), codex: codexMode(pi.arktype) }, mode);
+	registerImageTool(pi, modes, mode);
 }
 
 /**

@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import type { FluentType } from "@oh-my-pi/omptype";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { requestCodexImages } from "./codex-images";
 import type { ArtifactPolicy, FinalImage } from "./image-artifacts";
@@ -43,7 +44,7 @@ export interface ImageMode<Details = Record<string, unknown>> {
 	id: ImageModeId;
 	/** The mode's name on cards and in errors, such as "Codex mode". */
 	label: string;
-	parameters: Schema;
+	parameters: Schema & Pick<FluentType<object>, "props">;
 	/** The card head's facts about a call's arguments, such as its reference count. */
 	callFacts(args: Record<string, unknown>): string[];
 	/** Warnings shown on the result card, such as a near-limit quota. */

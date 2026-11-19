@@ -9,22 +9,26 @@ rendered with the Default image generation mode.
 - **Per-call mode.** One `generate_image` carries both entries' arguments plus
   `mode` (`openai` or `codex`). A call without `mode` uses the Default image
   generation mode (`docs/adr/20261117-agent-chosen-image-generation-mode.md`).
-  `execute` checks in this order, each before any request: unknown keys
-  (listing every accepted argument), an invalid `mode`, arguments the chosen
-  mode does not take (naming them and the mode), then the chosen mode's own
-  schema, which holds its bounds (Reference images: 5 in Codex mode, 16 in
-  OpenAI mode). The mode gets the arguments without `mode`. No call falls back
-  to the other mode or retries a request
-  (`docs/adr/0002-explicit-image-generation-modes.md`). The description tells
-  the agent to always pass `mode`, because the mounted `write xd://generate_image`
-  approval shows only the supplied JSON.
+  OMP 18.22 strips the placeholder values `null`, `""`, and `"null"` from
+  `mode` before the plugin sees them, so those calls also use the default.
+  OMP 18.22.0 validates the `mode` enum before `execute`. If a call supplies
+  both a non-placeholder mode outside the enum and an unknown key, the host
+  rejects the mode before the plugin can list accepted arguments. Once the
+  host accepts a call, `execute` rejects unknown keys, checks the mode,
+  rejects arguments that mode does not take, and checks the mode's own
+  schema. Reference image limits are 5 in Codex mode and 16 in OpenAI mode.
+  The mode gets the arguments without `mode`. No call falls back to the
+  other mode or retries a request
+  (`docs/adr/0002-explicit-image-generation-modes.md`).
 - **Mode setting.** The async initializer reads `defaultImageGenerationMode`
   with `getPluginSettings("omp-tools", process.cwd())`. Project overrides
   beat global values. The old `imageGenerationMode` key blocks every call
   with the migration fix unless the new key is present. With neither key or
   with the new key set to `null`, the default is `openai`. An invalid new
   value, `""` included, blocks every call with the fix, even a call that names
-  a `mode`. OMP runs the initializer once per process, so `session_switch`
+  a `mode`. The error points to the project's `.omp/plugin-overrides.json`
+  as well as the global command. Saved cards still render without a valid
+  default. OMP runs the initializer once per process, so `session_switch`
   (`/new`, `/resume`, `/fork`) reads the setting again from `ctx.cwd` and
   registers the tool anew. The host refreshes a re-registered name, and a
   running call keeps the definition and mode it started with.
@@ -40,13 +44,19 @@ rendered with the Default image generation mode.
 - **Cards and approval.** The card head's first fact is the mode label: the
   call's mode for the call card and error cards (OMP 18.22.2 stores a thrown
   error with `details: {}`), `details.mode` for results and previews, and
-  Codex mode for results saved before modes (no `mode`).
-  OMP 18.22.0 shows a native extension tool's arguments in the approval
+  Codex mode for results saved before modes (no `mode`). With invalid
+  settings, a call that omits `mode` has no mode label on its call or error
+  card because there is no valid default.
+  For direct calls, OMP 18.22.0 shows the arguments in the approval
   prompt only through the tool's own `formatApprovalDetails`, which the
   extension `ToolDefinition` type omits; the plugin attaches it like
   `mergeCallAndResult`. It shows `Mode: <label>` (with `the Default image
   generation mode` when `mode` is omitted) and the host's
   `formatApprovalArguments` output.
+  A mounted `write xd://generate_image` approval shows only the supplied
+  JSON. OMP 18.22.0 keeps the JSON key order and truncates the formatted
+  arguments at 2,000 characters. The tool description and prompting skill
+  tell the agent to put `mode` first so a long `prompt` cannot hide it.
 - **Results.** Raster images go in `content` only, never `details.images`
   (the TUI would show them twice). SVG returns a saved path and an instruction
   to read it, without image content. `details.outputs` lists each path, MIME

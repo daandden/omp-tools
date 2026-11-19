@@ -309,13 +309,17 @@ without `mode` uses the Default image generation mode, the plugin setting
 `defaultImageGenerationMode` (`openai` unless you change it). The tool
 description tells the agent your default and to use the other mode only when
 you ask for it or the task needs a feature only that mode has, such as an SVG
-logo in a Codex-default session. It also tells the agent to pass `mode` on
-every call. The tool card names the mode each call used. In an
-approval-gated session, the approval prompt for a `generate_image` call shows
-its arguments and the mode it will use. When `generate_image` is mounted as
-`xd://generate_image` (`tools.xdev`), the approval prompt shows only the JSON
-the agent wrote, so a call that leaves out `mode` there does not show the
-default.
+logo in a Codex-default session. It also tells the agent to pass `mode` as the
+first key in every call's arguments. The tool card names the mode each call
+used. In an approval-gated session, the approval prompt for a `generate_image`
+call shows its arguments and the mode it will use. When `generate_image` is
+mounted as `xd://generate_image` (`tools.xdev`), the approval prompt shows
+only the JSON the agent wrote. A call that leaves out `mode` there does not
+show the default.
+
+OMP 18.22 drops `null`, `""`, and `"null"` from `mode` before the plugin sees
+them. Those calls use the Default image generation mode, just like a call
+without `mode`.
 
 To make Codex mode the default, run:
 
@@ -325,8 +329,8 @@ omp plugin config set omp-tools defaultImageGenerationMode codex
 
 If you previously set the old key, image calls fail until you set the new
 key, even calls that name a `mode`. Run the command in the error to keep your
-previous mode. Set the new key in `.omp/plugin-overrides.json` instead if you
-want a project override.
+previous mode. If the old value comes from `.omp/plugin-overrides.json`, set
+the new key there instead.
 
 OMP reads the setting at session start, including `/new`, `/resume`, and
 `/fork`. Project overrides win over global settings. If neither key is set,

@@ -1,11 +1,9 @@
 /// <reference types="bun" />
-// Local OpenAI-compatible provider for the generate_image mode checks. A user
-// prompt gets one generate_image call with the arguments in
-// RUN_DIR/tool-args.json, read per request; a tool result gets a short reply.
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const dir = resolve(process.argv[2] ?? (() => { throw new Error("Usage: bun image-mode-provider.ts RUN_DIR"); })());
+const dir = resolve(process.argv[2] ?? (() => { throw new Error("Usage: bun image-mode-provider.ts RUN_DIR [--mounted]"); })());
+const mounted = process.argv[3] === "--mounted";
 mkdirSync(`${dir}/data/agent`, { recursive: true });
 mkdirSync(`${dir}/data/home`, { recursive: true });
 const server = Bun.serve({
@@ -17,23 +15,21 @@ const server = Bun.serve({
 		}
 		const body = (await request.json()) as Record<string, any>;
 		appendFileSync(`${dir}/requests.jsonl`, `${JSON.stringify({ at: Date.now(), body })}\n`);
-		const chunk = (delta: Record<string, unknown>, finish_reason: string | null = null) =>
-			`data: ${JSON.stringify({ id: "image-mode-smoke", object: "chat.completion.chunk", created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`;
-		const stream =
-			body.messages?.at(-1)?.role === "tool"
-				? chunk({ role: "assistant", content: "generate_image returned the shown result." }) + chunk({}, "stop")
-				: chunk({
-						role: "assistant",
-						tool_calls: [
-							{
-								index: 0,
-								id: `call_${Date.now()}`,
-								type: "function",
-								function: { name: "generate_image", arguments: readFileSync(`${dir}/tool-args.json`, "utf8").trim() },
-							},
-						],
-					}) + chunk({}, "tool_calls");
-		return new Response(`${stream}data: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
+		const chunk = (delta: Record<string, unknown>, finishReason: string | null = null) =>
+			`data: ${JSON.stringify({ id: "image-mode-smoke", object: "chat.completion.chunk", created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`;
+		const reply = (stream: string) =>
+			new Response(`${stream}data: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
+		if (body.messages?.at(-1)?.role === "tool") {
+			return reply(chunk({ role: "assistant", content: "generate_image returned the shown result." }) + chunk({}, "stop"));
+		}
+		const args = readFileSync(`${dir}/tool-args.json`, "utf8").trim();
+		const call = mounted
+			? { name: "write", arguments: JSON.stringify({ path: "xd://generate_image", content: args }) }
+			: { name: "generate_image", arguments: args };
+		return reply(chunk({
+			role: "assistant",
+			tool_calls: [{ index: 0, id: `call_${Date.now()}`, type: "function", function: call }],
+		}) + chunk({}, "tool_calls"));
 	},
 });
 const models = [{ id: "main", name: "main", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 4096 }];
@@ -43,6 +39,6 @@ await Bun.write(
 );
 await Bun.write(
 	`${dir}/smoke-config.yml`,
-	"advisor:\n  enabled: false\nmarketplace:\n  autoUpdate: off\ncompaction:\n  enabled: false\nretry:\n  enabled: false\n  modelFallback: false\nmodelRoles:\n  default: image-smoke/main\n  smol: image-smoke/main\n  tiny: image-smoke/main\n  slow: image-smoke/main\n  plan: image-smoke/main\n",
+	`tools:\n  xdev: ${mounted}\nadvisor:\n  enabled: false\nmarketplace:\n  autoUpdate: off\ncompaction:\n  enabled: false\nretry:\n  enabled: false\n  modelFallback: false\nmodelRoles:\n  default: image-smoke/main\n  smol: image-smoke/main\n  tiny: image-smoke/main\n  slow: image-smoke/main\n  plan: image-smoke/main\n`,
 );
 console.log(`ready: http://127.0.0.1:${server.port}`);

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, relative } from "node:path";
 
-// OMP captures the settings directory when the SDK loads.
+// OMP 18.22.0 resolves its settings directory when the SDK loads, so this preload runs first.
 const home = mkdtempSync(join(tmpdir(), "omp-tools-test-home-"));
 process.env.HOME = home;
 process.env.USERPROFILE = home;

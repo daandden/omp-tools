@@ -11,7 +11,7 @@ The prompt is used exactly as written, and the model sees nothing else: no conve
 
 ## Choose the Image generation mode
 
-The tool description names the user's Default image generation mode. A call without `mode` uses that default. Always pass `mode`: use the Default image generation mode unless a switch is needed. Use the other mode only when the user asks for it or the task needs a feature only that mode has. When a call fails, report the error; retry in the other mode only when the user asks.
+The tool description names the user's Default image generation mode. A call without `mode` uses that default. Always pass `mode` as the first key in the arguments. Use the Default image generation mode unless a switch is needed. Use the other mode only when the user asks for it or the task needs a feature only that mode has. When a call fails, report the error; retry in the other mode only when the user asks.
 
 - **Codex mode** (`codex`) uses the user's ChatGPT account's Codex image allowance. Codex mode does not take `size` or `quality`. Describe the shape in the prompt.
 - **OpenAI mode** (`openai`) uses the user's OpenAI API credits. Set `size` for an exact shape or resolution, `quality` for drafts or the best rendering, and `n` for alternatives. Leave `n`, `quality`, `complexity`, and previews at their defaults unless the task needs a change.
@@ -115,8 +115,10 @@ Check the result against every requirement in the prompt: coverage, text spellin
 - Rewrite a new-image prompt as one integrated description, not the old one with a patch added. If quality is `low`, add scene-level detail (lighting, materials, setting), not more elements.
 - Fix an edit one thing per call: send the result back as image 1 with the change and the full keep list.
 - If one part regressed, send the original and the draft with roles, and say which parts to take from each.
-- For regions that must stay pixel-identical, paste them back from the original with local tools. For an exact aspect ratio, set `size` in OpenAI mode; in Codex mode, crop.
-- Tell the user about anything the tool can't deliver: an exact match to official logo artwork, and in Codex mode vector output, exact pixel sizes, or a chosen image model or version.
+- For regions that must stay pixel-identical, paste them back from the original with local tools.
+- For an exact size or aspect ratio, pass `mode: "openai"` and set `size`. Crop a Codex result only if the user declines OpenAI mode.
+- For vector output, pass `mode: "openai"` and set `output_format: "svg"`. If the user declines OpenAI mode, tell them Codex mode returns raster images only.
+- Tell the user if the tool cannot deliver what they asked for, such as an exact match to official logo artwork or a specific image model or version.
 - Don't tell the user which image model made a result. The tool doesn't report it: in Codex mode the server picks the model, and in OpenAI mode the result only shows what was requested.
 
 ## Files

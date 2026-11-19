@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
 	argumentNames,
 	codexToken,
@@ -72,6 +73,17 @@ describe("per-call mode", () => {
 			expect(names).toContain("mode");
 			expect(names).toContain("transparent_background");
 			for (const name of ["size", "output_format", "n", "mask", "markup", "images", "svg"]) expect(names).toContain(name);
+		}
+	});
+
+	test("every registration declares shared concurrency to OMP", async () => {
+		for (const settings of [
+			{ defaultImageGenerationMode: "openai" },
+			{ defaultImageGenerationMode: "codex" },
+			{ imageGenerationMode: "codex" },
+			{ defaultImageGenerationMode: "dall-e" },
+		]) {
+			expect(await loadTool(settings)).toHaveProperty("concurrency", "shared");
 		}
 	});
 
@@ -242,6 +254,35 @@ describe("cards name the mode each call used", () => {
 		expect(meta(view)).toEqual(["Codex mode", "1254x1254", "quality low"]);
 		expect(JSON.stringify(view)).toContain(legacy.quotaWarning);
 	});
+
+	test.each([
+		["legacy-only", { imageGenerationMode: "codex" }],
+		["invalid default", { defaultImageGenerationMode: "dall-e" }],
+	])("%s settings keep saved image cards and links available", async (_label, settings) => {
+		const tool = await loadTool(settings);
+		const saved = path.join(os.tmpdir(), "omp-image-saved.webp");
+		const args = { prompt: "a fox", mode: "codex", transparent_background: true };
+		const legacy = { path: saved, size: "1254x1254" };
+		const tagged = { mode: "codex", outputs: [{ path: saved, mimeType: "image/webp", size: "1254x1254" }] };
+
+		for (const details of [legacy, tagged]) {
+			const view = tool.describeResult?.({ content: [], details } as never, done, { prompt: "a fox" });
+
+			expect(JSON.stringify(view) ?? "").toContain(`"href":"${pathToFileURL(saved).href}"`);
+			expect(meta(view)).toEqual(["Codex mode", "1254x1254"]);
+		}
+		expect(meta(tool.describeCall?.(args, done))).toEqual(["Codex mode", "transparent"]);
+		const preview = { content: [], details: { stage: "preview", mode: "openai", previews: 1 } };
+		const previewView = tool.describeResult?.(preview as never, { ...done, isPartial: true }, { prompt: "a fox", background: "transparent" });
+		expect(meta(previewView)).toEqual(["OpenAI mode", "transparent"]);
+		expect(JSON.stringify(previewView)).toContain("Preview 1, in progress");
+		const error = { content: [{ type: "text" as const, text: "Past call failed." }], details: {}, isError: true };
+		const errorView = tool.describeResult?.(error as never, done, args);
+		expect(meta(errorView)).toEqual(["Codex mode", "transparent"]);
+		expect(errorView).toHaveProperty("tone", "error");
+		expect(JSON.stringify(errorView)).toContain("Past call failed.");
+		expect(requests).toHaveLength(0);
+	});
 });
 
 describe("approval prompt", () => {
@@ -251,7 +292,7 @@ describe("approval prompt", () => {
 		return typeof details === "string" ? [details] : details;
 	}
 
-	test("a native call with mode shows that mode and the call's arguments", async () => {
+	test("a direct call with mode shows that mode and the call's arguments", async () => {
 		const lines = await approvalLines("codex", { prompt: "a fox logo", mode: "openai", output_format: "svg" });
 
 		expect(lines[0]).toContain("OpenAI mode");
@@ -266,7 +307,7 @@ describe("approval prompt", () => {
 	test.each([
 		["codex", "Codex mode"],
 		["openai", "OpenAI mode"],
-	])("a native call without mode shows the default %s as the mode it will use", async (defaultMode, label) => {
+	])("a direct call without mode shows the default %s as the mode it will use", async (defaultMode, label) => {
 		const lines = await approvalLines(defaultMode, { prompt: "a fox" });
 
 		expect(lines[0]).toContain(label);

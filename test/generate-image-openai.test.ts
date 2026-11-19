@@ -122,7 +122,6 @@ afterEach(() => {
 	for (const file of savedFiles) fs.rmSync(file, { force: true });
 });
 
-/** Both modes' arguments plus `mode`, registered whatever the default. */
 const SHARED_ARGUMENTS = [
 	"background",
 	"complexity",
@@ -185,6 +184,8 @@ describe("mode selection", () => {
 				const error = await failure(tool.execute("c", params, undefined, undefined, openaiContext()));
 
 				expect(error.message).toContain("omp plugin config set omp-tools defaultImageGenerationMode openai");
+				expect(error.message).toContain("set defaultImageGenerationMode in the project's .omp/plugin-overrides.json instead");
+				expect(error.message).toContain("Project overrides take precedence over global settings.");
 				expect(error.message).toContain(JSON.stringify(value));
 				expect(error.message).toContain("codex");
 			}
@@ -199,6 +200,8 @@ describe("mode selection", () => {
 			const error = await failure(tool.execute("c", params, undefined, undefined, openaiContext()));
 
 			expect(error.message).toContain(`omp plugin config set omp-tools defaultImageGenerationMode ${mode}\``);
+			expect(error.message).toContain("set defaultImageGenerationMode in the project's .omp/plugin-overrides.json instead");
+			expect(error.message).toContain("Project overrides take precedence over global settings.");
 		}
 		expect(requests).toHaveLength(0);
 	});
@@ -211,6 +214,8 @@ describe("mode selection", () => {
 		expect(error.message).toContain(JSON.stringify(value));
 		expect(error.message).toContain('"openai" or "codex"');
 		expect(error.message).toContain("omp plugin config set omp-tools defaultImageGenerationMode <value>");
+		expect(error.message).toContain("set defaultImageGenerationMode in the project's .omp/plugin-overrides.json instead");
+		expect(error.message).toContain("Project overrides take precedence over global settings.");
 		expect(requests).toHaveLength(0);
 	});
 

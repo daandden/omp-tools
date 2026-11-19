@@ -64,7 +64,7 @@
   use the other mode only when you ask or the task needs a feature only that
   mode has. Arguments the chosen mode does not take fail before any request.
   The tool card names each call's mode, and the approval prompt shows a
-  native call's arguments and the mode it will use. No call falls back to the
+  direct call's arguments and the mode it will use. No call falls back to the
   other mode.
 
 - Added `sideQuestionModel` to the plugin settings, default `@smol`, for both
@@ -101,10 +101,13 @@
   errors say you can ask for the other mode or change
   `defaultImageGenerationMode`, instead of only the setting.
 - The `generate-image` skill explains when to switch modes and tells the
-  agent to pass `mode` on every call.
+  agent to pass `mode` as the first argument key on every call.
 
 ### Fixed
 
+- Saved `generate_image` cards keep their links and mode details even when
+  the Default image generation mode setting needs to be fixed. The error
+  now points to `.omp/plugin-overrides.json` as well as the global command.
 - `ask` loads again on OMP 18.22.0, which moved the form picture loader that
   the Picker imported. Updated the SDK types to OMP 18.22.0.
 - The Picker's Submit review in Tern keeps answers visible when an option

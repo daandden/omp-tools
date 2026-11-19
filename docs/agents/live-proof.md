@@ -2,6 +2,18 @@
 
 Dated results of live OMP smokes through the `verify-omp-tools` skill, newest first. Add an entry after each smoke: the OMP and Tern versions, what was driven, what was observed, and the evidence path.
 
+- 2026-11-19, image mode review fixes: OMP 18.22.0 in headless Tern
+  0.9.28, with an isolated home and a local provider. The same direct call
+  omitted `mode` before and after a project override change and `/new`.
+  Approval named Codex mode first and OpenAI mode after `/new`, both as the
+  Default image generation mode. Mounted `write xd://generate_image` approval
+  showed `"mode": "openai"` before a truncated 2,520-character prompt.
+  All three approvals were denied before any image request. A separate
+  SDK 18.22.0 replay rendered pre-mode and mode-tagged results with linked
+  paths under legacy-only and invalid defaults, while execution failed with
+  the setting fix.
+  Evidence:
+  `/Users/vanguyen/.vstack/tmp/omp-tools-4663ab/implement-spec/20261118-agent-mode/review-fix/`.
 - 2026-11-18, per-call `mode`: OMP 18.22.2, headless Tern 0.9.27, isolated
   `HOME` and agent dir without OpenAI or Codex credentials, the project
   default `codex`, only this checkout's `generate-image.ts` loaded with `-e`,
