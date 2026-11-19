@@ -64,6 +64,10 @@ _Avoid_: custom image tool, image wrapper
 The choice of image service and billing source for **generate_image**. The two modes are **Codex mode** and **OpenAI mode**.
 _Avoid_: image provider (unqualified), image backend (for the mode)
 
+**Default image generation mode**:
+The **Image generation mode** that **generate_image** uses when a call does not name one, chosen by the user in the plugin's settings.
+_Avoid_: default provider, image provider
+
 **Codex mode**:
 The **Image generation mode** that uses a signed-in ChatGPT account's Codex image allowance through **Codex OAuth**.
 _Avoid_: free mode, API-credit mode

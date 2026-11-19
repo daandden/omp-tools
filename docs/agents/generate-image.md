@@ -1,24 +1,62 @@
 # `generate_image`
 
-A new mode is an `ImageMode` entry (description, schema, card facts, `run`),
-not a branch in `generate-image.ts`. `generate-image.md` and
-`generate-image-openai.md` are the model-facing descriptions.
+A new mode is an `ImageMode` entry (label, schema, card facts, card warnings,
+`run`), not a branch in `generate-image.ts`. Each entry owns its argument
+rules, credential, client, details, and error wording, and neither entry
+imports the other. `generate-image.md` is the one model-facing description,
+rendered with the Default image generation mode.
 
-- **Mode setting.** The async initializer reads `imageGenerationMode` with
-  `getPluginSettings("omp-tools", process.cwd())`; absent or null is
-  `openai`. OMP runs the initializer once per process, so `session_switch`
-  (`/new`, `/resume`, `/fork`) reads it again from `ctx.cwd` and registers the
-  tool anew. The host refreshes a re-registered name, and a running call keeps
-  the definition it started with. An invalid value, `""` included, registers a
-  tool whose every call fails with the fix. No mode falls back to another
+- **Per-call mode.** One `generate_image` carries both entries' arguments plus
+  `mode` (`openai` or `codex`). A call without `mode` uses the Default image
+  generation mode (`docs/adr/20261117-agent-chosen-image-generation-mode.md`).
+  OMP 18.22 strips the placeholder values `null`, `""`, and `"null"` from
+  `mode` before the plugin sees them, so those calls also use the default.
+  OMP 18.22.0 validates the `mode` enum before `execute`. If a call supplies
+  both a non-placeholder mode outside the enum and an unknown key, the host
+  rejects the mode before the plugin can list accepted arguments. Once the
+  host accepts a call, `execute` rejects unknown keys, checks the mode,
+  rejects arguments that mode does not take, and checks the mode's own
+  schema. Reference image limits are 5 in Codex mode and 16 in OpenAI mode.
+  The mode gets the arguments without `mode`. No call falls back to the
+  other mode or retries a request
   (`docs/adr/0002-explicit-image-generation-modes.md`).
+- **Mode setting.** The async initializer reads `defaultImageGenerationMode`
+  with `getPluginSettings("omp-tools", process.cwd())`. Project overrides
+  beat global values. The old `imageGenerationMode` key blocks every call
+  with the migration fix unless the new key is present. With neither key or
+  with the new key set to `null`, the default is `openai`. An invalid new
+  value, `""` included, blocks every call with the fix, even a call that names
+  a `mode`. The error points to the project's `.omp/plugin-overrides.json`
+  as well as the global command. Saved cards still render without a valid
+  default. OMP runs the initializer once per process, so `session_switch`
+  (`/new`, `/resume`, `/fork`) reads the setting again from `ctx.cwd` and
+  registers the tool anew. The host refreshes a re-registered name, and a
+  running call keeps the definition and mode it started with.
 - **Precedence.** Native `generate_image` is settings-gated. Eager extension
   registration makes native skip the taken name, and deferred registration
   replaces native through the host's late registration path. The plugin wins
   either way.
 - **Schema.** Keep the schema open: OMP's validator deletes unknown keys from
-  closed schemas (`pi-ai` `coerceArgsFromIssues`). `execute` rejects unknown
-  keys and checks the schema itself.
+  closed schemas (`pi-ai` `coerceArgsFromIssues`). The shared schema joins an
+  argument both modes take with `.or()`, so it accepts what either mode
+  accepts, and labels mode-only arguments `OpenAI mode only.` or
+  `Codex mode only.`.
+- **Cards and approval.** The card head's first fact is the mode label: the
+  call's mode for the call card and error cards (OMP 18.22.2 stores a thrown
+  error with `details: {}`), `details.mode` for results and previews, and
+  Codex mode for results saved before modes (no `mode`). With invalid
+  settings, a call that omits `mode` has no mode label on its call or error
+  card because there is no valid default.
+  For direct calls, OMP 18.22.0 shows the arguments in the approval
+  prompt only through the tool's own `formatApprovalDetails`, which the
+  extension `ToolDefinition` type omits; the plugin attaches it like
+  `mergeCallAndResult`. It shows `Mode: <label>` (with `the Default image
+  generation mode` when `mode` is omitted) and the host's
+  `formatApprovalArguments` output.
+  A mounted `write xd://generate_image` approval shows only the supplied
+  JSON. OMP 18.22.0 keeps the JSON key order and truncates the formatted
+  arguments at 2,000 characters. The tool description and prompting skill
+  tell the agent to put `mode` first so a long `prompt` cannot hide it.
 - **Results.** Raster images go in `content` only, never `details.images`
   (the TUI would show them twice). SVG returns a saved path and an instruction
   to read it, without image content. `details.outputs` lists each path, MIME

@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 async function run(params: Record<string, unknown>) {
-	const tool = await loadTool({ imageGenerationMode: "openai" });
+	const tool = await loadTool({ defaultImageGenerationMode: "openai" });
 	const result = await tool.execute("live", params, undefined, undefined, fakeContext({ credentials: { openai: apiKey } }));
 	savedFiles.push(...outputPathsOf(result));
 	return result;

@@ -9,7 +9,14 @@ Use `generate_image` for new images, for edits of attached, pasted, or earlier g
 
 The prompt is used exactly as written, and the model sees nothing else: no conversation, no earlier prompts. Before every call, check the prompt against the criteria below: all of **Every prompt**, plus each section whose trigger applies.
 
-The tool's arguments show its Image generation mode. With `transparent_background`, it is Codex mode: size, quality, and model can't be set, so the shape follows the prompt. With `size`, `quality`, and `complexity`, it is OpenAI mode (GPT Image 2.6 Sunburst), with no per-call image-model choice. Set `size` for an exact shape or resolution, `quality` for drafts or the best rendering, and `n` for alternatives. Each image costs the user's API credits, so leave `n`, `quality`, complexity, and previews at their defaults unless the task needs a change.
+## Choose the Image generation mode
+
+The tool description names the user's Default image generation mode. A call without `mode` uses that default. Always pass `mode` as the first key in the arguments. Use the Default image generation mode unless a switch is needed. Use the other mode only when the user asks for it or the task needs a feature only that mode has. When a call fails, report the error; retry in the other mode only when the user asks.
+
+- **Codex mode** (`codex`) uses the user's ChatGPT account's Codex image allowance. Codex mode does not take `size` or `quality`. Describe the shape in the prompt.
+- **OpenAI mode** (`openai`) uses the user's OpenAI API credits. Set `size` for an exact shape or resolution, `quality` for drafts or the best rendering, and `n` for alternatives. Leave `n`, `quality`, `complexity`, and previews at their defaults unless the task needs a change.
+
+Neither mode lets you choose the image model per call.
 
 In OpenAI mode, complexity controls planning separately from rendering quality and defaults to `high`. Leave it at the default for a new workflow. Use `high` for open layout decisions or dense text, and start with `low` for a one-detail edit. Check surrounding details for unwanted changes. Change quality or complexity one at a time; keep complexity fixed when comparing small-text legibility at different quality settings.
 
@@ -57,13 +64,13 @@ In OpenAI mode, complexity controls planning separately from rendering quality a
 - For an animated GIF, set `output_format: "gif"`. Describe the motion, give the subject a starting pose to return to, and say whether the camera moves. `frame_count` is 2–16, default 9; `frame_duration_ms` is 20–2000, default 200. Set `size` for each frame. GIF is for new images only, without Reference images, streaming, or compression. The model may see only the first frame, so inspect the saved animation with local tools before judging its motion.
 - For logos or icons that must scale or be recolored by editing paths, use `output_format: "svg"` and `n` 1 or omitted. SVG is for new images only, without Reference images, streaming, or compression. The tool uses the configured SVG author unless `svg.model` overrides it; `svg.reasoning.effort` controls author reasoning separately from image complexity. The result contains a saved path only. Read the SVG file to check the output.
 
-## Edits and reference images
+## Edits and Reference images
 
-References:
+Reference image sources:
 - `referenced_image_paths` when every image you need has a file, including earlier generated images (use the saved path). Paths must be absolute. The image being edited goes first.
 - `num_last_images_to_include` only for images without a path. Use the smallest N. Image 1 is the oldest of the N.
 - OpenAI mode also takes `images`: `{ image_url }` (an https or data URL) or `{ file_id }`, for images that live online or in OpenAI's file store.
-- Use one source per call, never two. Send as few references as the task needs. Codex mode takes up to 5; OpenAI mode up to 16.
+- Use one Reference image source per call. Send as few Reference images as the task needs. Codex mode takes up to 5 Reference images. OpenAI mode takes up to 16.
 
 Masks and markup (OpenAI mode):
 - `mask` limits an edit to the mask's transparent area. It needs an alpha channel and the format and size of the first reference. Name the masked region and its new content in the prompt as well.
@@ -108,8 +115,10 @@ Check the result against every requirement in the prompt: coverage, text spellin
 - Rewrite a new-image prompt as one integrated description, not the old one with a patch added. If quality is `low`, add scene-level detail (lighting, materials, setting), not more elements.
 - Fix an edit one thing per call: send the result back as image 1 with the change and the full keep list.
 - If one part regressed, send the original and the draft with roles, and say which parts to take from each.
-- For regions that must stay pixel-identical, paste them back from the original with local tools. For an exact aspect ratio, set `size` in OpenAI mode; in Codex mode, crop.
-- Tell the user about anything the tool can't deliver: an exact match to official logo artwork, and in Codex mode vector output, exact pixel sizes, or a chosen image model or version.
+- For regions that must stay pixel-identical, paste them back from the original with local tools.
+- For an exact size or aspect ratio, pass `mode: "openai"` and set `size`. Crop a Codex result only if the user declines OpenAI mode.
+- For vector output, pass `mode: "openai"` and set `output_format: "svg"`. If the user declines OpenAI mode, tell them Codex mode returns raster images only.
+- Tell the user if the tool cannot deliver what they asked for, such as an exact match to official logo artwork or a specific image model or version.
 - Don't tell the user which image model made a result. The tool doesn't report it: in Codex mode the server picks the model, and in OpenAI mode the result only shows what was requested.
 
 ## Files

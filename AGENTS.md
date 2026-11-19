@@ -38,10 +38,11 @@ provider, priority 90).
   mirror session. `btw.ts` (panel in `btw-panel.ts`) and `picker-btw.ts`
   (view in `picker-btw-view.ts`) each own a `LazySideQuestionThread`, and
   `side-question-view.ts` turns the streamed events into ordered parts.
-- **`generate_image`.** `generate-image.ts` registers the `ImageMode` that
-  `imageGenerationMode` selects (`image-modes.ts`; Codex client in
-  `codex-images.ts`; OpenAI rules in `openai-mode.ts` and client in
-  `sunburst-images.ts`) and passes its output to `image-artifacts.ts`, which
+- **`generate_image`.** `generate-image.ts` registers one tool with both
+  `ImageMode` entries' arguments plus `mode`, runs each call in the call's
+  `mode` or else the `defaultImageGenerationMode` (`image-modes.ts`; Codex
+  client in `codex-images.ts`; OpenAI rules in `openai-mode.ts` and client in
+  `sunburst-images.ts`), and passes its output to `image-artifacts.ts`, which
   encodes and saves it.
 - **English coach.** `english-coach.ts` observes interactive `input` without
   handling or transforming it. `english-coach-prompt.ts` prepares text and
@@ -162,15 +163,14 @@ omp plugin link "$PWD"
 ## Important Files
 
 - `package.json`: entry points (`omp.extensions`) and plugin settings
-  (`omp.settings`): `imageGenerationMode`, `svgAuthorModel`,
+  (`omp.settings`): `defaultImageGenerationMode`, `svgAuthorModel`,
   `sideQuestionModel`, `englishCoach`, `englishCoachMaxTokens`, and
   `englishCoachLanguage`. Code reads
   them with `getPluginSettings("omp-tools", cwd)`; a project's
   `.omp/plugin-overrides.json` overrides the global value.
 - `extensions/ask-dialog.ts`: the Picker component, the largest file.
 - Model-facing prompts in `extensions/`: `flexible-ask.md`, `btw.md`,
-  `picker-btw.md`, `generate-image.md`, `generate-image-openai.md`, and
-  `english-coach.md`.
+  `picker-btw.md`, `generate-image.md`, and `english-coach.md`.
 - `GLOSSARY.md`: canonical terms. `CHANGELOG.md`, `README.md`: user-facing.
 
 ## Runtime/Tooling Preferences
@@ -196,9 +196,10 @@ Run `bun run check` and `bun test` after code changes. The suite is
 - `test/support.ts` captures `registerTool` and `on` on a fake
   `ExtensionAPI` (`loadSession`, `loadTool`, `fakeContext`), so tests drive
   `generate_image` through `execute` with `spyOn(globalThis, "fetch")` and
-  settings from a real project `.omp/plugin-overrides.json`. `loadTool`
-  defaults to Codex mode, unlike the plugin. Avoid `mock.module`: it leaks
-  into other test files.
+  settings from a real project `.omp/plugin-overrides.json`. `bunfig.toml`
+  preloads a temporary OMP home, so tests read global plugin settings only
+  from `writeGlobalPluginSettings`. `loadTool` defaults to Codex mode, unlike
+  the plugin. Avoid `mock.module`: it leaks into other test files.
 - UI tests call `Settings.init({ inMemory: true })` and `initTheme()` in
   `beforeAll` before building fake TUI contexts.
 - `test/helpers/side-question-session.ts` runs a real SDK mirror session

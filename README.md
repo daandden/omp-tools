@@ -6,7 +6,7 @@ An Oh My Pi (OMP) plugin with four parts:
   a note on every option, pasted images, and answers kept when you press Esc.
 - `generate_image` has two Image generation modes: OpenAI mode (GPT Image 2.6
   Sunburst through the public OpenAI Images API) and Codex mode (the Codex
-  Images endpoint with a ChatGPT login).
+  Images endpoint with a ChatGPT login). The agent picks one per call.
 - `/btw <question>` asks a Side question that can look things up with
   read-only tools. `?` in the Picker asks one about the open question.
 - The English coach checks your English with `@tiny` in the background and
@@ -290,36 +290,67 @@ follow the card. `PI_TUI_NATIVE=0` keeps the text Picker.
 
 The plugin replaces native `generate_image`. The prompt goes to the image
 service unchanged, with no chat model in between. The model sees raster
-results and gets a path to read for SVG results. The plugin setting
-`imageGenerationMode` picks one of two Image generation modes:
+results and gets a path to read for SVG results. Each call runs in one of two
+Image generation modes:
 
-- `openai` (the default): GPT Image 2.6 Sunburst through the public OpenAI
-  Images API (`api.openai.com/v1/images/generations` and `/edits`), with an
-  OpenAI API key, billed to that key's API organization.
+- `openai`: GPT Image 2.6 Sunburst through the public OpenAI Images API
+  (`api.openai.com/v1/images/generations` and `/edits`), with an OpenAI API
+  key, billed to that key's API organization. Only OpenAI mode has SVG and GIF
+  output, exact sizes, `quality`, `n`, masks, markup, and up to 16 Reference
+  images.
 - `codex`: the Codex Images endpoint
   (`chatgpt.com/backend-api/codex/images/generations` and `/edits`) with a
   ChatGPT login, called the way the official Codex CLI calls it, drawing on
-  the account's Codex image allowance.
+  the account's Codex image allowance. It takes up to 5 Reference images and
+  `transparent_background`.
 
-Installations without the setting use OpenAI mode. To keep the Codex behavior,
-run:
+The agent picks the mode for one call with the `mode` argument. A call
+without `mode` uses the Default image generation mode, the plugin setting
+`defaultImageGenerationMode` (`openai` unless you change it). The tool
+description tells the agent your default and to use the other mode only when
+you ask for it or the task needs a feature only that mode has, such as an SVG
+logo in a Codex-default session. It also tells the agent to pass `mode` as the
+first key in every call's arguments. The tool card names the mode each call
+used. In an approval-gated session, the approval prompt for a `generate_image`
+call shows its arguments and the mode it will use. When `generate_image` is
+mounted as `xd://generate_image` (`tools.xdev`), the approval prompt shows
+only the JSON the agent wrote. A call that leaves out `mode` there does not
+show the default.
+
+OMP 18.22 drops `null`, `""`, and `"null"` from `mode` before the plugin sees
+them. Those calls use the Default image generation mode, just like a call
+without `mode`.
+
+To make Codex mode the default, run:
 
 ```sh
-omp plugin config set omp-tools imageGenerationMode codex
+omp plugin config set omp-tools defaultImageGenerationMode codex
 ```
 
-The mode is read when a session starts, including `/new`, `/resume`, and
-`/fork`, so a change applies to the next session. A running call keeps its
-mode. An invalid value, including an empty one, makes every call fail with the
-fix instead of picking a service.
+If you previously set the old key, image calls fail until you set the new
+key, even calls that name a `mode`. Run the command in the error to keep your
+previous mode. If the old value comes from `.omp/plugin-overrides.json`, set
+the new key there instead.
 
-Neither mode falls back to the other, to native `generate_image`, or to
+OMP reads the setting at session start, including `/new`, `/resume`, and
+`/fork`. Project overrides win over global settings. If neither key is set,
+or the new key is `null`, the default is OpenAI mode. A running call keeps its
+mode. An invalid value, including an empty string, makes every call fail with
+the fix.
+
+No call falls back to the other mode, to native `generate_image`, or to
 another provider when it fails, because a fallback would change the credential
 and the balance charged (`docs/adr/0002-explicit-image-generation-modes.md`).
+An error that the other mode avoids, such as a missing OpenAI key or Codex
+login, says you can ask for the other mode or change
+`defaultImageGenerationMode`, and tells the agent not to switch unless you
+ask.
 
-Each mode registers only its own arguments and rejects unknown ones. Requests
-time out after 5 minutes, cancelling the tool cancels the request, and the
-tool never retries a request.
+The tool lists both modes' arguments. A call that passes an argument its mode
+does not take fails before any request, naming the argument and the mode, and
+unknown arguments fail with the list of accepted ones. Requests time out after
+5 minutes, cancelling the tool cancels the request, and the tool never retries
+a request.
 
 ### OpenAI mode
 
@@ -342,7 +373,8 @@ tells the model not to retry. An ordinary rate limit says to wait.
 OpenAI mode always sends `gpt-image-2.6-sunburst`. There is no per-call
 `model` argument.
 
-All arguments except `prompt` are optional, and `null` counts as omitted:
+OpenAI mode takes these arguments. All except `prompt` are optional, and
+`null` counts as omitted:
 
 - `prompt`: the image or edit description, up to 32,000 characters.
 - `n`: 1–10 images. Every image is saved and returned, in the API's order.
@@ -419,12 +451,13 @@ author model. A call's `svg.model` overrides the setting.
 
 ### Codex mode
 
-Codex mode needs a ChatGPT login: log in to `openai-codex` with `/login`. The
-arguments match Codex's:
+Codex mode needs a ChatGPT login: log in to `openai-codex` with `/login`. It
+takes Codex's arguments:
 
 - `prompt` (required): the image or edit description.
 - `transparent_background`: request a transparent background.
-- `referenced_image_paths`: absolute paths of images to edit or draw from.
+- `referenced_image_paths`: up to 5 absolute paths of images to edit or draw
+  from.
 - `num_last_images_to_include` (1–5): use the last N images in the
   conversation, such as pasted images, tool results, and earlier generated
   images. It cannot be combined with `referenced_image_paths`.

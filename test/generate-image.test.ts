@@ -128,9 +128,9 @@ describe("arguments", () => {
 	test("rejects unknown arguments before any request", async () => {
 		const tool = await loadTool();
 
-		const call = tool.execute("c", { prompt: "x", size: "1024x1024" }, undefined, undefined, fakeContext());
+		const call = tool.execute("c", { prompt: "x", style: "vivid" }, undefined, undefined, fakeContext());
 
-		await expect(call).rejects.toThrow("Unknown argument(s): size.");
+		await expect(call).rejects.toThrow("Unknown argument(s): style.");
 		expect(requests).toHaveLength(0);
 	});
 

@@ -33,15 +33,12 @@
 - In Tern, the Picker, the `/btw` panel, and the English coach panel use the
   active omp theme's background, text, accent, and diff colors instead of
   Tern's own palette, and follow omp theme changes.
-- `generate_image` has two Image generation modes, set by the new plugin
-  setting `imageGenerationMode`. `openai`, the default, uses GPT Image 2.6
-  Sunburst through the public OpenAI Images API with the `openai` API key,
-  billed to that API organization: OpenAI spends Promotional API credits
+- `generate_image` has two Image generation modes. `openai`, the default,
+  uses GPT Image 2.6 Sunburst through the public OpenAI Images API with the
+  `openai` API key. OpenAI spends that organization's Promotional API credits
   first and then purchased credits, with no free-only guarantee. `codex` keeps
-  the earlier Codex Images behavior and arguments. Installations without the
-  setting move to OpenAI mode; run
-  `omp plugin config set omp-tools imageGenerationMode codex` to keep Codex.
-  The mode applies to new sessions, and a failure never switches modes.
+  the earlier Codex Images behavior and arguments. A failure never switches
+  modes.
 - OpenAI mode supports `n` up to 10 (every raster image is saved and shown),
   `quality` up to `max`, standard and custom sizes, `background`,
   `output_format` and `output_compression`
@@ -59,6 +56,16 @@
   path to read, with author usage in `details.svgUsage`.
 - Added opt-in paid OpenAI live tests for a still image with complexity, SVG,
   and GIF. Run `OMP_TOOLS_LIVE_IMAGES=1 bun test live` with `OPENAI_API_KEY`.
+- `generate_image` takes an optional per-call `mode`, `openai` or `codex`,
+  and lists both modes' arguments, so a Codex-default session can make an
+  SVG, a GIF, or an exact-size image and an OpenAI-default session can use the
+  Codex allowance. A call without `mode` uses `defaultImageGenerationMode`.
+  The tool description tells the agent to pass `mode` on every call and to
+  use the other mode only when you ask or the task needs a feature only that
+  mode has. Arguments the chosen mode does not take fail before any request.
+  The tool card names each call's mode, and the approval prompt shows a
+  direct call's arguments and the mode it will use. No call falls back to the
+  other mode.
 
 - Added `sideQuestionModel` to the plugin settings, default `@smol`, for both
   `/btw` and Picker btw. It honors the role's thinking level and fallback chain.
@@ -82,8 +89,25 @@
   still records an approval only when you pick Approve, and Esc answers
   nothing.
 
+### Changed
+
+- Renamed `imageGenerationMode` to `defaultImageGenerationMode`, the mode for
+  calls without `mode`. If you set only the old key, image calls fail with the
+  command that preserves your mode, even calls that name a `mode`. For
+  example, run `omp plugin config set omp-tools defaultImageGenerationMode codex`
+  for Codex mode, then start a new session.
+- Codex mode rejects more than 5 `referenced_image_paths` before any request.
+- The missing OpenAI key, missing Codex login, and custom openai base URL
+  errors say you can ask for the other mode or change
+  `defaultImageGenerationMode`, instead of only the setting.
+- The `generate-image` skill explains when to switch modes and tells the
+  agent to pass `mode` as the first argument key on every call.
+
 ### Fixed
 
+- Saved `generate_image` cards keep their links and mode details even when
+  the Default image generation mode setting needs to be fixed. The error
+  now points to `.omp/plugin-overrides.json` as well as the global command.
 - `ask` loads again on OMP 18.22.0, which moved the form picture loader that
   the Picker imported. Updated the SDK types to OMP 18.22.0.
 - The Picker's Submit review in Tern keeps answers visible when an option

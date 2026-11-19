@@ -39,11 +39,11 @@
 				"default": "Vietnamese",
 				"description": "Your native language, such as Vietnamese or Japanese. The English coach names each mistake's pattern in it; corrections stay in English. Empty turns coaching off with a warning. Applies at session start and on session switch."
 			},
-			"imageGenerationMode": {
+			"defaultImageGenerationMode": {
 				"type": "enum",
 				"values": ["openai", "codex"],
 				"default": "openai",
-				"description": "Service and billing for generate_image. openai uses GPT Image 2.6 Sunburst with the openai API key and the API organization's billing; codex uses the ChatGPT/Codex login's image allowance. Applies to new sessions."
+				"description": "Image generation mode for calls to generate_image that do not name a mode. openai uses GPT Image 2.6 Sunburst with the openai API key and the API organization's billing; codex uses the ChatGPT/Codex login's image allowance. Applies to new sessions."
 			},
 			"svgAuthorModel": {
 				"type": "string",
