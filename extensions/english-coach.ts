@@ -4,12 +4,12 @@ import { AgentRegistry, AgentSession, discoverSlashCommands, type ExtensionAPI, 
 import { resolveConfiguredModelPatterns } from "@oh-my-pi/pi-coding-agent/config/model-resolver";
 import { getPluginSettings } from "@oh-my-pi/pi-coding-agent/extensibility/plugins/loader";
 import type { Component, TUI } from "@oh-my-pi/pi-tui";
+import { matchesAppInterrupt } from "@oh-my-pi/pi-tui/keybinding-matchers";
 import instructions from "./english-coach.md" with { type: "text" };
 import { type CoachMistake, coachCorrection } from "./english-coach-diff";
 import { type CoachView, EnglishCoachPanel } from "./english-coach-panel";
 import { checkCoachPlaceholders, prepareCoachPrompt, type PreparedCoachPrompt } from "./english-coach-prompt";
 import { forwardCoachInput, observeCoachInput } from "./english-coach-input";
-import { isInterruptKey } from "./side-question-view";
 
 const WIDGET_KEY = "omp-tools.english-coach";
 
@@ -114,7 +114,7 @@ export default function englishCoach(pi: ExtensionAPI) {
 	};
 	// As /btw's panel: the interrupt key closes it only from an empty main editor, so a Picker or selector keeps its Esc.
 	const closeOnInterrupt = (ctx: ExtensionContext, data: string) => {
-		if (!shown || !isInterruptKey(data) || ctx.ui.getEditorText().trim() || tui?.getFocused() !== editorFocus) return undefined;
+		if (!shown || !matchesAppInterrupt(data) || ctx.ui.getEditorText().trim() || tui?.getFocused() !== editorFocus) return undefined;
 		clear(ctx);
 		return { consume: true };
 	};

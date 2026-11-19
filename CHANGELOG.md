@@ -102,6 +102,20 @@
   `defaultImageGenerationMode`, instead of only the setting.
 - The `generate-image` skill explains when to switch modes and tells the
   agent to pass `mode` as the first argument key on every call.
+- Updated the SDK types to OMP 19.0.0. In the classic TUI the `ask` tool
+  shows no pending call card, as native `ask` does since 19.0.0, because the
+  open Picker already shows the questions. Tern keeps native's folded card.
+- As native `ask` does since OMP 19.0.0, a timeout that leaves a field
+  failing its checks (an empty required field, a number out of bounds) now
+  returns "no answer was given" with no form data. A timeout with valid
+  values still submits them, marked as not the user's choice.
+- `ask` accepts a bare HTML string or the old `questions` list, as native
+  `ask` does since OMP 19.0.0, and asks it in the Picker.
+- OMP 19's `? <question>` shortcut asks a plugin Side question, because OMP
+  turns it into `/btw <question>` before the plugin sees it.
+- The Picker's buttons and key hints, the editors' field theme, and the
+  Esc, external editor, and submit keys now come from OMP instead of
+  plugin copies, so the Picker's buttons follow Tern's native button style.
 
 ### Fixed
 

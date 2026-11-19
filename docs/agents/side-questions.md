@@ -108,6 +108,10 @@ A Side question is a full agent run in a mirror session built the way OMP's
   `{ handled: true }` only for `source: "interactive"` in the TUI. Bare `/btw`,
   autocomplete, `side: true` file commands, the focused-subagent path (it
   skips `input` handlers), and RPC `btw` stay native.
+- OMP 19.0.0's `? <question>` composer shortcut rewrites the draft to
+  `/btw <question>` in `input-controller.ts` before input hooks run, so
+  `btw.ts` catches it like typed `/btw`. Native draws the composer's btw mode
+  color while the draft starts with `?`.
 - One `BtwCycle` per session holds the thread, and a later `/btw` follows up
   in it. `before_agent_start` (a main prompt) ends it; while an answer runs,
   it marks the thread closed so the answer finishes and shows first. Session

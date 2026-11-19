@@ -3,21 +3,30 @@
 Notes for changing `ask`, the Picker, its editors, Picker drafts, or host `askDialog` routing. Tern view rules shared with the panels are in `tern-views.md`.
 
 - `flexible-ask.ts` takes native's one argument, `html`, and refuses any other
-  key (`"+": "reject"`), so the old `questions` input gets a schema error, with
-  no alias. In the TUI (`ctx.mode === "tui"` and `ctx.hasUI`) it opens the
-  Picker through `ctx.ui.custom`. It requires `ctx.invokeTool` even on that
-  path, and fails with an explicit error when native delegation is
-  unavailable. An extension cannot restyle the native dialog, because
-  `ctx.invokeTool` runs it with the session UI.
+  key (`"+": "reject"`) in its schema. Like native since OMP 19.0.0, it sets
+  `lenientArgValidation`, so raw arguments reach `execute` on a schema
+  failure, and native's `recoverAskHtml` turns a bare string or the old
+  `questions` list into a form. In the TUI (`ctx.mode === "tui"` and
+  `ctx.hasUI`) it opens the Picker through `ctx.ui.custom`. It requires
+  `ctx.invokeTool` even on that path, and fails with an explicit error when
+  native delegation is unavailable. An extension cannot restyle the native
+  dialog, because `ctx.invokeTool` runs it with the session UI.
+- OMP 19.0.0's `askToolRenderer.renderCall` returns undefined: the open form
+  shows the questions, so the classic TUI draws no pending card (Tern's
+  `describeCall` still draws a folded one). The extension type wants a
+  component, so `renderCall` goes on the definition through `Object.assign`.
+  The cards find password fields only through `args.html`, and the host
+  hands them raw arguments, so `formArgs` gives them the recovered form.
 - **`/tree` re-answer.** Since OMP 18.18.3, picking an `ask` result in
   `/tree` runs native `AskTool`, not the registered `ask`, so it shows
   native's HTML form dialog, not the Picker. The new answer keeps native's
   form data and Notes on picked options, but not Notes on unpicked options,
   images, the Submit note, a Picker draft, or the Picker btw. Changing that
   needs an OMP source change, which ADR 0003 declines.
-- Outside the TUI (RPC, ACP, print, subagents), and for a form with no named
-  control, it calls `ctx.invokeTool(params, { signal, onUpdate })` so native
-  prompting, errors, and headless outcomes apply unchanged. Keep native `ask`
+- Outside the TUI (RPC, ACP, print, subagents), for arguments with no form,
+  and for a form with no named control, it calls
+  `ctx.invokeTool(params, { signal, onUpdate })` so native prompting, errors,
+  and headless outcomes apply unchanged. Keep native `ask`
   enabled for this, and replace legacy `omp-ask` installs instead of loading
   two wrappers.
 - `ask-form.ts` is the one place a form is interpreted. It parses with the
@@ -41,9 +50,10 @@ Notes for changing `ask`, the Picker, its editors, Picker drafts, or host `askDi
   so the open editor shows the text.
 - Manual Submit runs native `fieldError` and opens the first refused
   question, so invalid `min`/`max` and patterns are ignored as native ignores
-  them, and `step` and dates are not checked. The timeout submits the state
-  as it stands with `timedOut`, with no validation and no recommendation
-  filled in, as native does.
+  them, and `step` and dates are not checked. As native does since OMP
+  19.0.0, the timeout submits the state as it stands with `timedOut` and no
+  recommendation filled in only when every field passes `fieldError`;
+  otherwise the result is native's "no answer was given" with no form data.
 - Unlike native `ask` (`tools/ask.ts`), the Picker keeps `ask.timeout` in
   plan mode and does not speak the questions under `speech.enabled`.
 - Preserve `approval: "read"`, `concurrency: "exclusive"`, cancellation

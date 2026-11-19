@@ -1,6 +1,7 @@
 import { type Component, type DescribeContext, getKeybindings, type NativeNode, node, span, type TUI, text, truncateToWidth } from "@oh-my-pi/pi-tui";
+import { hintsRow, type NativeHint } from "@oh-my-pi/pi-tui/native/overlay";
 import { theme } from "@oh-my-pi/pi-tui/theme";
-import { hintsRow, hintText, type KeyHint, SCROLL_BOX_CSS, scrollBox } from "./ask-editor";
+import { hintText, SCROLL_BOX_CSS, scrollBox } from "./ask-editor";
 import { sheetMessage } from "./tern-theme";
 import { hasToolCalls, type SideQuestionTurn, SideQuestionTurnView } from "./side-question-view";
 
@@ -13,14 +14,13 @@ export interface BtwPanelState {
 	readonly revision: number;
 }
 
-function panelHints(state: BtwPanelState): KeyHint[] {
+function panelHints(state: BtwPanelState): NativeHint[] {
 	const esc = getKeybindings().getKeys("app.interrupt")[0] ?? "escape";
 	if (state.turns.at(-1)?.status === "running") return [{ keys: [esc], label: "to cancel" }];
-	const tools = state.turns.some(hasToolCalls);
-	return [
-		...(tools ? [{ keys: ["t"], label: state.toolsOpen ? "to fold tool calls" : "to show tool calls" }] : []),
-		{ keys: [esc], label: "to close" },
-	];
+	const tools: NativeHint[] = state.turns.some(hasToolCalls)
+		? [{ keys: ["t"], label: state.toolsOpen ? "to fold tool calls" : "to show tool calls" }]
+		: [];
+	return [...tools, { keys: [esc], label: "to close" }];
 }
 
 export class BtwPanel implements Component {

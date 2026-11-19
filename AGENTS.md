@@ -66,11 +66,12 @@ Before changing a part, read its notes in `docs/agents/`:
 Runtime value imports of `@oh-my-pi/*` resolve to the host's in-process
 modules through OMP's extension specifier shim. A compiled binary serves only
 the keys in its module registry; any other subpath can load a second SDK copy
-and fail. The compiled OMP 18.22.0 registry serves these roots and subpaths:
+and fail. The compiled OMP 19.0.0 registry serves these roots and subpaths:
 
 - `@oh-my-pi/pi-tui`, `/chrome`, `/render`, `/theme`, `/thinking`, `/media`,
   and every nested module, including `/html-form/*`, `/chat/svg-figure`,
-  `/native/blobs`, `/overlays/*`, and `/tools/*`. OMP 18.22.0 moved
+  `/native/blobs`, `/native/overlay`, `/chrome/form-theme`,
+  `/keybinding-matchers`, `/overlays/*`, and `/tools/*`. OMP 18.22.0 moved
   `/html-form/media` to `/media` (`loadFormImage` became `loadMedia`).
 - `@oh-my-pi/pi-coding-agent`, `/judgment`, `/modes/*`, `/tools/*`,
   `/utils/*`, `/session/*`, `/config/model-resolver`,
@@ -81,8 +82,8 @@ and fail. The compiled OMP 18.22.0 registry serves these roots and subpaths:
 
 Check a new subpath against the deployed binary before you import it. The
 `pi-tui` root exports the describe builders (`node`, `col`, `md`, `span`,
-`text`, `kbd`). `ask-dialog.ts` and `ask-editor.ts` mirror `actionButton` and
-`hintsRow` from `/native/overlay`, which OMP 18.13.3 did not serve. Type-only
+`text`, `kbd`). Import native helpers such as `actionButton`, `hintsRow`,
+`formTheme`, and the `keybinding-matchers` instead of copying them. Type-only
 imports such as `@oh-my-pi/pi-tui/tools/renderer` are erased and safe.
 `@oh-my-pi/pi-catalog` is not served, so `codex-images.ts` reimplements what
 it needs.

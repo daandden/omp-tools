@@ -1,7 +1,8 @@
 // The model sees only the content, never details, so every channel is labeled there.
 import type { AgentToolResult, AskToolDetails } from "@oh-my-pi/pi-coding-agent";
-import type { OptionNote } from "@oh-my-pi/pi-tui/html-form/data";
+import { fieldError, type OptionNote } from "@oh-my-pi/pi-tui/html-form/data";
 import {
+	type AskForm,
 	type AskFormAnswer,
 	type AskNote,
 	type AskOtherAnswer,
@@ -9,6 +10,9 @@ import {
 	imageContent,
 	otherAnswers,
 } from "./ask-form";
+
+/** Native `ask`'s text for a timeout that left a field failing its checks (OMP 19.0.0 `tools/ask.ts`). */
+const TIMED_OUT_UNANSWERED = "The ask timed out before the user answered its required fields; no answer was given.";
 
 export interface AskResultDetails extends AskToolDetails {
 	unpickedNotes?: OptionNote[];
@@ -30,7 +34,7 @@ function labeledBlock(indent: string, label: string, text: string): string[] {
 export function formatAskAnswer(answer: AskFormAnswer): string {
 	const lines = [
 		answer.timedOut
-			? "No answer before the timeout; submitted the form's current values automatically (not the user's choice; not validated, so required fields may be empty and values may break their bounds or pattern):"
+			? "No answer before the timeout; submitted the form's current values automatically (not the user's choice):"
 			: "User answers:",
 		JSON.stringify(answer.data, null, 2),
 	];
@@ -52,7 +56,14 @@ export function formatAskAnswer(answer: AskFormAnswer): string {
 	return lines.join("\n");
 }
 
-export function askToolResult(answer: AskFormAnswer): AgentToolResult<AskResultDetails> {
+export function askToolResult(form: AskForm, answer: AskFormAnswer): AgentToolResult<AskResultDetails> {
+	// As native: a timeout submits what the form holds only when every field passes its checks.
+	if (
+		answer.timedOut &&
+		form.questions.some((question, index) => fieldError(question.field, answer.questions[index]?.value) !== undefined)
+	) {
+		return { content: [{ type: "text", text: TIMED_OUT_UNANSWERED }], details: { answers: [], timedOut: true } };
+	}
 	const notes = answer.questions.flatMap(question => question.notes);
 	const picked = notes.filter(note => note.picked).map(optionNote);
 	const unpicked = notes.filter(note => !note.picked).map(optionNote);

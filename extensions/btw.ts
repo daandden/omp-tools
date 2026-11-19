@@ -1,12 +1,13 @@
 import type { ImageContent } from "@oh-my-pi/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import type { TUI } from "@oh-my-pi/pi-tui";
+import { matchesAppInterrupt } from "@oh-my-pi/pi-tui/keybinding-matchers";
 import { prompt } from "@oh-my-pi/pi-utils";
 import btwPrompt from "./btw.md" with { type: "text" };
 import { BtwPanel } from "./btw-panel";
 import { forwardCoachInput } from "./english-coach-input";
 import { LazySideQuestionThread, sideQuestionsAvailable } from "./side-question";
-import { answerInto, hasToolCalls, isInterruptKey, newTurn, type SideQuestionTurn } from "./side-question-view";
+import { answerInto, hasToolCalls, newTurn, type SideQuestionTurn } from "./side-question-view";
 
 const WIDGET_KEY = "omp-tools.btw";
 const BTW_COMMAND = /^\/btw(?:\s+([\s\S]*))?$/;
@@ -95,7 +96,7 @@ class BtwCycle {
 
 	#handleKey(data: string): { consume: boolean } | undefined {
 		if (!this.#shown || this.#ctx.ui.getEditorText().trim()) return undefined;
-		if (isInterruptKey(data)) {
+		if (matchesAppInterrupt(data)) {
 			if (this.#running()) this.#cancel();
 			else this.#hide();
 			return { consume: true };

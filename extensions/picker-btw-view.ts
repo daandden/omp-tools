@@ -10,12 +10,13 @@ import {
 	type TUI,
 	text,
 } from "@oh-my-pi/pi-tui";
+import { appExternalEditorKey, matchesAppInterrupt } from "@oh-my-pi/pi-tui/keybinding-matchers";
 import { theme } from "@oh-my-pi/pi-tui/theme";
-import { AnswerEditor, externalEditorKey, scrollBox, withoutSideBorders } from "./ask-editor";
+import { AnswerEditor, scrollBox, withoutSideBorders } from "./ask-editor";
 import type { AskImage } from "./ask-form";
 import { loadImagePaths, type PasteOutcome, type PastedImage, readClipboardPaste } from "./ask-images";
 import { type AskPickerBtw, numberImagesByAppearance, renderPickerBtwPrompt } from "./picker-btw";
-import { answerInto, isInterruptKey, newTurn, type SideQuestionTurn, SideQuestionTurnView } from "./side-question-view";
+import { answerInto, newTurn, type SideQuestionTurn, SideQuestionTurnView } from "./side-question-view";
 
 /** Rows reserved for the question box. */
 const QUESTION_EDITOR_ROWS = 4;
@@ -75,7 +76,7 @@ export class PickerBtwView {
 				{ keys: ["enter"], label: "ask" },
 				{ keys: ["escape"], label: "cancel answer, then back" },
 				{ keys: ["pageUp", "pageDown"], label: "scroll" },
-				{ keys: [externalEditorKey()], label: "external editor" },
+				{ keys: [appExternalEditorKey()], label: "external editor" },
 			],
 			onSubmit: text => this.#submit(text),
 			onCancel: () => this.#close(),
@@ -93,7 +94,7 @@ export class PickerBtwView {
 				// typed keeps its paste chips. The editor's own Esc jobs come first.
 				if (
 					this.#running() &&
-					isInterruptKey(data) &&
+					matchesAppInterrupt(data) &&
 					!editor.editor.isShowingAutocomplete() &&
 					!editor.editor.vimConsumesEscape()
 				) {

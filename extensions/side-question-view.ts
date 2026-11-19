@@ -1,8 +1,6 @@
 import {
 	card,
-	getKeybindings,
 	Markdown,
-	matchesKey,
 	md,
 	type NativeChild,
 	type NativeNode,
@@ -137,13 +135,6 @@ export async function answerInto(
 		clearRetry();
 	}
 	changed();
-}
-
-/** The interrupt key, as the editor reads it (raw Escape when unbound). */
-export function isInterruptKey(data: string): boolean {
-	const keybindings = getKeybindings();
-	if (keybindings.getKeys("app.interrupt").length > 0) return keybindings.matches(data, "app.interrupt");
-	return matchesKey(data, "escape") || matchesKey(data, "esc");
 }
 
 const STATUS_NOTE: Record<SideQuestionToolCall["status"], string> = {

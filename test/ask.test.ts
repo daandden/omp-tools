@@ -310,6 +310,17 @@ describe("ask in the Picker", () => {
 		expect(extras(answered).split("ship it friday").length).toBe(2);
 	});
 
+	test("a pre-HTML questions list opens in the Picker, as native accepts it", async () => {
+		const { tool } = loadAsk();
+		const session = tuiSession();
+		session.reset();
+		const params = { questions: [{ id: "store", question: "Which store?", options: [{ label: "SQLite" }, { label: "Postgres" }] }] };
+		const result = tool.execute("call-1", params as never, undefined, undefined, session.ctx) as Promise<AskResult>;
+		await session.press("j", ENTER);
+		expect(formData(await result)).toEqual({ store: "Postgres" });
+		expect(session.nativeCalls).toEqual([]);
+	});
+
 	test("an image pasted into a Note arrives as labeled image content, and only there", async () => {
 		const { tool } = loadAsk();
 		const session = tuiSession();
@@ -346,7 +357,7 @@ describe("ask in the Picker", () => {
 		expect(formData(await result)).toEqual({ store: "pg" });
 	});
 
-	test("at the timeout the current values go back marked automatic, even with a required choice empty", async () => {
+	test("at the timeout valid current values go back marked automatic", async () => {
 		settings.writeValue(cfgAskTimeout, 1, "override");
 		const { tool } = loadAsk();
 		const session = tuiSession();
@@ -354,7 +365,7 @@ describe("ask in the Picker", () => {
 			tool,
 			`<form>
 				<p>Which store?</p>
-				<label><input type="radio" name="store" value="sqlite" required> SQLite</label>
+				<label><input type="radio" name="store" value="sqlite"> SQLite</label>
 				<label><input type="radio" name="store" value="pg"> Postgres</label>
 				<label><input type="checkbox" name="keep" value="picks" checked> Picks</label>
 				<label><input type="checkbox" name="keep" value="notes"> Notes</label>
@@ -563,23 +574,15 @@ second line</textarea></label>
 		expect(formData(await result)).toEqual({ store: "sqlite", owner: "a@b.co", days: 9 });
 	});
 
-	test("at the timeout an empty required field and an out-of-range number go back as they stand, marked automatic", async () => {
+	test("at the timeout an empty required field or an out-of-range number gives no answer, as native", async () => {
 		settings.writeValue(cfgAskTimeout, 1, "override");
 		const { tool } = loadAsk();
-		const session = tuiSession();
-		const answered = await run(
-			tool,
-			`<form>
-				<label>Name <input name="name" required></label>
-				<label>Days <input type="number" name="days" min="1" max="10" value="99"></label>
-			</form>`,
-			session,
-		);
-		expect(formData(answered)).toEqual({ name: "", days: 99 });
-		expect(answered.details?.timedOut).toBe(true);
-		// The model learns which checks a timed-out answer may have skipped.
-		const told = textOf(answered).split("\n")[0]!;
-		for (const check of [/required/i, /bound/i, /pattern/i]) expect(told).toMatch(check);
+		for (const field of ['<input name="name" required>', '<input type="number" name="days" max="10" value="99">']) {
+			const session = tuiSession();
+			const answered = await run(tool, `<form><label>Field ${field}</label></form>`, session);
+			expect(textOf(answered)).toBe("The ask timed out before the user answered its required fields; no answer was given.");
+			expect(answered.details).toEqual({ answers: [], timedOut: true });
+		}
 	});
 
 	test("typed text survives picks, unpicks, the Submit tab, other fields, and Esc then F5", async () => {
@@ -791,6 +794,25 @@ describe("ask card", () => {
 		for (const shown of [tern, classic]) {
 			for (const part of ["too slow", "Redis", "keep these", "ship friday"]) expect(count(shown, part)).toBe(1);
 		}
+	});
+
+	test("a bare HTML string call masks its password on both cards", async () => {
+		const { tool } = loadAsk();
+		const session = tuiSession();
+		session.reset();
+		const html = `<form><label>Token <input type="password" name="token"></label></form>`;
+		const result = tool.execute("call-1", html as never, undefined, undefined, session.ctx) as Promise<AskResult>;
+		await session.press(ENTER);
+		await session.type("hunter2");
+		await session.press(ENTER, "l", ENTER);
+		const answered = await result;
+		expect(formData(answered)).toEqual({ token: "hunter2" });
+		const options = { expanded: true, isPartial: false };
+		const tern = viewText(tool.describeResult?.(answered as never, options as never, html as never) as NativeNode);
+		const classic = (tool.renderResult?.(answered as never, options as never, theme as never, html as never) as Component)
+			.render(120)
+			.join("\n");
+		for (const shown of [tern, classic]) expect(shown).not.toContain("hunter2");
 	});
 
 	test("an old questions[] call from a saved session reads as its saved text in both renderers", () => {

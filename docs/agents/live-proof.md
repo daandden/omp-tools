@@ -2,6 +2,18 @@
 
 Dated results of live OMP smokes through the `verify-omp-tools` skill, newest first. Add an entry after each smoke: the OMP and Tern versions, what was driven, what was observed, and the evidence path.
 
+- 2026-11-19, OMP 19.0.0 compatibility: OMP 19.0.0 in isolated headless
+  Tern 0.9.28 with `anthropic/claude-haiku-5-5`. Startup showed no
+  extension load errors. In Tern, the Picker's native buttons and keys picked,
+  noted, and submitted, and Tern showed native's folded pending Ask card.
+  The classic TUI showed no pending card, and the note editor showed its
+  hints and discarded the note on Esc. `ask.timeout` with an empty required
+  field returned native's no-answer sentence with `timedOut` and no data.
+  `? <question>` opened the plugin's Side question panel, which made a
+  `glob` call. The English coach corrected a mistake and closed on Esc. The
+  legacy `questions` array path was not exercised live, because Haiku sent the
+  list as a JSON string, which native also rejects. Evidence:
+  `/Users/vanguyen/.vstack/tmp/omp-tools-4663ab/omp19-compat/20261119-121019-66378/`.
 - 2026-11-19, image mode review fixes: OMP 18.22.0 in headless Tern
   0.9.28, with an isolated home and a local provider. The same direct call
   omitted `mode` before and after a project override change and `/new`.

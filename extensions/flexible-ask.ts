@@ -1,6 +1,13 @@
-import type { AgentToolResult, AskToolDetails, ExtensionAPI, ExtensionContext, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
+import type {
+	AgentToolResult,
+	AskToolDetails,
+	ExtensionAPI,
+	ExtensionContext,
+	ToolDefinition,
+} from "@oh-my-pi/pi-coding-agent";
 import { askToolRenderer, discoverSlashCommands, logger, settings } from "@oh-my-pi/pi-coding-agent";
 import { cfgAskNotify, cfgAskTimeout } from "@oh-my-pi/pi-coding-agent/modes/settings";
+import { recoverAskHtml } from "@oh-my-pi/pi-coding-agent/tools/ask";
 import { ToolAbortError } from "@oh-my-pi/pi-coding-agent/tools/tool-errors";
 import { type AutocompleteProvider, span, TERMINAL, text } from "@oh-my-pi/pi-tui";
 import type { NativeToolView } from "@oh-my-pi/pi-tui/tools/renderer";
@@ -107,7 +114,7 @@ async function askWithPicker(
 		ctx.abort();
 		throw new ToolAbortError("Ask tool was cancelled by the user");
 	}
-	return askToolResult(picked.answer);
+	return askToolResult(form, picked.answer);
 }
 
 export default function flexibleAsk(pi: ExtensionAPI) {
@@ -160,6 +167,21 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 		return drafts.drop();
 	});
 
+	// The cards read the form, and its password fields, only from `args.html`; raw legacy
+	// arguments reach them too, so give them the recovered form.
+	const legacyArgs = new WeakMap<object, { html?: string }>();
+	const formArgs = (args: unknown): { html?: string } => {
+		if (typeof args === "object" && args !== null && typeof (args as { html?: unknown }).html === "string") {
+			return args as { html: string };
+		}
+		const known = typeof args === "object" && args !== null ? legacyArgs.get(args) : undefined;
+		if (known) return known;
+		const html = recoverAskHtml(args);
+		const recovered = html === undefined ? {} : { html };
+		if (typeof args === "object" && args !== null) legacyArgs.set(args, recovered);
+		return recovered;
+	};
+
 	const definition: ToolDefinition<typeof parameters, AskResultDetails> = {
 		name: "ask",
 		label: "Ask",
@@ -168,22 +190,38 @@ export default function flexibleAsk(pi: ExtensionAPI) {
 		// Native ask is read-tier; omitted defaults to exec and would
 		// re-prompt/deny differently. Keep the tier.
 		approval: "read",
-		describeCall: args => askToolRenderer.describeCall(args),
-		describeResult: (result, _options, args) => describeAskResult(result, args),
-		renderCall: (args, options, theme) => askToolRenderer.renderCall(args, options, theme),
+		describeCall: args => askToolRenderer.describeCall(formArgs(args)),
+		describeResult: (result, _options, args) => describeAskResult(result, formArgs(args)),
 		renderResult: (result, options, theme, args) =>
-			askToolRenderer.renderResult({ content: result.content, details: classicDetails(result.details) }, options, theme, args),
+			askToolRenderer.renderResult(
+				{ content: result.content, details: classicDetails(result.details) },
+				options,
+				theme,
+				formArgs(args),
+			),
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			if (!ctx.invokeTool) throw new Error("Native ask tool unavailable for delegation");
 			if (ctx.mode !== "tui" || !ctx.hasUI) return ctx.invokeTool<AskToolDetails>(params, { signal, onUpdate });
-			const read = readHtmlForm(params.html);
-			if (read.kind === "empty") return ctx.invokeTool<AskToolDetails>(params, { signal, onUpdate });
+			// Raw arguments arrive here (`lenientArgValidation`): a bare string or the pre-HTML `questions`
+			// list asks too, as in native. Native answers what has no form with its own error.
+			const html = recoverAskHtml(params);
+			const read = html === undefined ? undefined : readHtmlForm(html);
+			if (!read || read.kind === "empty") return ctx.invokeTool<AskToolDetails>(params, { signal, onUpdate });
 			return askWithPicker(ctx, read.form, signal, pickerSession(ctx));
 		},
 	};
-	// `concurrency` and `mergeCallAndResult` are not part of the extension
+	// `concurrency`, `mergeCallAndResult`, and `lenientArgValidation` are not part of the extension
 	// ToolDefinition type, but RegisteredToolAdapter forwards definition keys.
 	// Native ask runs alone in its batch; two concurrent pickers would steal
 	// each other's editor slot. Its result card replaces the call card.
-	pi.registerTool(Object.assign(definition, { concurrency: "exclusive" as const, mergeCallAndResult: true }));
+	// OMP 19.0.0 draws no pending ask card, since the open form shows the questions: its
+	// `renderCall` returns undefined, which the host accepts but the extension type does not.
+	pi.registerTool(
+		Object.assign(definition, {
+			concurrency: "exclusive" as const,
+			mergeCallAndResult: true,
+			lenientArgValidation: true,
+			renderCall: askToolRenderer.renderCall,
+		}),
+	);
 }

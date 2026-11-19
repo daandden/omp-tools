@@ -43,9 +43,11 @@ import {
 	PanelDivider,
 	PanelRows,
 } from "@oh-my-pi/pi-tui/chrome";
+import { appExternalEditorKey } from "@oh-my-pi/pi-tui/keybinding-matchers";
+import { actionButton } from "@oh-my-pi/pi-tui/native/overlay";
 import { sanitizeCarriageReturns } from "@oh-my-pi/pi-tui/render";
 import { getMarkdownTheme, highlightCode, theme } from "@oh-my-pi/pi-tui/theme";
-import { AnswerEditor, externalEditorKey, SCROLL_BOX_CSS, scrollBox, withoutSideBorders } from "./ask-editor";
+import { AnswerEditor, SCROLL_BOX_CSS, scrollBox, withoutSideBorders } from "./ask-editor";
 import { sheetMessage } from "./tern-theme";
 import {
 	type AnswerState,
@@ -441,23 +443,6 @@ ${SCROLL_BOX_CSS}
 .sf-kv[data-role='omp-tools.ask-answers'] .sf-kv-k { white-space: normal; overflow-wrap: anywhere; }
 [data-role='omp-tools.ask-title'] { font: 600 13px/1.4 var(--sans); color: var(--t3); }
 `;
-
-/** A button that runs one key's path, drawn as pi-tui's `actionButton` (label and keycap). */
-function actionButton(label: string, act: string, key: string, options: { accent?: boolean; title?: string } = {}): NativeNode {
-	return node(
-		"row",
-		{
-			role: "omp.btn",
-			gap: "xs",
-			align: "center",
-			actions: { click: act },
-			title: options.title ?? label,
-			...(options.accent ? { tone: "accent" as const } : {}),
-		},
-		[text(label), kbd(key)],
-		act,
-	);
-}
 
 /** `start` on the left, then a spacer, then `end` on the right. */
 function actionBar(start: readonly NativeNode[], end: readonly NativeNode[]): NativeNode {
@@ -1025,29 +1010,34 @@ class Picker implements Component, Focusable {
 
 	/** The Picker btw button, when Side questions can run here. */
 	#asideButtons(): NativeNode[] {
-		return this.#options.askBtw ? [actionButton("Ask aside", "btw", "?", { title: "Picker btw: ask a side question  ?" })] : [];
+		return this.#options.askBtw
+			? [actionButton("Ask aside", "btw", { keys: "?", title: "Picker btw: ask a side question  ?" })]
+			: [];
 	}
 
 	#describeQuestionActions(question: AskQuestion, state: QuestionState, row: QuestionRow | undefined): NativeNode {
 		const aside = this.#asideButtons();
-		const cancel = actionButton("Cancel", "cancel", "escape");
+		const cancel = actionButton("Cancel", "cancel", { keys: "escape" });
 		if (!row) return actionBar(aside, [cancel]);
 		const typed = rowText(state, row);
 		if (row.kind !== "option" && !typed) {
-			return actionBar(aside, [actionButton("Type answer", "edit", "n", { accent: true }), cancel]);
+			return actionBar(aside, [actionButton("Type answer", "edit", { keys: "n", tone: "accent" }), cancel]);
 		}
 		const noun = row.kind === "option" ? "note" : "answer";
 		const actions: NativeNode[] = [];
 		if (row.kind !== "text" && !isDisabledRow(question, row)) {
-			actions.push(actionButton(this.#isPickedRow(state, row) ? "Unpick" : "Pick", "space", "space"));
+			actions.push(actionButton(this.#isPickedRow(state, row) ? "Unpick" : "Pick", "space", { keys: "space" }));
 		}
-		actions.push(actionButton(typed ? `Edit ${noun}` : `Add ${noun}`, "edit", "n"));
-		if (typed) actions.push(actionButton(`Clear ${noun}`, "clear", "x"));
+		actions.push(actionButton(typed ? `Edit ${noun}` : `Add ${noun}`, "edit", { keys: "n" }));
+		if (typed) actions.push(actionButton(`Clear ${noun}`, "clear", { keys: "x" }));
 		const next = this.#hasSubmitTab() ? "next" : "submit";
 		const enterLabel =
 			isMulti(question) || row.kind === "text" ? `${next[0]?.toUpperCase()}${next.slice(1)}` : `Pick & ${next}`;
 		const moves = this.#hasSubmitTab() ? "j/k move · h/l tabs" : "j/k move";
-		actions.push(cancel, actionButton(enterLabel, "enter", "enter", { accent: true, title: `${enterLabel}  enter · ${moves}` }));
+		actions.push(
+			cancel,
+			actionButton(enterLabel, "enter", { keys: "enter", tone: "accent", title: `${enterLabel}  enter · ${moves}` }),
+		);
 		return actionBar(aside, actions);
 	}
 
@@ -1055,11 +1045,13 @@ class Picker implements Component, Focusable {
 	#describeSubmitBody(children: NativeChild[], lines: number): void {
 		children.push(this.#scroller(this.#describeAnswers(), lines, "submit"));
 		const submitNote = this.#submitNote;
-		const actions = [actionButton(submitNote ? "Edit note" : "Add note", "edit", "n", { title: "A note on all answers  n" })];
-		if (submitNote) actions.push(actionButton("Clear note", "clear", "x"));
+		const actions = [
+			actionButton(submitNote ? "Edit note" : "Add note", "edit", { keys: "n", title: "A note on all answers  n" }),
+		];
+		if (submitNote) actions.push(actionButton("Clear note", "clear", { keys: "x" }));
 		actions.push(
-			actionButton("Cancel", "cancel", "escape"),
-			actionButton(SUBMIT_OPTION, "enter", "enter", { accent: true, title: "Submit  enter · h/l tabs" }),
+			actionButton("Cancel", "cancel", { keys: "escape" }),
+			actionButton(SUBMIT_OPTION, "enter", { keys: "enter", tone: "accent", title: "Submit  enter · h/l tabs" }),
 		);
 		children.push(actionBar(this.#asideButtons(), actions));
 	}
@@ -1693,7 +1685,7 @@ class Picker implements Component, Focusable {
 			hints: [
 				{ keys: ["enter", "ctrl+q"], label: "save" },
 				{ keys: ["escape"], label: "discard" },
-				{ keys: [externalEditorKey()], label: "external editor" },
+				{ keys: [appExternalEditorKey()], label: "external editor" },
 			],
 			onSubmit: value => {
 				if (!this.#closed) {

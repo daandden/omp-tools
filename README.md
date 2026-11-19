@@ -42,7 +42,8 @@ generate_image:
 ## `ask`
 
 `ask` takes one argument, `html`: one HTML `<form>`, as native `ask` does since
-OMP 18.18.3. The old `questions` argument is gone, with no alias. The
+OMP 18.18.3. Like native `ask` since OMP 19.0.0, it also takes a bare HTML
+string or the old `questions` list and rebuilds that list as a form. The
 model-facing description follows native's, except that it states no option
 count.
 
@@ -105,6 +106,13 @@ Submit checks each answer as native does: `required`, a number's `min` and
 and a pattern that does not compile. The first field that fails blocks Submit,
 and the Picker opens it with native's reason.
 
+On timeout, the Picker does what native does. When every field passes these
+checks, it submits the form as it stands: picks, defaults, and typed text, with
+no recommendation filled in. The result is marked as timed out
+(`details.timedOut`), and the card says it was not your choice. When a field
+fails a check, such as an empty required field or a number out of bounds, the
+agent gets native's "no answer was given" and no form data.
+
 ### Differences from native `ask`
 
 - Picking never loses typed text. Every option keeps its own note through
@@ -112,11 +120,6 @@ and the Picker opens it with native's reason.
   picks it again.
 - The Submit tab has a Submit note for the whole ask. In Tern, long review
   labels wrap within their column so answers and Notes stay inside the Picker.
-- On timeout, the Picker submits the form as it stands, as native does: picks,
-  defaults, and typed text, with no recommendation filled in and no checks,
-  even when a required field is empty or a number is out of bounds. The
-  result is marked as timed out (`details.timedOut`), and the card says it was
-  not your choice.
 - Plan mode does not turn off `ask.timeout`, and `speech.enabled` does not
   read the questions aloud.
 - Collaboration guests cannot answer.
@@ -133,7 +136,7 @@ and the Picker opens it with native's reason.
 The `Other`, option-note, text field, and Submit note editors are the main
 prompt's own editor, so they behave like it. They offer the same suggestions:
 `@` files, `^` models, `/` file commands and skills, internal URLs such as
-`skill://`, `rule://`, `local://`, `agent://`, `artifact://`, and `omp://`,
+`skill://`, `rule://`, `local://`, `agent://`, and `omp://`,
 emoji, GitHub refs, and other extensions' providers. They also have ghost-text word
 completion, typo detection and autocorrect, vim mode, and multi-line input.
 Shift+Enter, Ctrl+J, or Alt+Enter inserts a newline. Ctrl+C clears the text and
@@ -521,8 +524,10 @@ in red.
 ## Side questions
 
 `/btw <question>` in the main editor asks a Side question that can look things
-up. It replaces native `/btw`'s answer for that form. Bare `/btw` still opens
-OMP's BTW history, and autocomplete is OMP's.
+up. It replaces native `/btw`'s answer for that form. OMP 19's `? <question>`
+shortcut turns into `/btw <question>` before the plugin sees it, so it asks a
+Side question too. Bare `/btw` still opens OMP's BTW history, and autocomplete
+is OMP's.
 
 A Side question runs as a separate agent session on a copy of the main
 transcript in a temporary folder, deleted when the thread ends. It costs tokens

@@ -21,46 +21,24 @@ import {
 	type AutocompleteProvider,
 	type DescribeContext,
 	FormField,
-	type FormFieldTheme,
 	getKeybindings,
-	kbd,
-	matchesKey,
 	type NativeChild,
 	type NativeNode,
 	type NativeScroll,
 	node,
-	row,
 	Spacer,
 	sliceByColumn,
-	span,
 	type TUI,
-	text,
 } from "@oh-my-pi/pi-tui";
+import { formTheme } from "@oh-my-pi/pi-tui/chrome/form-theme";
+import { matchesAppExternalEditor, matchesAppFollowUp } from "@oh-my-pi/pi-tui/keybinding-matchers";
+import { hintsRow, type NativeHint } from "@oh-my-pi/pi-tui/native/overlay";
 import { getEditorTheme, theme } from "@oh-my-pi/pi-tui/theme";
-
-// Compiled omp serves extensions only the packages' named export paths, not
-// `@oh-my-pi/pi-tui/chrome/form-theme` or `/keybinding-matchers`; importing
-// those would load a second pi-tui copy from node_modules. Mirror the two
-// small pieces instead.
-
-/** Same as pi-tui's `formTheme` (HookEditorComponent's field theme). */
-const answerFieldTheme: FormFieldTheme = {
-	label: text => theme.bold(theme.fg("accent", text)),
-	description: text => theme.fg("muted", text),
-	error: text => theme.fg("error", text),
-	hint: text => theme.fg("dim", text),
-};
 
 /** Drop the first and last column of a boxed panel rendered at `width + 2`,
  *  leaving horizontal rules and one-space content insets. */
 export function withoutSideBorders(lines: readonly string[], width: number): string[] {
 	return lines.map(line => sliceByColumn(line, 1, width));
-}
-
-/** One key hint: the key ids that trigger it (`"enter"`, `"ctrl+q"`, `"escape"`) and what it does. */
-export interface KeyHint {
-	keys: readonly string[];
-	label: string;
 }
 
 /** A key id as the classic hint line spells it. */
@@ -72,21 +50,8 @@ export function keyLabel(key: string): string {
 }
 
 /** The classic hint line: `enter or ctrl+q save  esc discard`. */
-export function hintText(hints: readonly KeyHint[]): string {
+export function hintText(hints: readonly NativeHint[]): string {
 	return hints.map(hint => `${hint.keys.map(keyLabel).join(" or ")} ${hint.label}`).join("  ");
-}
-
-/** The native hint strip: keycaps with muted labels, as pi-tui's `hintsRow` draws them. */
-export function hintsRow(hints: readonly KeyHint[], key = "hints"): NativeNode {
-	const children: NativeChild[] = hints.map(hint =>
-		row([...hint.keys.map(id => kbd(id)), text([span(hint.label, "muted")])], { gap: "xs", align: "center" }),
-	);
-	return node("row", { gap: "md", wrap: true, role: "omp.overlay.hints" }, children, key);
-}
-
-/** The first key bound to the external editor, else Ctrl+G. */
-export function externalEditorKey(): string {
-	return getKeybindings().getKeys("app.editor.external")[0] ?? "ctrl+g";
 }
 
 /**
@@ -133,20 +98,6 @@ export function scrollBox(
 		[options.scroll ? { ...content, scroll: options.scroll } : content],
 		options.key,
 	);
-}
-
-/** Submit chord of the prompt-style editor: `app.message.followUp`, else Ctrl+Enter / Ctrl+Q. */
-function isFollowUpSubmit(data: string): boolean {
-	const keybindings = getKeybindings();
-	if (keybindings.getKeys("app.message.followUp").length > 0) return keybindings.matches(data, "app.message.followUp");
-	return matchesKey(data, "ctrl+enter") || matchesKey(data, "ctrl+q");
-}
-
-/** External-editor key: `app.editor.external`, else Ctrl+G. */
-function isExternalEditorKey(data: string): boolean {
-	const keybindings = getKeybindings();
-	if (keybindings.getKeys("app.editor.external").length > 0) return keybindings.matches(data, "app.editor.external");
-	return data === "\x07";
 }
 
 type Suggestions = { items: AutocompleteItem[]; prefix: string } | null;
@@ -317,7 +268,7 @@ export interface AnswerEditorOptions {
 	/** Keys the owner handles before the editor; return true to consume. */
 	onKey?(data: string): boolean;
 	/** Footer key hints, as text in the classic TUI and as keycaps in Tern. */
-	hints: readonly KeyHint[];
+	hints: readonly NativeHint[];
 }
 
 function noop(): void {}
@@ -383,7 +334,7 @@ export class AnswerEditor extends HookEditorComponent {
 		editor.onPasteImagePath = path => options.onPasteImagePath(editor, path);
 		this.editor = editor;
 
-		this.#field = new FormField(editor, { theme: answerFieldTheme, hint: hintText(options.hints) });
+		this.#field = new FormField(editor, { theme: formTheme, hint: hintText(options.hints) });
 		this.addChild(this.#field);
 		this.addChild(new Spacer(1));
 		this.#nativeRoot = node("card", { role: this.nativeRole, head: options.title }, [editor, hintsRow(options.hints)]);
@@ -430,7 +381,7 @@ export class AnswerEditor extends HookEditorComponent {
 				const from = this.#queue.indexOf(pending);
 				for (let index = this.#queue.length - 1; index > from; index--) {
 					const item = this.#queue[index];
-					if (typeof item === "string" && (keys.matches(item, "tui.input.submit") || isFollowUpSubmit(item))) {
+					if (typeof item === "string" && (keys.matches(item, "tui.input.submit") || matchesAppFollowUp(item))) {
 						this.#queue.splice(index, 1);
 					}
 				}
@@ -489,9 +440,9 @@ export class AnswerEditor extends HookEditorComponent {
 			this.#tui.requestRender();
 			return;
 		}
-		if (isExternalEditorKey(data)) {
+		if (matchesAppExternalEditor(data)) {
 			void this.#openExternalEditor();
-		} else if (isFollowUpSubmit(data)) {
+		} else if (matchesAppFollowUp(data)) {
 			// Ctrl+Q / Ctrl+Enter submit, as in the ask prompt-style editor.
 			this.editor.submit();
 		} else {
